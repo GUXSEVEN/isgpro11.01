@@ -1,0 +1,144 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and registration details",
+      "type": "object",
+      "properties": {
+        "username": { "type": "string", "description": "Unique username" },
+        "password": { "type": "string", "description": "Hashed password" },
+        "name": { "type": "string", "description": "Full name" },
+        "email": { "type": "string", "description": "Email address" },
+        "phone": { "type": "string", "description": "Phone number" },
+        "role": { "type": "string", "enum": ["uzman", "hekim", "other", "admin"], "description": "User role" },
+        "certificateNo": { "type": "string", "description": "Certificate number" },
+        "isPremium": { "type": "boolean", "description": "Premium status flag" },
+        "licenseKey": { "type": "string", "description": "Premium license key" },
+        "licensePurchasedAt": { "type": "string", "description": "ISO timestamp of purchase" },
+        "licenseExpiresAt": { "type": "string", "description": "ISO timestamp of license expiry" },
+        "licenseType": { "type": "string", "enum": ["monthly", "yearly"], "description": "License billing type" }
+      },
+      "required": ["username", "name", "email", "phone"]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "System log for critical activities",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Username of the active user" },
+        "action": { "type": "string", "enum": ["login", "license_purchase", "profile_update"], "description": "Action type" },
+        "timestamp": { "type": "string", "description": "ISO timestamp of the event" },
+        "details": { "type": "object", "description": "Metadata for the event" }
+      },
+      "required": ["userId", "action", "timestamp", "details"]
+    },
+    "SiteConfig": {
+      "title": "SiteConfig",
+      "description": "Dynamic layout, contact information, and legal regulation URLs",
+      "type": "object",
+      "properties": {
+        "videoUrl": { "type": "string" },
+        "heroTitle": { "type": "string" },
+        "heroSubtitle": { "type": "string" },
+        "contactEmail": { "type": "string" },
+        "contactPhone": { "type": "string" },
+        "contactAddress": { "type": "string" },
+        "kanunLink": { "type": "string" },
+        "yonetmelikLink": { "type": "string" }
+      }
+    },
+    "FAQList": {
+      "title": "FAQList",
+      "description": "Array of Frequently Asked Questions",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "question": { "type": "string" },
+              "answer": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "ReviewList": {
+      "title": "ReviewList",
+      "description": "Array of approved and pending user reviews",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "role": { "type": "string" },
+              "rating": { "type": "integer" },
+              "comment": { "type": "string" },
+              "createdAt": { "type": "string" },
+              "isApproved": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "PresetList": {
+      "title": "PresetList",
+      "description": "Array of playground risk presets",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "label": { "type": "string" },
+              "text": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "Release": {
+      "title": "Release",
+      "description": "Software executable package and metadata",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "platform": { "type": "string", "enum": ["pc", "apk"] },
+        "version": { "type": "string" },
+        "releaseNotes": { "type": "string" },
+        "fileSize": { "type": "string" },
+        "fileName": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "downloadsCount": { "type": "integer" },
+        "fileData": { "type": "string" }
+      },
+      "required": ["id", "platform", "version"]
+    }
+  },
+  "firestore": {
+    "/users/{username}": {
+      "schema": "User",
+      "description": "User profile records stored by lowercase username key"
+    },
+    "/activity_logs/{logId}": {
+      "schema": "ActivityLog",
+      "description": "System audit and activity logs"
+    },
+    "/site_config/{docId}": {
+      "schema": "SiteConfig",
+      "description": "Can be 'default', 'faqs', 'reviews', or 'presets'"
+    },
+    "/releases/{platform}": {
+      "schema": "Release",
+      "description": "Software executable release files by platform"
+    }
+  }
+}

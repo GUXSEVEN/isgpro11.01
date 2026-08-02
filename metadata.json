@@ -1,0 +1,6 @@
+{
+  "name": "İSG Pro Tanıtım ve Satış Platformu",
+  "description": "Yapay Zeka Destekli Yeni Nesil İş Sağlığı ve Güvenliği Platformu İSG Pro'nun tanıtımı, satışı, ödeme, kayıt ve destek platformu.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

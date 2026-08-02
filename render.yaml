@@ -1,0 +1,50 @@
+services:
+  - type: web
+    name: isg-pro-api
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # Gemini AI Configuration
+      - key: GEMINI_API_KEY
+        sync: false
+
+      # Application URL (used for PayTR callbacks & mail links)
+      - key: APP_URL
+        sync: false
+
+      # SMTP Mail Server Configurations (Gmail default placeholders provided)
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_FROM_NAME
+        value: İSG Pro
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+
+      # Optional EmailJS Configurations (If used as fallback)
+      - key: EMAILJS_SERVICE_ID
+        sync: false
+      - key: EMAILJS_TEMPLATE_ID
+        sync: false
+      - key: EMAILJS_PUBLIC_KEY
+        sync: false
+      - key: EMAILJS_LICENSE_TEMPLATE_ID
+        sync: false
+      - key: EMAILJS_CONTACT_TEMPLATE_ID
+        sync: false
+
+      # PayTR Secure Payment Gateway Configuration
+      - key: PAYTR_MERCHANT_ID
+        sync: false
+      - key: PAYTR_MERCHANT_KEY
+        sync: false
+      - key: PAYTR_MERCHANT_SALT
+        sync: false

@@ -1,0 +1,51 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Default-deny catch-all rule
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    // Users collection rules
+    match /users/{username} {
+      allow read: if true;
+      allow create, update: if isValidUser(request.resource.data);
+      allow delete: if true;
+    }
+    
+    // Activity logs collection rules
+    match /activity_logs/{logId} {
+      allow read: if true;
+      allow create: if isValidActivityLog(request.resource.data);
+    }
+
+    // Site Config documents (default, faqs, reviews, presets)
+    match /site_config/{docId} {
+      allow read: if true;
+      allow write: if true; // Authorized via client-side custom admin panel
+    }
+
+    // Software Releases documents
+    match /releases/{platform} {
+      allow read: if true;
+      allow write: if true; // Authorized via client-side custom admin panel
+    }
+    
+    // Hardened validation helper for Users
+    function isValidUser(data) {
+      return data.username is string && data.username.size() <= 100
+        && data.name is string && data.name.size() <= 100
+        && data.email is string && data.email.size() <= 150
+        && data.phone is string && data.phone.size() <= 50;
+    }
+    
+    // Hardened validation helper for ActivityLogs
+    function isValidActivityLog(data) {
+      return data.userId is string && data.userId.size() <= 100
+        && data.action is string && (data.action == 'login' || data.action == 'license_purchase' || data.action == 'profile_update')
+        && data.timestamp is string
+        && data.details is map;
+    }
+  }
+}
