@@ -2,7 +2,7 @@ services:
   - type: web
     name: isgpro10-01
     runtime: node
-    plan: free
+    plan: starter
     buildCommand: npm install && npm run build
     startCommand: npm run start
     envVars:
@@ -27,18 +27,6 @@ services:
       - key: SMTP_USER
         sync: false
       - key: SMTP_PASS
-        sync: false
-
-      # Optional EmailJS Configurations (If used as fallback)
-      - key: EMAILJS_SERVICE_ID
-        sync: false
-      - key: EMAILJS_TEMPLATE_ID
-        sync: false
-      - key: EMAILJS_PUBLIC_KEY
-        sync: false
-      - key: EMAILJS_LICENSE_TEMPLATE_ID
-        sync: false
-      - key: EMAILJS_CONTACT_TEMPLATE_ID
         sync: false
 
       # PayTR Secure Payment Gateway Configuration
