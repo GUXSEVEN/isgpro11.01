@@ -433,6 +433,45 @@ const firebaseConfig = {
 const firebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(firebaseApp);
 
+// EmailJS Configuration for OTP, Licensing, and Contact support
+const EMAILJS_SERVICE_ID = process.env.EMAILJS_SERVICE_ID || "service_uqwc0fd";
+const EMAILJS_TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID || "template_g923r5o";
+const EMAILJS_PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY || "EjgR1VNaFhYfJtFvq";
+const EMAILJS_LICENSE_TEMPLATE_ID = process.env.EMAILJS_LICENSE_TEMPLATE_ID || "template_s4rysr5";
+const EMAILJS_CONTACT_TEMPLATE_ID = process.env.EMAILJS_CONTACT_TEMPLATE_ID || "template_g923r5o";
+
+const sendEmailViaEmailJS = async (
+  templateId: string,
+  templateParams: Record<string, any>
+): Promise<boolean> => {
+  try {
+    const response = await fetch("https://api.emailjs.com/api/v1.0/email/send", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        service_id: EMAILJS_SERVICE_ID,
+        template_id: templateId,
+        user_id: EMAILJS_PUBLIC_KEY,
+        template_params: templateParams
+      })
+    });
+
+    if (response.ok) {
+      console.log(`[EmailJS] Email successfully sent using template ${templateId}`);
+      return true;
+    } else {
+      const errorText = await response.text();
+      console.error(`[EmailJS Error] Template ${templateId} failed:`, errorText);
+      return false;
+    }
+  } catch (err) {
+    console.error(`[EmailJS Connection Error] Template ${templateId} failed:`, err);
+    return false;
+  }
+};
+
 // Direct SMTP / Nodemailer Configuration (Alternative & more reliable than EmailJS)
 // Resolves dynamically from Firestore (smtp_config/default) or falls back to environment variables
 const getSMTPConfig = async () => {
@@ -1676,34 +1715,59 @@ app.post('/api/send-email', async (req, res) => {
   messageQueue.unshift(newMessage);
 
   const smtpConfig = await getSMTPConfig();
-  if (!smtpConfig.active) {
-    return res.status(400).json({ error: 'SMTP e-posta gönderim servisi aktif değil.' });
+  let sentViaSMTP = false;
+
+  if (smtpConfig.active) {
+    console.log(`[SMTP Contact Support] Sending email via direct mailer. From: ${name} <${maskEmail(email)}>, Subject: ${subject}`);
+    try {
+      const htmlContent = getContactHtmlTemplate({ name, email, subject, message });
+      const transporter = createDynamicTransporter(smtpConfig);
+      await transporter.sendMail({
+        from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
+        to: "infoisgpro@gmail.com",
+        replyTo: email,
+        subject: `[Destek] ${subject}`,
+        html: htmlContent
+      });
+      
+      console.log(`[SMTP] İletişim e-postası doğrudan sunucu ile başarıyla gönderildi: ${maskEmail(email)}`);
+      sentViaSMTP = true;
+      return res.json({ 
+        success: true, 
+        message: 'Destek talebiniz başarıyla iletildi!',
+        data: newMessage
+      });
+    } catch (smtpError: any) {
+      console.error("[SMTP Error] SMTP direct mailer failed, trying EmailJS fallback...", smtpError);
+    }
   }
 
-  console.log(`[SMTP Contact Support] Sending email via direct mailer. From: ${name} <${maskEmail(email)}>, Subject: ${subject}`);
-  try {
-    const htmlContent = getContactHtmlTemplate({ name, email, subject, message });
-    const transporter = createDynamicTransporter(smtpConfig);
-    await transporter.sendMail({
-      from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
-      to: "infoisgpro@gmail.com",
-      replyTo: email,
-      subject: `[Destek] ${subject}`,
-      html: htmlContent
+  if (!sentViaSMTP) {
+    console.log(`[EmailJS Contact Support] Sending email via fallback. From: ${name} <${maskEmail(email)}>, Subject: ${subject}`);
+    const success = await sendEmailViaEmailJS(EMAILJS_CONTACT_TEMPLATE_ID, {
+      name: name,
+      from_name: name,
+      email: email,
+      from_email: email,
+      reply_to: email,
+      to_email: "infoisgpro@gmail.com",
+      subject: subject,
+      message: message,
+      project_name: "İSG Pro"
     });
-    
-    console.log(`[SMTP] İletişim e-postası doğrudan sunucu ile başarıyla gönderildi: ${maskEmail(email)}`);
-    return res.json({ 
-      success: true, 
-      message: 'Destek talebiniz ve e-postanız başarıyla iletildi (SMTP)!',
-      data: newMessage
-    });
-  } catch (smtpError: any) {
-    console.error("[SMTP Error] SMTP direct mailer failed:", smtpError);
-    return res.status(500).json({
-      error: 'E-posta sunucusuna bağlanırken hata oluştu.',
-      details: smtpError.message
-    });
+
+    if (success) {
+      return res.json({
+        success: true,
+        message: 'Destek talebiniz başarıyla iletildi!',
+        data: newMessage
+      });
+    } else {
+      return res.status(500).json({
+        error: 'E-posta gönderilemedi.',
+        details: 'Hem SMTP hem de yedek e-posta servisi başarısız oldu.'
+      });
+    }
   }
 });
 
@@ -1718,26 +1782,46 @@ app.post('/api/send-email-otp', async (req, res) => {
   const expTime = new Date(Date.now() + 15 * 60 * 1000).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
 
   const smtpConfig = await getSMTPConfig();
-  if (!smtpConfig.active) {
-    return res.status(400).json({ error: 'SMTP e-posta servisi aktif değil.' });
+  let sentViaSMTP = false;
+
+  if (smtpConfig.active) {
+    console.log(`[SMTP OTP] Dispatching direct SMTP OTP email to: ${maskEmail(email)}`);
+    try {
+      const htmlContent = getOTPHtmlTemplate(name || email, code, expTime);
+      const transporter = createDynamicTransporter(smtpConfig);
+      await transporter.sendMail({
+        from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
+        to: email,
+        subject: `${code} - İSG Pro Güvenli Giriş Kodunuz`,
+        html: htmlContent
+      });
+      
+      console.log(`[SMTP] OTP e-postası doğrudan sunucu ile başarıyla gönderildi: ${maskEmail(email)}`);
+      sentViaSMTP = true;
+      return res.json({ success: true, method: 'smtp' });
+    } catch (smtpError: any) {
+      console.error("[SMTP Error] OTP direct mailer failed, trying EmailJS fallback...", smtpError);
+    }
   }
 
-  console.log(`[SMTP OTP] Dispatching direct SMTP OTP email to: ${maskEmail(email)}`);
-  try {
-    const htmlContent = getOTPHtmlTemplate(name || email, code, expTime);
-    const transporter = createDynamicTransporter(smtpConfig);
-    await transporter.sendMail({
-      from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
+  if (!sentViaSMTP) {
+    console.log(`[EmailJS OTP] Dispatching EmailJS OTP email to: ${maskEmail(email)}`);
+    const success = await sendEmailViaEmailJS(EMAILJS_TEMPLATE_ID, {
+      to_email: email,
+      email: email,
       to: email,
-      subject: `${code} - İSG Pro Güvenli Giriş Kodunuz`,
-      html: htmlContent
+      to_name: name || email,
+      otp_code: code,
+      passcode: code,
+      time: expTime,
+      project_name: "İSG Pro"
     });
-    
-    console.log(`[SMTP] OTP e-postası doğrudan sunucu ile başarıyla gönderildi: ${maskEmail(email)}`);
-    return res.json({ success: true, method: 'smtp' });
-  } catch (smtpError: any) {
-    console.error("[SMTP Error] OTP direct mailer failed:", smtpError);
-    return res.status(500).json({ error: 'Doğrulama kodu gönderilemedi.', details: smtpError.message });
+
+    if (success) {
+      return res.json({ success: true, method: 'emailjs' });
+    } else {
+      return res.status(500).json({ error: 'Doğrulama kodu gönderilemedi.', details: 'SMTP ve EmailJS servisleri başarısız oldu.' });
+    }
   }
 });
 
@@ -1767,34 +1851,56 @@ app.post('/api/send-email-license', async (req, res) => {
   const formattedExpiryDate = formatDateTR(expiryDate);
 
   const smtpConfig = await getSMTPConfig();
-  if (!smtpConfig.active) {
-    return res.status(400).json({ error: 'SMTP e-posta servisi aktif değil.' });
+  let sentViaSMTP = false;
+
+  if (smtpConfig.active) {
+    console.log(`[SMTP License] Dispatching direct SMTP license email to: ${maskEmail(email)}`);
+    try {
+      const htmlContent = getLicenseHtmlTemplate({
+        name: name || email,
+        licenseKey,
+        planName,
+        planType,
+        price,
+        purchaseDate: formattedPurchaseDate,
+        expiryDate: formattedExpiryDate
+      });
+      const transporter = createDynamicTransporter(smtpConfig);
+      await transporter.sendMail({
+        from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
+        to: email,
+        subject: `Tebrikler, İSG Pro Lisansınız Hazır!`,
+        html: htmlContent
+      });
+      
+      console.log(`[SMTP] Lisans e-postası doğrudan sunucu ile başarıyla gönderildi: ${maskEmail(email)}`);
+      sentViaSMTP = true;
+      return res.json({ success: true, method: 'smtp' });
+    } catch (smtpError: any) {
+      console.error("[SMTP Error] License direct mailer failed, trying EmailJS fallback...", smtpError);
+    }
   }
 
-  console.log(`[SMTP License] Dispatching direct SMTP license email to: ${maskEmail(email)}`);
-  try {
-    const htmlContent = getLicenseHtmlTemplate({
-      name: name || email,
-      licenseKey,
-      planName,
-      planType,
-      price,
-      purchaseDate: formattedPurchaseDate,
-      expiryDate: formattedExpiryDate
-    });
-    const transporter = createDynamicTransporter(smtpConfig);
-    await transporter.sendMail({
-      from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
+  if (!sentViaSMTP) {
+    console.log(`[EmailJS License] Dispatching EmailJS license email to: ${maskEmail(email)}`);
+    const success = await sendEmailViaEmailJS(EMAILJS_LICENSE_TEMPLATE_ID, {
+      to_email: email,
+      email: email,
       to: email,
-      subject: `Tebrikler, İSG Pro Lisansınız Hazır!`,
-      html: htmlContent
+      user_name: name || email,
+      licenseKey: licenseKey,
+      plan_name: planName,
+      plan_type: planType,
+      price: price,
+      licensePurchasedAt: formattedPurchaseDate,
+      licenseExpiresAt: formattedExpiryDate
     });
-    
-    console.log(`[SMTP] Lisans e-postası doğrudan sunucu ile başarıyla gönderildi: ${maskEmail(email)}`);
-    return res.json({ success: true, method: 'smtp' });
-  } catch (smtpError: any) {
-    console.error("[SMTP Error] License direct mailer failed:", smtpError);
-    return res.status(500).json({ error: 'Lisans e-postası gönderilemedi.', details: smtpError.message });
+
+    if (success) {
+      return res.json({ success: true, method: 'emailjs' });
+    } else {
+      return res.status(500).json({ error: 'Lisans e-postası gönderilemedi.', details: 'SMTP ve EmailJS servisleri başarısız oldu.' });
+    }
   }
 });
 
@@ -2238,8 +2344,9 @@ async function activateAndNotifyOrder(merchantOid: string): Promise<boolean> {
   const purchaseDateStr = new Date().toLocaleDateString('tr-TR');
   const expiryDateStr = new Date(Date.now() + (order.planId === 'yearly' ? 365 : 30) * 24 * 60 * 60 * 1000).toLocaleDateString('tr-TR');
 
-  // Direct SMTP Attempt
   const smtpConfig = await getSMTPConfig();
+  let sentViaSMTP = false;
+
   if (smtpConfig.active) {
     console.log(`[SMTP Activation] Dispatching direct SMTP license email to: ${maskEmail(order.email)}`);
     try {
@@ -2260,8 +2367,9 @@ async function activateAndNotifyOrder(merchantOid: string): Promise<boolean> {
         html: htmlContent
       });
       console.log(`[SMTP Activation] License email sent: ${maskEmail(order.email)}`);
+      sentViaSMTP = true;
     } catch (smtpError: any) {
-      console.error("[SMTP Activation Error] SMTP direct mailer failed:", smtpError);
+      console.error("[SMTP Activation Error] SMTP direct mailer failed, trying EmailJS fallback...", smtpError);
     }
 
     // Also send approved contracts copy to user and admin email (infoisgpro@gmail.com) with PDF attachment
@@ -2306,8 +2414,26 @@ async function activateAndNotifyOrder(merchantOid: string): Promise<boolean> {
     } catch (contractErr) {
       console.error('[SMTP Contract Delivery Error]:', contractErr);
     }
-  } else {
-    console.warn(`[SMTP Activation Warning] SMTP direct mailer is inactive. Skipping activation emails.`);
+  }
+
+  if (!sentViaSMTP) {
+    console.log(`[EmailJS Activation] Dispatching license email via fallback to: ${maskEmail(order.email)}`);
+    try {
+      await sendEmailViaEmailJS(EMAILJS_LICENSE_TEMPLATE_ID, {
+        to_email: order.email,
+        email: order.email,
+        to: order.email,
+        user_name: order.name || 'Değerli İSG Pro Kullanıcısı',
+        licenseKey: order.licenseKey,
+        plan_name: planName,
+        plan_type: planType,
+        price: priceStr,
+        licensePurchasedAt: purchaseDateStr,
+        licenseExpiresAt: expiryDateStr
+      });
+    } catch (emailError) {
+      console.error(`[EmailJS Activation Error]`, emailError);
+    }
   }
 
   return true;
