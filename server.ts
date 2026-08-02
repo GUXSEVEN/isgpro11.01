@@ -2771,14 +2771,14 @@ app.post('/api/smtp-config/test', async (req, res) => {
   try {
     const success = await sendEmailViaFirestore(testRecipients, subject, html, testAttachments);
     if (success) {
-      return res.json({ success: true, message: `Test e-postası başarıyla Firestore 'mail' kuyruğuna eklendi.` });
+      return res.json({ success: true, message: 'E-posta başarıyla gönderildi.' });
     } else {
-      return res.status(500).json({ error: 'Kuyruğa eklenirken hata oluştu.' });
+      return res.status(500).json({ error: 'E-posta gönderilemedi.' });
     }
   } catch (err: any) {
     console.error('[Firestore Mail Test Error]:', err);
     return res.status(500).json({ 
-      error: 'E-posta kuyruğa eklenirken hata oluştu.', 
+      error: 'E-posta gönderilemedi.', 
       details: err.message
     });
   }
