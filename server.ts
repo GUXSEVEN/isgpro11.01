@@ -2656,8 +2656,8 @@ app.post('/api/paytr/callback', express.urlencoded({ extended: true }), async (r
 });
 
 // PayTR Step 3: Success Iframe Redirect Page (posts message to React parent or redirects main page)
-app.get('/api/paytr/success', async (req, res) => {
-  const oid = req.query.oid as string;
+app.all('/api/paytr/success', async (req, res) => {
+  const oid = (req.query.oid || req.body.merchant_oid || req.body.oid) as string;
   const order = oid ? paytrOrders[oid] : null;
   const licenseKey = order ? order.licenseKey : 'ISG-PRO-MOCK-LICENSE';
 
@@ -2712,8 +2712,8 @@ app.get('/api/paytr/success', async (req, res) => {
 });
 
 // PayTR Step 4: Failure Iframe Redirect Page (posts message to React parent or redirects main page)
-app.get('/api/paytr/fail', (req, res) => {
-  const oid = req.query.oid as string;
+app.all('/api/paytr/fail', (req, res) => {
+  const oid = (req.query.oid || req.body.merchant_oid || req.body.oid) as string;
   res.send(`
     <!DOCTYPE html>
     <html lang="tr">
@@ -2753,7 +2753,6 @@ app.get('/api/paytr/fail', (req, res) => {
     </html>
   `);
 });
-
 
 // Dynamic SMTP Server Settings (Retrieve, Save & Test)
 app.get('/api/smtp-config', async (req, res) => {
