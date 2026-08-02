@@ -177,7 +177,13 @@ export default function App() {
       if (pwd && !pwd.match(/^[a-f0-9]{64}$/i)) {
         pwd = await hashPassword(pwd);
       }
-      const userToSave = { ...user, password: pwd };
+      
+      const userToSave: any = { ...user };
+      if (pwd === undefined) {
+        delete userToSave.password;
+      } else {
+        userToSave.password = pwd;
+      }
 
       const userDocRef = doc(db, 'users', usernameKey);
       await setDoc(userDocRef, userToSave, { merge: true });
