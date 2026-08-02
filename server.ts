@@ -10,7 +10,7 @@ import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, doc, getDoc, setDoc, getDocs, collection, addDoc } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, setDoc, getDocs, collection } from 'firebase/firestore';
 import nodemailer from 'nodemailer';
 import PDFDocument from 'pdfkit';
 import { generateLicenseKey, registerGeneratedLicense, validateLicenseAgainstDb, requestTrialLicense, LicenseType } from './src/lib/licenseUtils';
@@ -482,48 +482,6 @@ const createDynamicTransporter = (config: { host: string; port: number; user: st
     greetingTimeout: 8000,
     socketTimeout: 8000
   });
-};
-
-const sendEmailViaFirestore = async (
-  to: string | string[],
-  subject: string,
-  html: string,
-  attachments?: Array<{ filename: string; content: Buffer }>
-): Promise<boolean> => {
-  if (!db) {
-    console.error('[Firestore Mail Error] Firestore DB is not initialized.');
-    return false;
-  }
-
-  try {
-    const mailCollection = collection(db, 'mail');
-    
-    // Format attachments if any
-    const formattedAttachments = attachments ? attachments.map(att => ({
-      filename: att.filename,
-      content: att.content.toString('base64'),
-      encoding: 'base64'
-    })) : [];
-
-    const mailDoc: any = {
-      to: Array.isArray(to) ? to.join(', ') : to,
-      message: {
-        subject: subject,
-        html: html
-      }
-    };
-
-    if (formattedAttachments.length > 0) {
-      mailDoc.message.attachments = formattedAttachments;
-    }
-
-    await addDoc(mailCollection, mailDoc);
-    console.log(`[Firestore Mail] Successfully queued email to ${Array.isArray(to) ? to.join(', ') : to} in Firestore 'mail' collection.`);
-    return true;
-  } catch (err) {
-    console.error('[Firestore Mail Error] Failed to write document to Firestore:', err);
-    return false;
-  }
 };
 
 // Using secure direct image URL from postimg.cc for high email client compatibility
@@ -1717,25 +1675,34 @@ app.post('/api/send-email', async (req, res) => {
 
   messageQueue.unshift(newMessage);
 
-  console.log(`[Firestore Mail Support] Queuing email. From: ${name} <${maskEmail(email)}>, Subject: ${subject}`);
+  const smtpConfig = await getSMTPConfig();
+  if (!smtpConfig.active) {
+    return res.status(400).json({ error: 'SMTP e-posta gönderim servisi aktif değil.' });
+  }
+
+  console.log(`[SMTP Contact Support] Sending email via direct mailer. From: ${name} <${maskEmail(email)}>, Subject: ${subject}`);
   try {
     const htmlContent = getContactHtmlTemplate({ name, email, subject, message });
-    const success = await sendEmailViaFirestore("infoisgpro@gmail.com", `[Destek] ${subject}`, htmlContent);
+    const transporter = createDynamicTransporter(smtpConfig);
+    await transporter.sendMail({
+      from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
+      to: "infoisgpro@gmail.com",
+      replyTo: email,
+      subject: `[Destek] ${subject}`,
+      html: htmlContent
+    });
     
-    if (success) {
-      return res.json({ 
-        success: true, 
-        message: 'Destek talebiniz başarıyla iletildi!',
-        data: newMessage
-      });
-    } else {
-      return res.status(500).json({ error: 'E-posta gönderim kuyruğuna eklenemedi.' });
-    }
-  } catch (err: any) {
-    console.error("[Firestore Mail Support Error]:", err);
+    console.log(`[SMTP] İletişim e-postası doğrudan sunucu ile başarıyla gönderildi: ${maskEmail(email)}`);
+    return res.json({ 
+      success: true, 
+      message: 'Destek talebiniz ve e-postanız başarıyla iletildi (SMTP)!',
+      data: newMessage
+    });
+  } catch (smtpError: any) {
+    console.error("[SMTP Error] SMTP direct mailer failed:", smtpError);
     return res.status(500).json({
-      error: 'Destek e-postası kuyruğa eklenirken hata oluştu.',
-      details: err.message
+      error: 'E-posta sunucusuna bağlanırken hata oluştu.',
+      details: smtpError.message
     });
   }
 });
@@ -1750,18 +1717,27 @@ app.post('/api/send-email-otp', async (req, res) => {
   console.log(`[Email Dispatch] Sending OTP to: ${maskEmail(email)}`);
   const expTime = new Date(Date.now() + 15 * 60 * 1000).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
 
-  console.log(`[Firestore Mail OTP] Queuing OTP e-mail to: ${maskEmail(email)}`);
+  const smtpConfig = await getSMTPConfig();
+  if (!smtpConfig.active) {
+    return res.status(400).json({ error: 'SMTP e-posta servisi aktif değil.' });
+  }
+
+  console.log(`[SMTP OTP] Dispatching direct SMTP OTP email to: ${maskEmail(email)}`);
   try {
     const htmlContent = getOTPHtmlTemplate(name || email, code, expTime);
-    const success = await sendEmailViaFirestore(email, `${code} - İSG Pro Güvenli Giriş Kodunuz`, htmlContent);
-    if (success) {
-      return res.json({ success: true, method: 'firestore' });
-    } else {
-      return res.status(500).json({ error: 'Doğrulama kodu gönderim kuyruğuna eklenemedi.' });
-    }
-  } catch (err: any) {
-    console.error("[Firestore Mail OTP Error]:", err);
-    return res.status(500).json({ error: 'Doğrulama e-postası kuyruğa eklenirken hata oluştu.', details: err.message });
+    const transporter = createDynamicTransporter(smtpConfig);
+    await transporter.sendMail({
+      from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
+      to: email,
+      subject: `${code} - İSG Pro Güvenli Giriş Kodunuz`,
+      html: htmlContent
+    });
+    
+    console.log(`[SMTP] OTP e-postası doğrudan sunucu ile başarıyla gönderildi: ${maskEmail(email)}`);
+    return res.json({ success: true, method: 'smtp' });
+  } catch (smtpError: any) {
+    console.error("[SMTP Error] OTP direct mailer failed:", smtpError);
+    return res.status(500).json({ error: 'Doğrulama kodu gönderilemedi.', details: smtpError.message });
   }
 });
 
@@ -1790,7 +1766,12 @@ app.post('/api/send-email-license', async (req, res) => {
   const formattedPurchaseDate = formatDateTR(purchaseDate);
   const formattedExpiryDate = formatDateTR(expiryDate);
 
-  console.log(`[Firestore Mail License] Queuing license e-mail to: ${maskEmail(email)}`);
+  const smtpConfig = await getSMTPConfig();
+  if (!smtpConfig.active) {
+    return res.status(400).json({ error: 'SMTP e-posta servisi aktif değil.' });
+  }
+
+  console.log(`[SMTP License] Dispatching direct SMTP license email to: ${maskEmail(email)}`);
   try {
     const htmlContent = getLicenseHtmlTemplate({
       name: name || email,
@@ -1801,15 +1782,19 @@ app.post('/api/send-email-license', async (req, res) => {
       purchaseDate: formattedPurchaseDate,
       expiryDate: formattedExpiryDate
     });
-    const success = await sendEmailViaFirestore(email, `Tebrikler, İSG Pro Lisansınız Hazır!`, htmlContent);
-    if (success) {
-      return res.json({ success: true, method: 'firestore' });
-    } else {
-      return res.status(500).json({ error: 'Lisans e-postası gönderim kuyruğuna eklenemedi.' });
-    }
-  } catch (err: any) {
-    console.error("[Firestore Mail License Error]:", err);
-    return res.status(500).json({ error: 'Lisans e-postası kuyruğa eklenirken hata oluştu.', details: err.message });
+    const transporter = createDynamicTransporter(smtpConfig);
+    await transporter.sendMail({
+      from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
+      to: email,
+      subject: `Tebrikler, İSG Pro Lisansınız Hazır!`,
+      html: htmlContent
+    });
+    
+    console.log(`[SMTP] Lisans e-postası doğrudan sunucu ile başarıyla gönderildi: ${maskEmail(email)}`);
+    return res.json({ success: true, method: 'smtp' });
+  } catch (smtpError: any) {
+    console.error("[SMTP Error] License direct mailer failed:", smtpError);
+    return res.status(500).json({ error: 'Lisans e-postası gönderilemedi.', details: smtpError.message });
   }
 });
 
@@ -2246,71 +2231,83 @@ async function activateAndNotifyOrder(merchantOid: string): Promise<boolean> {
     }
   }
 
-  // Automatically trigger license key delivery email (Firestore Mail queue)
+  // Automatically trigger license key delivery email (SMTP)
   const planName = order.planId === 'yearly' ? 'Yıllık Pro Lisans' : 'Aylık Pro Lisans';
   const planType = order.planId === 'yearly' ? 'Yıllık Premium' : 'Aylık Standart';
   const priceStr = order.planId === 'yearly' ? '₺2.990,00' : '₺299,00';
   const purchaseDateStr = new Date().toLocaleDateString('tr-TR');
   const expiryDateStr = new Date(Date.now() + (order.planId === 'yearly' ? 365 : 30) * 24 * 60 * 60 * 1000).toLocaleDateString('tr-TR');
 
-  console.log(`[Firestore Mail Activation] Queuing license email to: ${maskEmail(order.email)}`);
-  try {
-    const htmlContent = getLicenseHtmlTemplate({
-      name: order.name || 'Değerli İSG Pro Kullanıcısı',
-      licenseKey: order.licenseKey,
-      planName,
-      planType,
-      price: priceStr,
-      purchaseDate: purchaseDateStr,
-      expiryDate: expiryDateStr
-    });
-    await sendEmailViaFirestore(order.email, `Tebrikler, İSG Pro Lisansınız Hazır!`, htmlContent);
-  } catch (err: any) {
-    console.error("[Firestore Mail Activation Error] Failed to queue license email:", err);
-  }
-
-  // Also send approved contracts copy to user and admin email (infoisgpro@gmail.com) with PDF attachment
-  try {
-    const contractHtml = getContractsApprovalHtmlTemplate({
-      customerName: order.name || 'Değerli İSG Pro Kullanıcısı',
-      customerEmail: order.email,
-      planName,
-      price: priceStr,
-      orderId: merchantOid,
-      approvalDate: purchaseDateStr
-    });
-
-    let pdfAttachments: Array<{ filename: string; content: Buffer }> = [];
+  // Direct SMTP Attempt
+  const smtpConfig = await getSMTPConfig();
+  if (smtpConfig.active) {
+    console.log(`[SMTP Activation] Dispatching direct SMTP license email to: ${maskEmail(order.email)}`);
     try {
-      const generated = await generateAllContractsPDFAttachments({
-        customerName: order.name || 'Değerli İSG Pro Kullanıcısı',
-        customerEmail: order.email,
-        customerPhone: order.phone,
-        customerAddress: order.address,
-        orderId: merchantOid,
+      const htmlContent = getLicenseHtmlTemplate({
+        name: order.name || 'Değerli İSG Pro Kullanıcısı',
+        licenseKey: order.licenseKey,
         planName,
+        planType,
         price: priceStr,
-        approvalDate: purchaseDateStr,
-        customerSignature: order.userSignature,
-        sellerSignature: '',
-        sellerName: 'İbrahim Coşkun'
+        purchaseDate: purchaseDateStr,
+        expiryDate: expiryDateStr
       });
-      pdfAttachments = generated.map(att => ({
-        filename: att.filename,
-        content: att.content
-      }));
-    } catch (pdfErr) {
-      console.error('[PayTR PDF Generation Error]:', pdfErr);
+      const transporter = createDynamicTransporter(smtpConfig);
+      await transporter.sendMail({
+        from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
+        to: order.email,
+        subject: `Tebrikler, İSG Pro Lisansınız Hazır!`,
+        html: htmlContent
+      });
+      console.log(`[SMTP Activation] License email sent: ${maskEmail(order.email)}`);
+    } catch (smtpError: any) {
+      console.error("[SMTP Activation Error] SMTP direct mailer failed:", smtpError);
     }
 
-    await sendEmailViaFirestore(
-      [order.email, 'infoisgpro@gmail.com'],
-      `İSG Pro Onaylı Mesafeli Satış Sözleşmesi ve Evrakları`,
-      contractHtml,
-      pdfAttachments
-    );
-  } catch (contractErr) {
-    console.error('[Firestore Mail Contract Delivery Error]:', contractErr);
+    // Also send approved contracts copy to user and admin email (infoisgpro@gmail.com) with PDF attachment
+    try {
+      const contractHtml = getContractsApprovalHtmlTemplate({
+        customerName: order.name || 'Değerli İSG Pro Kullanıcısı',
+        customerEmail: order.email,
+        planName,
+        price: priceStr,
+        orderId: merchantOid,
+        approvalDate: purchaseDateStr
+      });
+
+      let pdfAttachments: Array<{ filename: string; content: Buffer; contentType: string }> = [];
+      try {
+        pdfAttachments = await generateAllContractsPDFAttachments({
+          customerName: order.name || 'Değerli İSG Pro Kullanıcısı',
+          customerEmail: order.email,
+          customerPhone: order.phone,
+          customerAddress: order.address,
+          orderId: merchantOid,
+          planName,
+          price: priceStr,
+          approvalDate: purchaseDateStr,
+          customerSignature: order.userSignature,
+          sellerSignature: '',
+          sellerName: 'İbrahim Coşkun'
+        });
+      } catch (pdfErr) {
+        console.error('[PayTR PDF Generation Error]:', pdfErr);
+      }
+
+      const transporter = createDynamicTransporter(smtpConfig);
+      await transporter.sendMail({
+        from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
+        to: `${order.email}, infoisgpro@gmail.com`,
+        subject: `İSG Pro Onaylı Mesafeli Satış Sözleşmesi ve Evrakları`,
+        html: contractHtml,
+        attachments: pdfAttachments
+      });
+      console.log(`[SMTP Activation] Contracts and PDFs sent: ${maskEmail(order.email)}`);
+    } catch (contractErr) {
+      console.error('[SMTP Contract Delivery Error]:', contractErr);
+    }
+  } else {
+    console.warn(`[SMTP Activation Warning] SMTP direct mailer is inactive. Skipping activation emails.`);
   }
 
   return true;
@@ -2647,12 +2644,36 @@ app.post('/api/smtp-config', async (req, res) => {
 });
 
 app.post('/api/smtp-config/test', async (req, res) => {
-  const { testEmail, templateType = 'general' } = req.body;
+  const { host, port, user, pass, fromName, testEmail, templateType = 'general' } = req.body;
   if (!testEmail) {
     return res.status(400).json({ error: 'Test alıcı adresi boş olamaz.' });
   }
 
-  console.log(`[Firestore Mail Test] Queuing test email (${templateType}) to ${maskEmail(testEmail)}`);
+  let finalPass = pass;
+  if (pass === '••••••••••••••••') {
+    try {
+      const smtpDocRef = doc(db, 'smtp_config', 'default');
+      const existingSnap = await getDoc(smtpDocRef);
+      if (existingSnap.exists()) {
+        finalPass = existingSnap.data().pass || '';
+      }
+    } catch (err) {
+      console.error('[SMTP Test] Error reading existing password:', err);
+    }
+  }
+
+  const testConfig = {
+    host: host || process.env.SMTP_HOST || "smtp.gmail.com",
+    port: Number(port) || Number(process.env.SMTP_PORT) || 465,
+    user: user || process.env.SMTP_USER || "",
+    pass: finalPass || process.env.SMTP_PASS || ""
+  };
+
+  if (!testConfig.user || !testConfig.pass) {
+    return res.status(400).json({ error: 'E-posta kullanıcısı ve şifresi belirtilmelidir.' });
+  }
+
+  console.log(`[SMTP Test] Sending test email (${templateType}) to ${maskEmail(testEmail)} using host ${testConfig.host}:${testConfig.port}`);
 
   let subject = 'İSG Pro - E-Posta Gönderim Servisi Test Mesajı';
   let html = '';
@@ -2681,7 +2702,7 @@ app.post('/api/smtp-config/test', async (req, res) => {
       name: 'Ahmet Yılmaz',
       email: 'ahmetyilmaz@test.com',
       subject: 'Uygulama Kurulumu Hakkında Soru',
-      message: 'Merhaba, bu bir test mesajıdır. Firestore e-posta servisinin size nasıl iletildiğini deneyimlemeniz için gönderilmiştir. Harika çalışıyor!'
+      message: 'Merhaba, bu bir test mesajıdır. SMTP sunucusu aracılığıyla gelen destek taleplerinin size nasıl iletildiğini deneyimlemeniz için gönderilmiştir. Harika çalışıyor!'
     });
   } else if (templateType === 'contracts') {
     const testOrderId = `TEST-${Date.now().toString().slice(-6)}`;
@@ -2706,10 +2727,7 @@ app.post('/api/smtp-config/test', async (req, res) => {
         price: '₺2.990,00',
         approvalDate: approvalDate
       });
-      testAttachments.push(...pdfs.map(att => ({
-        filename: att.filename,
-        content: att.content
-      })));
+      testAttachments.push(...pdfs);
     } catch (pdfErr) {
       console.error('[SMTP Test PDF Generation Error]:', pdfErr);
     }
@@ -2742,19 +2760,23 @@ app.post('/api/smtp-config/test', async (req, res) => {
             <span style="color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700; display: block; margin-top: 5px;">E-Posta Servis Doğrulama</span>
           </div>
           <p style="font-size: 15px; line-height: 1.6; color: #334155;">Merhaba,</p>
-          <p style="font-size: 15px; line-height: 1.6; color: #334155;">Bu e-posta, İSG Pro yönetim panelinden gerçekleştirmiş olduğunuz <strong>Firestore e-posta servis test işlemi</strong> sonucunda başarıyla gönderilmiştir.</p>
+          <p style="font-size: 15px; line-height: 1.6; color: #334155;">Bu e-posta, İSG Pro yönetim panelinden gerçekleştirmiş olduğunuz <strong>SMTP sunucu ayarları test işlemi</strong> sonucunda başarıyla gönderilmiştir.</p>
           <div style="background-color: #f8fafc; border-left: 4px solid #10b981; padding: 15px; border-radius: 8px; margin: 25px 0;">
-            <h4 style="margin: 0 0 5px 0; color: #0f172a; font-size: 14px;">Kuyruğa Ekleme Başarılı!</h4>
-            <p style="margin: 0; font-size: 12px; color: #475569;">E-posta kaydınız Firestore 'mail' koleksiyonuna başarıyla eklendi. Firebase uzantısı bunu kısa süre içinde alıcıya iletecektir.</p>
+            <h4 style="margin: 0 0 5px 0; color: #0f172a; font-size: 14px;">Kurulum Başarılı!</h4>
+            <p style="margin: 0; font-size: 12px; color: #475569;">E-posta sunucunuz an itibariyle tüm lisans gönderimlerini, kullanıcı giriş şifrelerini (OTP) ve destek mesajlarını otomatik olarak iletmeye hazırdır.</p>
           </div>
           <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 20px;">
             <tr style="border-bottom: 1px solid #f1f5f9;">
-              <td style="padding: 8px 0; color: #64748b; font-weight: bold;">Servis Tipi</td>
-              <td style="padding: 8px 0; color: #0f172a; text-align: right; font-weight: bold;">Firestore Mail Kuyruğu</td>
+              <td style="padding: 8px 0; color: #64748b; font-weight: bold;">SMTP Sunucusu (Host)</td>
+              <td style="padding: 8px 0; color: #0f172a; text-align: right; font-family: monospace;">${testConfig.host}</td>
             </tr>
             <tr style="border-bottom: 1px solid #f1f5f9;">
-              <td style="padding: 8px 0; color: #64748b; font-weight: bold;">Koleksiyon Adı</td>
-              <td style="padding: 8px 0; color: #0f172a; text-align: right; font-family: monospace;">mail</td>
+              <td style="padding: 8px 0; color: #64748b; font-weight: bold;">Bağlantı Portu</td>
+              <td style="padding: 8px 0; color: #0f172a; text-align: right; font-family: monospace;">${testConfig.port}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #f1f5f9;">
+              <td style="padding: 8px 0; color: #64748b; font-weight: bold;">Güvenlik Modu</td>
+              <td style="padding: 8px 0; color: #0f172a; text-align: right;">${testConfig.port === 465 ? 'SSL (Güvenli)' : 'TLS / STARTTLS'}</td>
             </tr>
             <tr>
               <td style="padding: 8px 0; color: #64748b; font-weight: bold;">Test Zamanı</td>
@@ -2769,20 +2791,27 @@ app.post('/api/smtp-config/test', async (req, res) => {
   }
 
   try {
-    const success = await sendEmailViaFirestore(testRecipients, subject, html, testAttachments);
-    if (success) {
-      return res.json({ success: true, message: 'E-posta başarıyla gönderildi.' });
-    } else {
-      return res.status(500).json({ error: 'E-posta gönderilemedi.' });
-    }
+    const transporter = createDynamicTransporter(testConfig);
+    await transporter.sendMail({
+      from: `"${fromName || 'İSG Pro'}" <${testConfig.user}>`,
+      to: testRecipients,
+      subject: subject,
+      html: html,
+      attachments: testAttachments
+    });
+
+    const maskedRecipients = Array.isArray(testRecipients) ? testRecipients.map(m => maskEmail(m)).join(', ') : maskEmail(testRecipients);
+    console.log(`[SMTP Test] Test email successfully delivered to ${maskedRecipients}`);
+    return res.json({ success: true, message: `E-posta başarıyla '${Array.isArray(testRecipients) ? testRecipients.join(' & ') : testRecipients}' adreslerine PDF ekiyle gönderildi.` });
   } catch (err: any) {
-    console.error('[Firestore Mail Test Error]:', err);
+    console.error('[SMTP Test Error]:', err);
     return res.status(500).json({ 
-      error: 'E-posta gönderilemedi.', 
-      details: err.message
+      error: 'E-posta sunucusuna bağlanırken hata oluştu.', 
+      details: err.message || 'Sunucu zaman aşımına uğramış olabilir veya kimlik bilgileri yanlıştır.'
     });
   }
 });
+
 
 // Fetch simulated inbox messages (for user dashboard to check their sent e-mails)
 app.get('/api/my-emails', (req, res) => {
