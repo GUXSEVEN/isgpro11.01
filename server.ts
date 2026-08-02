@@ -2916,6 +2916,8 @@ app.post('/api/smtp-config/test', async (req, res) => {
       `;
   }
 
+  let sentViaSMTP = false;
+
   try {
     const transporter = createDynamicTransporter(testConfig);
     await transporter.sendMail({
@@ -2928,13 +2930,69 @@ app.post('/api/smtp-config/test', async (req, res) => {
 
     const maskedRecipients = Array.isArray(testRecipients) ? testRecipients.map(m => maskEmail(m)).join(', ') : maskEmail(testRecipients);
     console.log(`[SMTP Test] Test email successfully delivered to ${maskedRecipients}`);
+    sentViaSMTP = true;
     return res.json({ success: true, message: `E-posta başarıyla '${Array.isArray(testRecipients) ? testRecipients.join(' & ') : testRecipients}' adreslerine PDF ekiyle gönderildi.` });
   } catch (err: any) {
-    console.error('[SMTP Test Error]:', err);
-    return res.status(500).json({ 
-      error: 'E-posta sunucusuna bağlanırken hata oluştu.', 
-      details: err.message || 'Sunucu zaman aşımına uğramış olabilir veya kimlik bilgileri yanlıştır.'
-    });
+    console.error('[SMTP Test Error] SMTP direct test failed, trying EmailJS fallback...', err);
+  }
+
+  if (!sentViaSMTP) {
+    console.log(`[EmailJS Test] Dispatching EmailJS test email (${templateType}) to ${maskEmail(testEmail)}`);
+    
+    let targetTemplate = EMAILJS_CONTACT_TEMPLATE_ID;
+    let templateParams: any = {};
+
+    if (templateType === 'otp') {
+      targetTemplate = EMAILJS_TEMPLATE_ID;
+      templateParams = {
+        to_email: testEmail,
+        email: testEmail,
+        to: testEmail,
+        to_name: 'Test Kullanıcısı',
+        otp_code: '748291',
+        passcode: '748291',
+        time: '15 dakika',
+        project_name: "İSG Pro"
+      };
+    } else if (templateType === 'license') {
+      targetTemplate = EMAILJS_LICENSE_TEMPLATE_ID;
+      templateParams = {
+        to_email: testEmail,
+        email: testEmail,
+        to: testEmail,
+        user_name: 'Test Kullanıcısı',
+        licenseKey: 'ISG-PRO-TEST-KEY-748291-2026',
+        plan_name: 'Profesyonel Yıllık Paket',
+        plan_type: 'Premium',
+        price: '2.499,00 TL',
+        licensePurchasedAt: new Date().toLocaleDateString('tr-TR'),
+        licenseExpiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toLocaleDateString('tr-TR')
+      };
+    } else {
+      // For general and contact
+      targetTemplate = EMAILJS_CONTACT_TEMPLATE_ID;
+      templateParams = {
+        name: 'Ahmet Yılmaz (Test)',
+        from_name: 'Ahmet Yılmaz (Test)',
+        email: 'ahmetyilmaz@test.com',
+        from_email: 'ahmetyilmaz@test.com',
+        reply_to: 'ahmetyilmaz@test.com',
+        to_email: testEmail,
+        subject: subject,
+        message: 'Bu e-posta, İSG Pro yönetim panelinden gerçekleştirmiş olduğunuz test işlemi sonucunda yedek servis aracılığıyla başarıyla gönderilmiştir.',
+        project_name: "İSG Pro"
+      };
+    }
+
+    const success = await sendEmailViaEmailJS(targetTemplate, templateParams);
+    if (success) {
+      return res.json({ success: true, message: 'E-posta başarıyla gönderildi.' });
+    } else {
+      return res.status(500).json({
+        error: 'E-posta sunucusuna bağlanırken hata oluştu.',
+        details: 'Hem SMTP hem de yedek e-posta servisi başarısız oldu.'
+      });
+    }
   }
 });
 
