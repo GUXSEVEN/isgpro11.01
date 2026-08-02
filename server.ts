@@ -2293,6 +2293,181 @@ app.post('/api/paytr/config', async (req, res) => {
   }
 });
 
+// Helper function to activate order in Firestore and dispatch license delivery emails
+async function activateAndNotifyOrder(merchantOid: string): Promise<boolean> {
+  const order = paytrOrders[merchantOid];
+  if (!order) {
+    console.error(`[Activation Error] Order ${merchantOid} not found in database registry.`);
+    return false;
+  }
+
+  if (order.status === 'success') {
+    console.log(`[Activation] Order ${merchantOid} is already active.`);
+    return true;
+  }
+
+  order.status = 'success';
+  console.log(`[Activation Success] Activating order: ${merchantOid} for ${order.email}`);
+
+  // Activate license in DB/Firestore if db exists
+  if (db && order.email) {
+    try {
+      const usernameKey = order.email.toLowerCase().trim();
+      const userDocRef = doc(db, 'users', usernameKey);
+      const userSnap = await getDoc(userDocRef);
+
+      const purchaseDate = new Date().toISOString();
+      const expiryDate = new Date();
+      if (order.planId === 'yearly') expiryDate.setFullYear(expiryDate.getFullYear() + 1);
+      else expiryDate.setMonth(expiryDate.getMonth() + 1);
+
+      const upgradeFields = {
+        isPremium: true,
+        licenseKey: order.licenseKey,
+        licensePurchasedAt: purchaseDate,
+        licenseExpiresAt: expiryDate.toISOString(),
+        licenseType: order.planId
+      };
+
+      if (userSnap.exists()) {
+        await setDoc(userDocRef, upgradeFields, { merge: true });
+        console.log(`[Firestore] Activated license for user ${usernameKey}`);
+      } else {
+        // Search through all docs if user is saved under custom username instead of email
+        const usersRef = collection(db, 'users');
+        const usersSnap = await getDocs(usersRef);
+        let foundUsername = '';
+        usersSnap.forEach(d => {
+          const u = d.data();
+          if (u.email && u.email.toLowerCase().trim() === usernameKey) {
+            foundUsername = d.id;
+          }
+        });
+        if (foundUsername) {
+          await setDoc(doc(db, 'users', foundUsername), upgradeFields, { merge: true });
+          console.log(`[Firestore] Activated license for user ${foundUsername} via search`);
+        }
+      }
+    } catch (dbErr) {
+      console.error('[Firestore Activation Error]', dbErr);
+    }
+  }
+
+  // Automatically trigger license key delivery email (SMTP First, EmailJS Fallback)
+  const planName = order.planId === 'yearly' ? 'Yıllık Pro Lisans' : 'Aylık Pro Lisans';
+  const planType = order.planId === 'yearly' ? 'Yıllık Premium' : 'Aylık Standart';
+  const priceStr = order.planId === 'yearly' ? '₺2.990,00' : '₺299,00';
+  const purchaseDateStr = new Date().toLocaleDateString('tr-TR');
+  const expiryDateStr = new Date(Date.now() + (order.planId === 'yearly' ? 365 : 30) * 24 * 60 * 60 * 1000).toLocaleDateString('tr-TR');
+
+  let isSentViaSMTP = false;
+
+  // 1. Direct SMTP Attempt if configured
+  const smtpConfig = await getSMTPConfig();
+  if (smtpConfig.active) {
+    console.log(`[SMTP Activation] Dispatching direct SMTP license email to: ${maskEmail(order.email)}`);
+    try {
+      const htmlContent = getLicenseHtmlTemplate({
+        name: order.name || 'Değerli İSG Pro Kullanıcısı',
+        licenseKey: order.licenseKey,
+        planName,
+        planType,
+        price: priceStr,
+        purchaseDate: purchaseDateStr,
+        expiryDate: expiryDateStr
+      });
+      const transporter = createDynamicTransporter(smtpConfig);
+      await transporter.sendMail({
+        from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
+        to: order.email,
+        subject: `Tebrikler, İSG Pro Lisansınız Hazır!`,
+        html: htmlContent
+      });
+      console.log(`[SMTP Activation] License email sent: ${maskEmail(order.email)}`);
+      isSentViaSMTP = true;
+    } catch (smtpError: any) {
+      console.error("[SMTP Activation Error] SMTP direct mailer failed, trying EmailJS fallback...", smtpError);
+    }
+
+    // Also send approved contracts copy to user and admin email (infoisgpro@gmail.com) with PDF attachment
+    try {
+      const contractHtml = getContractsApprovalHtmlTemplate({
+        customerName: order.name || 'Değerli İSG Pro Kullanıcısı',
+        customerEmail: order.email,
+        planName,
+        price: priceStr,
+        orderId: merchantOid,
+        approvalDate: purchaseDateStr
+      });
+
+      let pdfAttachments: Array<{ filename: string; content: Buffer; contentType: string }> = [];
+      try {
+        pdfAttachments = await generateAllContractsPDFAttachments({
+          customerName: order.name || 'Değerli İSG Pro Kullanıcısı',
+          customerEmail: order.email,
+          customerPhone: order.phone,
+          customerAddress: order.address,
+          orderId: merchantOid,
+          planName,
+          price: priceStr,
+          approvalDate: purchaseDateStr,
+          customerSignature: order.userSignature,
+          sellerSignature: '',
+          sellerName: 'İbrahim Coşkun'
+        });
+      } catch (pdfErr) {
+        console.error('[PayTR PDF Generation Error]:', pdfErr);
+      }
+
+      const transporter = createDynamicTransporter(smtpConfig);
+      await transporter.sendMail({
+        from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
+        to: `${order.email}, infoisgpro@gmail.com`,
+        subject: `İSG Pro Onaylı Mesafeli Satış Sözleşmesi ve Evrakları`,
+        html: contractHtml,
+        attachments: pdfAttachments
+      });
+      console.log(`[SMTP Activation] Contracts and PDFs sent: ${maskEmail(order.email)}`);
+    } catch (contractErr) {
+      console.error('[SMTP Contract Delivery Error]:', contractErr);
+    }
+  }
+
+  // 2. EmailJS Fallback if SMTP failed or not active
+  if (!isSentViaSMTP) {
+    console.log(`[EmailJS Activation] Dispatching license email to: ${maskEmail(order.email)}`);
+    try {
+      const emailResponse = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          service_id: EMAILJS_SERVICE_ID,
+          template_id: EMAILJS_LICENSE_TEMPLATE_ID,
+          user_id: EMAILJS_PUBLIC_KEY,
+          template_params: {
+            to_email: order.email,
+            plan_name: planName,
+            license_key: order.licenseKey,
+            purchase_date: purchaseDateStr,
+            price: priceStr
+          }
+        })
+      });
+
+      if (emailResponse.ok) {
+        console.log(`[EmailJS Activation] License email sent: ${maskEmail(order.email)}`);
+      } else {
+        const errorText = await emailResponse.text();
+        console.error(`[EmailJS Activation Failed] Error: ${errorText}`);
+      }
+    } catch (emailError) {
+      console.error(`[EmailJS Activation Error]`, emailError);
+    }
+  }
+
+  return true;
+}
+
 // PayTR step 1: Get secure iframe token from PayTR API
 app.post('/api/paytr/token', async (req, res) => {
   const { planId, name, email, phone, address, userSignature } = req.body;
@@ -2366,181 +2541,6 @@ app.post('/api/paytr/token', async (req, res) => {
     const publicUrl = resolvePublicAppUrl(req, paytrConfig.customDomain);
     const merchant_ok_url = `${publicUrl}/api/paytr/success?oid=${merchantOid}`;
     const merchant_fail_url = `${publicUrl}/api/paytr/fail?oid=${merchantOid}`;
-
-    // Helper function to activate order in Firestore and dispatch license delivery emails
-    async function activateAndNotifyOrder(merchantOid: string): Promise<boolean> {
-      const order = paytrOrders[merchantOid];
-      if (!order) {
-        console.error(`[Activation Error] Order ${merchantOid} not found in database registry.`);
-        return false;
-      }
-
-      if (order.status === 'success') {
-        console.log(`[Activation] Order ${merchantOid} is already active.`);
-        return true;
-      }
-
-      order.status = 'success';
-      console.log(`[Activation Success] Activating order: ${merchantOid} for ${order.email}`);
-
-      // Activate license in DB/Firestore if db exists
-      if (db && order.email) {
-        try {
-          const usernameKey = order.email.toLowerCase().trim();
-          const userDocRef = doc(db, 'users', usernameKey);
-          const userSnap = await getDoc(userDocRef);
-
-          const purchaseDate = new Date().toISOString();
-          const expiryDate = new Date();
-          if (order.planId === 'yearly') expiryDate.setFullYear(expiryDate.getFullYear() + 1);
-          else expiryDate.setMonth(expiryDate.getMonth() + 1);
-
-          const upgradeFields = {
-            isPremium: true,
-            licenseKey: order.licenseKey,
-            licensePurchasedAt: purchaseDate,
-            licenseExpiresAt: expiryDate.toISOString(),
-            licenseType: order.planId
-          };
-
-          if (userSnap.exists()) {
-            await setDoc(userDocRef, upgradeFields, { merge: true });
-            console.log(`[Firestore] Activated license for user ${usernameKey}`);
-          } else {
-            // Search through all docs if user is saved under custom username instead of email
-            const usersRef = collection(db, 'users');
-            const usersSnap = await getDocs(usersRef);
-            let foundUsername = '';
-            usersSnap.forEach(d => {
-              const u = d.data();
-              if (u.email && u.email.toLowerCase().trim() === usernameKey) {
-                foundUsername = d.id;
-              }
-            });
-            if (foundUsername) {
-              await setDoc(doc(db, 'users', foundUsername), upgradeFields, { merge: true });
-              console.log(`[Firestore] Activated license for user ${foundUsername} via search`);
-            }
-          }
-        } catch (dbErr) {
-          console.error('[Firestore Activation Error]', dbErr);
-        }
-      }
-
-      // Automatically trigger license key delivery email (SMTP First, EmailJS Fallback)
-      const planName = order.planId === 'yearly' ? 'Yıllık Pro Lisans' : 'Aylık Pro Lisans';
-      const planType = order.planId === 'yearly' ? 'Yıllık Premium' : 'Aylık Standart';
-      const priceStr = order.planId === 'yearly' ? '₺2.990,00' : '₺299,00';
-      const purchaseDateStr = new Date().toLocaleDateString('tr-TR');
-      const expiryDateStr = new Date(Date.now() + (order.planId === 'yearly' ? 365 : 30) * 24 * 60 * 60 * 1000).toLocaleDateString('tr-TR');
-
-      let isSentViaSMTP = false;
-
-      // 1. Direct SMTP Attempt if configured
-      const smtpConfig = await getSMTPConfig();
-      if (smtpConfig.active) {
-        console.log(`[SMTP Activation] Dispatching direct SMTP license email to: ${maskEmail(order.email)}`);
-        try {
-          const htmlContent = getLicenseHtmlTemplate({
-            name: order.name || 'Değerli İSG Pro Kullanıcısı',
-            licenseKey: order.licenseKey,
-            planName,
-            planType,
-            price: priceStr,
-            purchaseDate: purchaseDateStr,
-            expiryDate: expiryDateStr
-          });
-          const transporter = createDynamicTransporter(smtpConfig);
-          await transporter.sendMail({
-            from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
-            to: order.email,
-            subject: `Tebrikler, İSG Pro Lisansınız Hazır!`,
-            html: htmlContent
-          });
-          console.log(`[SMTP Activation] License email sent: ${maskEmail(order.email)}`);
-          isSentViaSMTP = true;
-        } catch (smtpError: any) {
-          console.error("[SMTP Activation Error] SMTP direct mailer failed, trying EmailJS fallback...", smtpError);
-        }
-
-        // Also send approved contracts copy to user and admin email (infoisgpro@gmail.com) with PDF attachment
-        try {
-          const contractHtml = getContractsApprovalHtmlTemplate({
-            customerName: order.name || 'Değerli İSG Pro Kullanıcısı',
-            customerEmail: order.email,
-            planName,
-            price: priceStr,
-            orderId: merchantOid,
-            approvalDate: purchaseDateStr
-          });
-
-          let pdfAttachments: Array<{ filename: string; content: Buffer; contentType: string }> = [];
-          try {
-            pdfAttachments = await generateAllContractsPDFAttachments({
-              customerName: order.name || 'Değerli İSG Pro Kullanıcısı',
-              customerEmail: order.email,
-              customerPhone: order.phone,
-              customerAddress: order.address,
-              orderId: merchantOid,
-              planName,
-              price: priceStr,
-              approvalDate: purchaseDateStr,
-              customerSignature: order.userSignature,
-              sellerSignature: '',
-              sellerName: 'İbrahim Coşkun'
-            });
-          } catch (pdfErr) {
-            console.error('[PayTR PDF Generation Error]:', pdfErr);
-          }
-
-          const transporter = createDynamicTransporter(smtpConfig);
-          await transporter.sendMail({
-            from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
-            to: `${order.email}, infoisgpro@gmail.com`,
-            subject: `İSG Pro Onaylı Mesafeli Satış Sözleşmesi ve Evrakları`,
-            html: contractHtml,
-            attachments: pdfAttachments
-          });
-          console.log(`[SMTP Activation] Contracts and PDFs sent: ${maskEmail(order.email)}`);
-        } catch (contractErr) {
-          console.error('[SMTP Contract Delivery Error]:', contractErr);
-        }
-      }
-
-      // 2. EmailJS Fallback if SMTP failed or not active
-      if (!isSentViaSMTP) {
-        console.log(`[EmailJS Activation] Dispatching license email to: ${maskEmail(order.email)}`);
-        try {
-          const emailResponse = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              service_id: EMAILJS_SERVICE_ID,
-              template_id: EMAILJS_LICENSE_TEMPLATE_ID,
-              user_id: EMAILJS_PUBLIC_KEY,
-              template_params: {
-                to_email: order.email,
-                plan_name: planName,
-                license_key: order.licenseKey,
-                purchase_date: purchaseDateStr,
-                price: priceStr
-              }
-            })
-          });
-
-          if (emailResponse.ok) {
-            console.log(`[EmailJS Activation] License email sent: ${maskEmail(order.email)}`);
-          } else {
-            const errorText = await emailResponse.text();
-            console.error(`[EmailJS Activation Failed] Error: ${errorText}`);
-          }
-        } catch (emailError) {
-          console.error(`[EmailJS Activation Error]`, emailError);
-        }
-      }
-
-      return true;
-    }
 
     // Signature formula: merchant_id + user_ip + merchant_oid + email + payment_amount + user_basket + no_installment + max_installment + currency + test_mode
     const hash_str = PAYTR_MERCHANT_ID + clean_ip + merchantOid + email + paymentAmount + user_basket + no_installment + max_installment + currency + test_mode;
