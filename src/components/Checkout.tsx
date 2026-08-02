@@ -356,28 +356,6 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
                 </div>
               </div>
 
-              {/* PayTR Test Card Helper Banner */}
-              <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40 rounded-xl p-3 text-xs space-y-1.5">
-                <div className="flex items-center justify-between font-extrabold text-amber-800 dark:text-amber-300 text-[11px]">
-                  <span className="flex items-center gap-1.5">
-                    <AlertCircle size={14} className="text-amber-600 dark:text-amber-400" />
-                    PayTR Test Modu / Demo Kart Bilgileri:
-                  </span>
-                  <button
-                    onClick={() => setStep('paytr_sandbox')}
-                    className="text-[10px] bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 hover:bg-amber-100 text-amber-900 dark:text-amber-200 px-2 py-1 rounded-lg font-bold transition-all cursor-pointer"
-                  >
-                    🧪 Hızlı Simülatöre Geç
-                  </button>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-[10px] font-mono font-bold text-amber-900 dark:text-amber-200 bg-white/60 dark:bg-slate-900/60 p-2 rounded-lg border border-amber-100 dark:border-amber-900/30">
-                  <div>Kart No: <span className="select-all text-indigo-600 dark:text-indigo-400">5443 2300 0000 0000</span></div>
-                  <div>SKT: <span className="select-all">12/28</span></div>
-                  <div>CVV: <span className="select-all">123</span></div>
-                  <div>SMS Kodu: <span className="select-all">123456</span></div>
-                </div>
-              </div>
-
               <div className="bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden relative">
                 <iframe
                   src={`https://www.paytr.com/odeme/guvenli/${iframeToken}`}
@@ -429,18 +407,11 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
                 <ul className="list-disc pl-5 space-y-1 text-[11px] text-slate-500 dark:text-slate-400">
                   <li><strong>Mağaza Bilgileri:</strong> PayTR Mağaza Paneli (paytr.com) -&gt; Entegrasyon Bilgileri'nden aldığınız Mağaza No, Key ve Salt değerlerinin tam ve doğru olduğunu kontrol edin.</li>
                   <li><strong>Test Modu:</strong> PayTR hesabınız henüz canlıya alınmadıysa Yönetici Paneli'nde "Test Modu (1)" seçili olmalıdır.</li>
-                  <li><strong>Hızlı Test:</strong> PayTR onay süreciniz devam ederken uygulamanızı test etmek için aşağıdaki "Test Modu Simülatörü" butonunu kullanabilirsiniz.</li>
                 </ul>
               </div>
 
               {/* Action Buttons */}
-              <div className="pt-2 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 dark:border-slate-850">
-                <button
-                  onClick={() => setStep('paytr_sandbox')}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
-                >
-                  <CheckCircle2 size={14} /> 🧪 Test Modu Simülatörünü Çalıştır (Demo Kartlar)
-                </button>
+              <div className="pt-2 flex flex-wrap items-center justify-end gap-3 border-t border-slate-100 dark:border-slate-850">
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => startPayTRSession('')}
