@@ -2,7 +2,7 @@ services:
   - type: web
     name: isgpro10-01
     runtime: node
-    plan: starter
+    plan: free
     buildCommand: npm install && npm run build
     startCommand: npm run start
     envVars:
