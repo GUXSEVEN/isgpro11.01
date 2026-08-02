@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: isg-pro-api
+    name: isgpro10-01
     runtime: node
     plan: free
     buildCommand: npm install && npm run build
