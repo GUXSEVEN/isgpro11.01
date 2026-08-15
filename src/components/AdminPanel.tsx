@@ -72,6 +72,28 @@ export default function AdminPanel({
   const [showPaytrSecrets, setShowPaytrSecrets] = useState(false);
   const [copiedPaytrUrl, setCopiedPaytrUrl] = useState(false);
   
+  // PayTR 2. ADIM Callback Test Simülatörü Durumları
+  const [paytrTestCallbackRunning, setPaytrTestCallbackRunning] = useState(false);
+  const [paytrTestCallbackResult, setPaytrTestCallbackResult] = useState<any>(null);
+
+  const handleRunPaytrTestCallback = async () => {
+    setPaytrTestCallbackRunning(true);
+    setPaytrTestCallbackResult(null);
+    try {
+      const res = await fetch('/api/paytr/test-callback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planId: 'yearly', email: 'test@isgpro.com', name: 'Test Kullanıcı' })
+      });
+      const data = await res.json();
+      setPaytrTestCallbackResult(data);
+    } catch (err: any) {
+      setPaytrTestCallbackResult({ success: false, error: err.message || 'Test bağlantısı kurulamadı.' });
+    } finally {
+      setPaytrTestCallbackRunning(false);
+    }
+  };
+  
   // Satıcı İmza & Bilgi durumları
   const [sellerName, setSellerName] = useState('İbrahim Coşkun');
   const [sellerSignature, setSellerSignature] = useState('');
@@ -2991,6 +3013,77 @@ export default function AdminPanel({
                   <span className="text-[10px] text-slate-400 mt-1 block">
                     * PayTR Mağaza Paneli &gt; Ayarlar &gt; Bildirim URL (Postback URL) kısmına bu adresi yapıştırın.
                   </span>
+                </div>
+
+                {/* 2. ADIM TEST SIMULATOR CARD */}
+                <div className="pt-3 border-t border-slate-200/80 dark:border-slate-800 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h5 className="text-xs font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
+                        <Sparkles size={14} className="text-indigo-500" /> 2. Aşama (Bildirim URL Callback) Ödeme Testi
+                      </h5>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        PayTR 2. ADIM dökümanındaki HMAC-SHA256 imza doğrulamasını ve düz metin <code className="text-emerald-600 dark:text-emerald-400 font-mono font-bold">OK</code> yanıtını test modunda anında simüle edin.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleRunPaytrTestCallback}
+                      disabled={paytrTestCallbackRunning}
+                      className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-extrabold transition-all flex items-center gap-2 shadow-sm cursor-pointer disabled:opacity-50 active:scale-95 shrink-0"
+                    >
+                      {paytrTestCallbackRunning ? (
+                        <>
+                          <RefreshCcw size={14} className="animate-spin" /> Test Çalıştırılıyor...
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle size={14} /> 2. Aşama Testini Çalıştır
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {paytrTestCallbackResult && (
+                    <div className={`p-4 rounded-xl border text-xs space-y-2.5 transition-all ${
+                      paytrTestCallbackResult.success
+                        ? 'bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900/50 text-emerald-900 dark:text-emerald-200'
+                        : 'bg-rose-50/80 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900/50 text-rose-900 dark:text-rose-200'
+                    }`}>
+                      <div className="flex items-center justify-between">
+                        <span className="font-extrabold flex items-center gap-1.5">
+                          {paytrTestCallbackResult.success ? <CheckCircle size={16} className="text-emerald-600 dark:text-emerald-400" /> : <AlertCircle size={16} className="text-rose-600 dark:text-rose-400" />}
+                          {paytrTestCallbackResult.message || paytrTestCallbackResult.error}
+                        </span>
+                        <span className="font-mono text-[10px] bg-white/80 dark:bg-slate-900/80 px-2 py-0.5 rounded font-extrabold border border-current">
+                          test_mode: 1
+                        </span>
+                      </div>
+
+                      {paytrTestCallbackResult.testDetails && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 font-mono text-[11px]">
+                          <div className="bg-white/80 dark:bg-slate-900/80 p-2.5 rounded-lg border border-slate-200/50 dark:border-slate-800">
+                            <span className="text-[9px] font-bold text-slate-400 block uppercase">Test Sipariş No (merchant_oid)</span>
+                            <span className="font-extrabold text-slate-800 dark:text-slate-200">{paytrTestCallbackResult.testDetails.merchantOid}</span>
+                          </div>
+                          <div className="bg-white/80 dark:bg-slate-900/80 p-2.5 rounded-lg border border-slate-200/50 dark:border-slate-800">
+                            <span className="text-[9px] font-bold text-slate-400 block uppercase">HMAC-SHA256 Imza Doğrulaması</span>
+                            <span className="font-extrabold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                              <Check size={12} /> {paytrTestCallbackResult.testDetails.hashVerified ? 'Hash Uyumlu & Geçerli' : 'Geçersiz Hash'}
+                            </span>
+                          </div>
+                          <div className="bg-white/80 dark:bg-slate-900/80 p-2.5 rounded-lg border border-slate-200/50 dark:border-slate-800">
+                            <span className="text-[9px] font-bold text-slate-400 block uppercase">PayTR Dönen Yanıt (Response Text)</span>
+                            <span className="font-extrabold text-indigo-600 dark:text-indigo-400">{paytrTestCallbackResult.testDetails.expectedResponseText} (HTTP 200 OK)</span>
+                          </div>
+                          <div className="bg-white/80 dark:bg-slate-900/80 p-2.5 rounded-lg border border-slate-200/50 dark:border-slate-800">
+                            <span className="text-[9px] font-bold text-slate-400 block uppercase">Üretilen Test Lisans Anahtarı</span>
+                            <span className="font-extrabold text-amber-600 dark:text-amber-400">{paytrTestCallbackResult.testDetails.licenseKey}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 

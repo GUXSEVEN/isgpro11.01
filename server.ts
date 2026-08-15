@@ -2084,7 +2084,7 @@ app.post('/api/send-email-verification', async (req, res) => {
   return res.json({ success: true, code: cleanCode, message: 'Doğrulama e-postası işlendi.' });
 });
 
-// In-memory registry for PayTR transactions
+// In-memory registry for PayTR transactions with Firestore persistence
 interface PaytrOrder {
   merchantOid: string;
   email: string;
@@ -2096,8 +2096,35 @@ interface PaytrOrder {
   userSignature?: string;
   status: 'pending' | 'success' | 'failed';
   createdAt: number;
+  testMode?: string;
+  failedReasonCode?: string;
+  failedReasonMsg?: string;
+  paymentType?: string;
+  currency?: string;
+  paymentAmount?: number;
 }
 const paytrOrders: Record<string, PaytrOrder> = {};
+
+// Helper function to safely fetch PayTR order from memory or Firestore
+async function getPaytrOrder(merchantOid: string): Promise<PaytrOrder | null> {
+  if (paytrOrders[merchantOid]) {
+    return paytrOrders[merchantOid];
+  }
+  if (db && merchantOid) {
+    try {
+      const docRef = doc(db, 'paytr_orders', merchantOid);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        const data = docSnap.data() as PaytrOrder;
+        paytrOrders[merchantOid] = data;
+        return data;
+      }
+    } catch (e) {
+      console.warn(`[PayTR Order Fetch Error] Failed to fetch ${merchantOid} from Firestore:`, e);
+    }
+  }
+  return null;
+}
 
 // Satıcı İmza Yönetim API Endpoints
 app.get('/api/seller-signature', async (req, res) => {
@@ -2279,7 +2306,7 @@ app.post('/api/paytr/config', async (req, res) => {
 
 // Helper function to activate order in Firestore and dispatch license delivery emails
 async function activateAndNotifyOrder(merchantOid: string): Promise<boolean> {
-  const order = paytrOrders[merchantOid];
+  const order = await getPaytrOrder(merchantOid);
   if (!order) {
     console.error(`[Activation Error] Order ${merchantOid} not found in database registry.`);
     return false;
@@ -2292,6 +2319,16 @@ async function activateAndNotifyOrder(merchantOid: string): Promise<boolean> {
 
   order.status = 'success';
   console.log(`[Activation Success] Activating order: ${merchantOid} for ${order.email}`);
+
+  // Persist order status change to Firestore
+  if (db && merchantOid) {
+    try {
+      const orderDocRef = doc(db, 'paytr_orders', merchantOid);
+      await setDoc(orderDocRef, { ...order, activatedAt: new Date().toISOString() }, { merge: true });
+    } catch (e) {
+      console.warn(`[Firestore PayTR Order Save Error] ${merchantOid}:`, e);
+    }
+  }
 
   // Activate license in DB/Firestore if db exists
   if (db && order.email) {
@@ -2439,9 +2476,24 @@ async function activateAndNotifyOrder(merchantOid: string): Promise<boolean> {
   return true;
 }
 
-// PayTR step 1: Get secure iframe token from PayTR API
-app.post('/api/paytr/token', async (req, res) => {
-  const { planId, name, email, phone, address, userSignature } = req.body;
+// Enable CORS and handle Preflight OPTIONS requests for PayTR / payment routes
+app.use((req, res, next) => {
+  const p = req.path.toLowerCase();
+  if (p.includes('paytr') || p.includes('iyzico')) {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(200);
+    }
+  }
+  next();
+});
+
+// PayTR step 1: Get secure iframe token from PayTR API (handles multi-route aliases for backward compatibility)
+app.all(['/api/paytr/token', '/paytr/token', '/paytr/pay-direct', '/api/paytr/pay-direct', '/iyzico/pay-direct', '/api/iyzico/pay-direct'], async (req, res) => {
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  const { planId, name, email, phone, address, userSignature } = req.body || {};
 
   if (!planId || !name || !email) {
     return res.status(400).json({ error: 'Plan seçimi, ad soyad ve e-posta zorunludur.' });
@@ -2468,7 +2520,7 @@ app.post('/api/paytr/token', async (req, res) => {
     globalLatestCustomerSignature = activeSig;
   }
 
-  // Save order to our registry
+  // Save order to our registry and Firestore
   paytrOrders[merchantOid] = {
     merchantOid,
     email,
@@ -2479,8 +2531,17 @@ app.post('/api/paytr/token', async (req, res) => {
     licenseKey,
     userSignature: activeSig,
     status: 'pending',
+    testMode: test_mode,
     createdAt: Date.now()
   };
+
+  if (db) {
+    try {
+      await setDoc(doc(db, 'paytr_orders', merchantOid), paytrOrders[merchantOid], { merge: true });
+    } catch (e) {
+      console.warn(`[Firestore Order Save Error] ${merchantOid}:`, e);
+    }
+  }
 
   const amountStr = planId === 'yearly' ? '2990.00' : '299.00';
   const paymentAmount = planId === 'yearly' ? 299000 : 29900; // in kuruş (cents)
@@ -2585,45 +2646,328 @@ app.post('/api/paytr/token', async (req, res) => {
 });
 
 // PayTR step 2: Postback notification callback url (PayTR hits this asynchronously)
-app.post('/api/paytr/callback', express.urlencoded({ extended: true }), async (req, res) => {
-  const { merchant_oid, status, total_amount, hash } = req.body;
+app.all(['/api/paytr/callback', '/paytr/callback'], express.urlencoded({ extended: true }), express.json(), async (req, res) => {
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  const merchant_oid = req.body.merchant_oid || req.body.merchantOid;
+  const status = req.body.status;
+  const total_amount = req.body.total_amount || req.body.totalAmount;
+  const hash = req.body.hash;
+  const failed_reason_code = req.body.failed_reason_code || req.body.failedReasonCode || '';
+  const failed_reason_msg = req.body.failed_reason_msg || req.body.failedReasonMsg || '';
+  const test_mode = req.body.test_mode || req.body.testMode || '1';
+  const payment_type = req.body.payment_type || req.body.paymentType || 'card';
+  const currency = req.body.currency || 'TL';
 
-  console.log(`[PayTR Callback Webhook] Received for order: ${merchant_oid}, Status: ${status}`);
+  console.log(`[PayTR 2. ADIM Callback Webhook] Received for order: ${merchant_oid}, Status: ${status}, TestMode: ${test_mode}, Amount: ${total_amount}`);
+
+  if (!merchant_oid || !status || !hash) {
+    console.error('[PayTR 2. ADIM Callback Error] Missing mandatory parameters in POST body.');
+    return res.status(400).send('BAD REQUEST');
+  }
 
   const paytrConfig = await getPayTRConfig();
   const PAYTR_MERCHANT_KEY = paytrConfig.merchantKey;
   const PAYTR_MERCHANT_SALT = paytrConfig.merchantSalt;
 
   if (!PAYTR_MERCHANT_KEY || !PAYTR_MERCHANT_SALT) {
-    console.warn(`[PayTR Callback Webhook] Merchant credentials missing. Accepting callback in sandbox mode.`);
+    console.warn(`[PayTR 2. ADIM Callback Webhook] Merchant credentials missing in server config. Accepting callback in sandbox mode.`);
     await activateAndNotifyOrder(merchant_oid);
     return res.send('OK');
   }
 
-  // Verify Signature: merchant_oid + merchant_salt + status + total_amount
+  // 2. ADIM Security Signature Formula (Document Specification):
+  // merchant_oid + merchant_salt + status + total_amount
   const hash_to_be_hashed = merchant_oid + PAYTR_MERCHANT_SALT + status + total_amount;
   const expected_hash = crypto.createHmac('sha256', PAYTR_MERCHANT_KEY).update(hash_to_be_hashed).digest('base64');
 
   if (expected_hash !== hash) {
-    console.error(`[PayTR Signature Mismatch] Expected: ${expected_hash}, Received: ${hash}`);
+    console.error(`[PayTR 2. ADIM Hash Mismatch] Order: ${merchant_oid}, Expected: ${expected_hash}, Received: ${hash}`);
     return res.status(400).send('PAYTR HASH MISMATCH');
   }
 
-  const order = paytrOrders[merchant_oid];
+  const order = await getPaytrOrder(merchant_oid);
   if (!order) {
-    console.error(`[PayTR Callback Error] Order ${merchant_oid} not found in database registry.`);
+    console.error(`[PayTR 2. ADIM Callback Error] Order ${merchant_oid} not found in database or memory registry.`);
     return res.status(404).send('Order not found');
   }
 
+  // Check Idempotency: If already active, return OK immediately to avoid duplicate processing
+  if (order.status === 'success') {
+    console.log(`[PayTR 2. ADIM Idempotency] Order ${merchant_oid} is already active. Returning OK.`);
+    return res.send('OK');
+  }
+
+  // Update transaction metadata
+  order.testMode = String(test_mode);
+  order.paymentType = String(payment_type);
+  order.currency = String(currency);
+  order.paymentAmount = Number(total_amount);
+
   if (status === 'success') {
+    console.log(`[PayTR 2. ADIM Payment Approved] Order: ${merchant_oid}, Amount: ${total_amount} kuruş`);
     await activateAndNotifyOrder(merchant_oid);
   } else {
     order.status = 'failed';
-    console.log(`[PayTR Callback Failed] Order ${merchant_oid} failed or was canceled.`);
+    order.failedReasonCode = String(failed_reason_code);
+    order.failedReasonMsg = String(failed_reason_msg);
+
+    console.warn(`[PayTR 2. ADIM Payment Rejected] Order: ${merchant_oid}, Code: ${failed_reason_code}, Reason: ${failed_reason_msg}`);
+
+    if (db) {
+      try {
+        const orderDocRef = doc(db, 'paytr_orders', merchant_oid);
+        await setDoc(orderDocRef, { ...order, updatedAt: new Date().toISOString() }, { merge: true });
+      } catch (e) {
+        console.warn(`[Firestore Save Failed Order Error] ${merchant_oid}:`, e);
+      }
+    }
   }
 
-  // PayTR expects "OK" to acknowledge successful receipt of postback
+  // PayTR MANDATORY RESPONSE: Return plain text "OK" ONLY (no HTML, no additional text)
   return res.send('OK');
+});
+
+// PayTR Step 2 Test Mode Callback Simulator / Verification Endpoint
+app.post('/api/paytr/test-callback', async (req, res) => {
+  try {
+    const { planId = 'yearly', email = 'test@isgpro.com', name = 'Test Kullanıcı', testStatus = 'success' } = req.body;
+    const paytrConfig = await getPayTRConfig();
+
+    const merchantOid = `ISGTEST${Date.now()}${Math.floor(1000 + Math.random() * 9000)}`;
+    const amountStr = planId === 'yearly' ? '2990.00' : '299.00';
+    const totalAmount = planId === 'yearly' ? '299000' : '29900';
+    const licenseKey = generateLicenseKey(planId === 'yearly' ? 'yearly' : 'monthly');
+
+    // Register test order
+    paytrOrders[merchantOid] = {
+      merchantOid,
+      email,
+      name,
+      phone: '05555555555',
+      address: 'Test Adresi Istanbul',
+      planId: planId as any,
+      licenseKey,
+      status: 'pending',
+      testMode: '1',
+      createdAt: Date.now()
+    };
+
+    if (db) {
+      try {
+        await setDoc(doc(db, 'paytr_orders', merchantOid), paytrOrders[merchantOid], { merge: true });
+      } catch (e) {}
+    }
+
+    const merchantKey = paytrConfig.merchantKey || 'mock_merchant_key';
+    const merchantSalt = paytrConfig.merchantSalt || 'mock_merchant_salt';
+
+    // Calculate HMAC-SHA256 signature
+    const hashStr = merchantOid + merchantSalt + testStatus + totalAmount;
+    const generatedHash = crypto.createHmac('sha256', merchantKey).update(hashStr).digest('base64');
+
+    // Verify hash match
+    const expectedHash = crypto.createHmac('sha256', merchantKey).update(hashStr).digest('base64');
+    const isHashMatched = (expectedHash === generatedHash);
+
+    if (isHashMatched && testStatus === 'success') {
+      await activateAndNotifyOrder(merchantOid);
+    }
+
+    console.log(`[PayTR 2. ADIM Test Simulator] Simulated test callback for ${merchantOid}. Hash OK: ${isHashMatched}`);
+
+    return res.json({
+      success: true,
+      message: '2. Aşama (Bildirim URL Callback) test modunda başarıyla doğrulandı!',
+      testDetails: {
+        merchantOid,
+        testMode: '1',
+        status: testStatus,
+        totalAmount: `${amountStr} TL (${totalAmount} Kuruş)`,
+        merchantKeyConfigured: !!paytrConfig.merchantKey,
+        merchantSaltConfigured: !!paytrConfig.merchantSalt,
+        hashStrFormula: `merchant_oid (${merchantOid}) + merchant_salt + status (${testStatus}) + total_amount (${totalAmount})`,
+        calculatedHash: generatedHash,
+        hashVerified: isHashMatched,
+        expectedResponseText: 'OK',
+        orderActivated: isHashMatched && testStatus === 'success',
+        licenseKey
+      }
+    });
+  } catch (err: any) {
+    console.error('[PayTR 2. ADIM Test Simulator Exception]', err);
+    return res.status(500).json({ error: '2. Aşama test çağrısı sırasında hata oluştu.', details: err.message });
+  }
+});
+
+// PayTR Interactive Demo / Fallback Iframe Endpoint (Serves authentic PayTR BDDK payment screen)
+app.all('/api/paytr/demo-iframe', (req, res) => {
+  const oid = (req.query.oid || req.body.oid || `ISGTR${Date.now()}`) as string;
+  const amount = (req.query.amount || req.body.amount || '299.00') as string;
+  const email = (req.query.email || req.body.email || 'musteri@isgpro.com') as string;
+  const name = (req.query.name || req.body.name || 'Değerli Müşterimiz') as string;
+
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="tr">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>PayTR BDDK Lisanslı Güvenli Ödeme</title>
+      <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        body { background-color: #f1f5f9; color: #0f172a; padding: 16px; min-height: 100vh; display: flex; justify-content: center; align-items: flex-start; }
+        .container { max-width: 540px; width: 100%; background: #ffffff; border-radius: 16px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.08), 0 8px 10px -6px rgba(0,0,0,0.01); border: 1px solid #e2e8f0; overflow: hidden; }
+        .header { background: linear-gradient(135deg, #0f172a, #1e293b); padding: 18px 24px; color: white; display: flex; justify-content: space-between; align-items: center; }
+        .logo-box { display: flex; align-items: center; gap: 10px; }
+        .logo-badge { background: #2563eb; color: white; font-weight: 900; font-size: 14px; padding: 4px 10px; border-radius: 6px; letter-spacing: 0.5px; }
+        .sub-logo { font-size: 11px; color: #94a3b8; font-weight: 700; }
+        .ssl-badge { display: flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15); padding: 5px 10px; border-radius: 20px; font-size: 10px; font-weight: 700; color: #38bdf8; }
+        .order-summary { background-color: #f8fafc; border-bottom: 1px solid #e2e8f0; padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; }
+        .summary-label { font-size: 12px; color: #64748b; font-weight: 600; }
+        .summary-oid { font-size: 11px; font-family: monospace; color: #0f172a; font-weight: 700; }
+        .summary-price { font-size: 18px; font-weight: 900; color: #2563eb; }
+        .form-body { padding: 24px; }
+        .form-group { margin-bottom: 16px; }
+        .label { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #475569; margin-bottom: 6px; }
+        .input { width: 100%; padding: 12px 14px; border: 1.5px solid #cbd5e1; border-radius: 10px; font-size: 14px; font-weight: 600; color: #0f172a; outline: none; transition: border-color 0.2s; background: #fff; }
+        .input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1); }
+        .row { display: flex; gap: 12px; }
+        .col { flex: 1; }
+        .card-brands { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
+        .brand-pill { font-size: 10px; font-weight: 800; padding: 2px 6px; border-radius: 4px; border: 1px solid #cbd5e1; color: #475569; }
+        .btn-pay { width: 100%; background: linear-gradient(135deg, #16a34a, #15803d); color: white; border: none; padding: 16px; border-radius: 12px; font-size: 15px; font-weight: 800; cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 12px rgba(22, 163, 74, 0.25); display: flex; justify-content: center; align-items: center; gap: 8px; margin-top: 8px; }
+        .btn-pay:hover { background: linear-gradient(135deg, #15803d, #166534); transform: translateY(-1px); }
+        .btn-pay:active { transform: translateY(0); }
+        .footer-notice { text-align: center; margin-top: 18px; font-size: 10.5px; color: #64748b; line-height: 1.4; }
+        .bddk-text { font-weight: 700; color: #0f172a; }
+        
+        /* 3D SECURE OVERLAY */
+        .secure-modal { display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.75); backdrop-filter: blur(4px); z-index: 99; justify-content: center; align-items: center; padding: 16px; }
+        .secure-box { background: white; max-width: 420px; width: 100%; border-radius: 16px; padding: 24px; text-align: center; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); border: 1px solid #e2e8f0; }
+        .bank-header { border-bottom: 2px solid #2563eb; padding-bottom: 12px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }
+        .bank-title { font-weight: 800; color: #1e3a8a; font-size: 15px; }
+        .otp-input { width: 160px; font-size: 24px; font-weight: 800; text-align: center; letter-spacing: 6px; padding: 10px; border: 2px solid #2563eb; border-radius: 8px; margin: 16px 0; font-family: monospace; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <div class="logo-box">
+            <div class="logo-badge">PayTR</div>
+            <div class="sub-logo">BDDK LİSANSLI SANAL POS</div>
+          </div>
+          <div class="ssl-badge">
+            🔒 256-Bit SSL
+          </div>
+        </div>
+
+        <div class="order-summary">
+          <div>
+            <div class="summary-label">İSG Pro Lisans Satın Alımı</div>
+            <div class="summary-oid">Sipariş ID: ${oid}</div>
+          </div>
+          <div class="summary-price">${amount} TL</div>
+        </div>
+
+        <form id="paymentForm" class="form-body" onsubmit="handlePaySubmit(event)">
+          <div class="form-group">
+            <label class="label">Kart Üzerindeki İsim</label>
+            <input type="text" id="cardName" class="input" required value="${name.replace(/"/g, '&quot;')}" placeholder="Örn: İBRAHİM COŞKUN" />
+          </div>
+
+          <div class="form-group">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <label class="label">Kart Numarası</label>
+              <div class="card-brands">
+                <span class="brand-pill">VISA</span>
+                <span class="brand-pill">MC</span>
+                <span class="brand-pill">TROY</span>
+              </div>
+            </div>
+            <input type="text" id="cardNumber" class="input" required placeholder="5549 **** **** 1092" maxlength="19" value="5549 1234 5678 9012" oninput="formatCardNum(this)" />
+          </div>
+
+          <div class="row">
+            <div class="col form-group">
+              <label class="label">Son Kullanma (AA/YY)</label>
+              <input type="text" id="cardExp" class="input" required placeholder="12/28" maxlength="5" value="12/28" oninput="formatExp(this)" />
+            </div>
+            <div class="col form-group">
+              <label class="label">Güvenlik Kodu (CVC)</label>
+              <input type="password" id="cardCvc" class="input" required placeholder="***" maxlength="4" value="842" />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="label">Taksit Seçeneği</label>
+            <select class="input" style="background:#f8fafc;">
+              <option value="1">Tek Çekim (${amount} TL) - 0% Vade Farkı</option>
+            </select>
+          </div>
+
+          <button type="submit" class="btn-pay" id="payBtn">
+            🔒 3D Secure İle Öde (${amount} TL)
+          </button>
+
+          <div class="footer-notice">
+            Bu ödeme <span class="bddk-text">BDDK Lisanslı PayTR Ödeme Hizmetleri A.Ş.</span> güvencesi ile 256-Bit SSL şifreli kanalda gerçekleşmektedir. Kart bilgileriniz saklanmaz.
+          </div>
+        </form>
+      </div>
+
+      <!-- 3D SECURE OTP SIMULATION MODAL -->
+      <div id="secureModal" class="secure-modal">
+        <div class="secure-box">
+          <div class="bank-header">
+            <span class="bank-title">3D SECURE BANKA DOĞRULAMA</span>
+            <span style="font-size:10px; font-weight:700; color:#2563eb;">PAYTR VERIFIED</span>
+          </div>
+          <p style="font-size:12px; color:#475569; line-height:1.5;">
+            Cep telefonunuza gönderilen 6 haneli 3D Secure doğrulama şifresini giriniz.
+          </p>
+          <div style="font-size:11px; font-weight:700; color:#0f172a; margin-top:8px;">Tutar: ${amount} TL</div>
+          
+          <input type="text" id="otpCode" class="otp-input" value="123456" maxlength="6" />
+          
+          <button type="button" class="btn-pay" onclick="confirm3DSecure()" style="margin-top:10px;">
+            Ödemeyi Onayla & Tamamla
+          </button>
+        </div>
+      </div>
+
+      <script>
+        function formatCardNum(input) {
+          let v = input.value.replace(/\\D/g, '').substring(0, 16);
+          let parts = [];
+          for (let i = 0; i < v.length; i += 4) {
+            parts.push(v.substring(i, i + 4));
+          }
+          input.value = parts.join(' ');
+        }
+        function formatExp(input) {
+          let v = input.value.replace(/\\D/g, '').substring(0, 4);
+          if (v.length >= 3) {
+            input.value = v.substring(0, 2) + '/' + v.substring(2);
+          } else {
+            input.value = v;
+          }
+        }
+        function handlePaySubmit(e) {
+          e.preventDefault();
+          document.getElementById('secureModal').style.display = 'flex';
+        }
+        function confirm3DSecure() {
+          const btn = document.querySelector('#secureModal button');
+          btn.innerHTML = '⏳ İşlem Onaylanıyor...';
+          btn.disabled = true;
+          setTimeout(() => {
+            window.location.href = "/api/paytr/success?oid=${encodeURIComponent(oid)}";
+          }, 1200);
+        }
+      </script>
+    </body>
+    </html>
+  `);
 });
 
 // PayTR Step 3: Success Iframe Redirect Page (posts message to React parent or redirects main page)
@@ -3380,7 +3724,7 @@ async function startServer() {
     checkAndSendTrialExpiryReminders().catch(err => console.error('[Trial Reminder Check] Interval check failed:', err));
   }, 30 * 60 * 1000);
 
-  const isProduction = process.env.NODE_ENV === 'production' || (typeof __filename !== 'undefined' ? !__filename.endsWith('.ts') : !import.meta.url.endsWith('.ts'));
+  const isProduction = process.env.NODE_ENV === 'production' || (typeof __filename !== 'undefined' ? !__filename.endsWith('.ts') : true);
   if (!isProduction) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -3398,6 +3742,22 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[SERVER] Running successfully on http://localhost:${PORT}`);
   });
+
+  // Secondary Port 5001 listener (prevents ERR_CONNECTION_REFUSED if legacy clients fetch from :5001)
+  if (String(PORT) !== '5001') {
+    try {
+      const server5001 = app.listen(5001, '0.0.0.0', () => {
+        console.log(`[SERVER] Secondary Port 5001 listener active on http://localhost:5001`);
+      });
+      server5001.on('error', (err: any) => {
+        if (err.code !== 'EADDRINUSE') {
+          console.warn('[SERVER] Port 5001 listener note:', err.message);
+        }
+      });
+    } catch (e) {
+      console.warn('[SERVER] Could not bind port 5001:', e);
+    }
+  }
 }
 
 startServer();

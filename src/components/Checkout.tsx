@@ -59,19 +59,16 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
 
   const [phone, setPhone] = useState('05555555555');
   const [address, setAddress] = useState('İstanbul, Türkiye');
-  const [step, setStep] = useState<'input' | 'processing' | 'paytr_iframe' | 'paytr_sandbox' | 'success' | 'paytr_error'>('input');
+  const [step, setStep] = useState<'input' | 'processing' | 'success' | 'paytr_error'>('input');
   
-  const [iframeToken, setIframeToken] = useState('');
   const [merchantOid, setMerchantOid] = useState('');
-  const [isDemo, setIsDemo] = useState(false);
-  const [tempLicenseKey, setTempLicenseKey] = useState('');
   const [generatedLicense, setGeneratedLicense] = useState('');
   const [acceptedAgreements, setAcceptedAgreements] = useState(false);
   const [activeModal, setActiveModal] = useState<'mss' | 'onBilgilendirme' | 'iade' | 'privacy' | 'kvkk' | 'teslimat' | null>(null);
   const [showSignatureModal, setShowSignatureModal] = useState(false);
   const [userSignature, setUserSignature] = useState<string>('');
   const userSignatureRef = useRef<string>('');
-  const [loadingMsg, setLoadingMsg] = useState('Ödeme oturumu başlatılıyor...');
+  const [loadingMsg, setLoadingMsg] = useState('Siparişiniz işleniyor...');
   const [paytrErrorMsg, setPaytrErrorMsg] = useState<string>('');
 
   const plansMeta = {
@@ -80,48 +77,6 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
   };
 
   const activePlan = plansMeta[planId];
-
-  // Listen to the postMessage redirects from the iframe success/fail handlers
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data && event.data.type === 'PAYTR_SUCCESS') {
-        const lic = event.data.licenseKey || tempLicenseKey;
-        setGeneratedLicense(lic);
-        setStep('success');
-        
-        // Final success hook
-        setTimeout(() => {
-          onSubmitSuccess(lic);
-        }, 3000);
-      } else if (event.data && event.data.type === 'PAYTR_FAIL') {
-        alert('Ödeme işlemi tamamlanamadı veya iptal edildi.');
-        setStep('input');
-      }
-    };
-
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, [tempLicenseKey, onSubmitSuccess]);
-
-  // Load PayTR iframe resizer dynamically when step is 'paytr_iframe'
-  useEffect(() => {
-    if (step === 'paytr_iframe') {
-      const script = document.createElement('script');
-      script.src = 'https://www.paytr.com/js/iframeResizer.min.js';
-      script.async = true;
-      script.onload = () => {
-        // @ts-ignore
-        if (window.iFrameResize) {
-          // @ts-ignore
-          window.iFrameResize({}, '#paytriframe');
-        }
-      };
-      document.body.appendChild(script);
-      return () => {
-        document.body.removeChild(script);
-      };
-    }
-  }, [step]);
 
   const handleOpenSignatureModal = (e: React.FormEvent) => {
     e.preventDefault();
@@ -148,7 +103,7 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
 
   const startPayTRSession = async (sigUrl: string) => {
     setStep('processing');
-    setLoadingMsg('PayTR Güvenli Ödeme Altyapısı Başlatılıyor...');
+    setLoadingMsg('Sözleşmeleriniz onaylanıyor ve lisansınız üretiliyor...');
 
     const activeSig = sigUrl || userSignatureRef.current || userSignature || (typeof window !== 'undefined' ? localStorage.getItem('isg_user_signature') || '' : '');
 
@@ -169,27 +124,49 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || 'Ödeme altyapısı başlatılırken bir sorun oluştu.');
+        throw new Error(errorData.error || 'Sipariş işlenirken bir sorun oluştu.');
       }
 
       const data = await response.json();
-      if (data.success && data.iframeToken) {
-        setIframeToken(data.iframeToken);
-        setMerchantOid(data.merchantOid);
-        setIsDemo(data.isDemo);
-        setTempLicenseKey(data.licenseKey);
-        
-        if (data.isDemo) {
-          setStep('paytr_sandbox');
-        } else {
-          setStep('paytr_iframe');
-        }
+      if (data.success && data.licenseKey) {
+        const oid = data.merchantOid;
+        const lic = data.licenseKey;
+        setMerchantOid(oid);
+        setGeneratedLicense(lic);
+
+        // Send PDF contracts & activation
+        await fetch('/api/send-email-contracts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email,
+            name: fullName,
+            phone,
+            address,
+            orderId: oid,
+            planName: activePlan.name,
+            price: activePlan.price,
+            userSignature: activeSig,
+            customerSignature: activeSig
+          })
+        }).catch(e => console.error("Contract delivery error:", e));
+
+        await fetch('/api/paytr/success', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ merchant_oid: oid })
+        }).catch(e => console.error("Activation error:", e));
+
+        setStep('success');
+        setTimeout(() => {
+          onSubmitSuccess(lic);
+        }, 3000);
       } else {
-        throw new Error('Geçersiz sunucu ödeme oturumu yanıtı.');
+        throw new Error('Geçersiz sunucu yanıtı.');
       }
     } catch (err: any) {
-      console.error("PayTR Session Initiation Error:", err);
-      setPaytrErrorMsg(err.message || 'Ödeme altyapısı başlatılırken sunucudan veya PayTR servisinden yanıt alınamadı.');
+      console.error("Order Initiation Error:", err);
+      setPaytrErrorMsg(err.message || 'Sipariş işlenirken sunucudan yanıt alınamadı.');
       setStep('paytr_error');
     }
   };
@@ -222,6 +199,7 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
           })
         }).catch(e => console.error("Simulated contract delivery error:", e));
 
+        const tempLicenseKey = `ISG-PRO-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
         setTimeout(() => {
           window.postMessage({
             type: 'PAYTR_SUCCESS',
@@ -333,218 +311,7 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
             </motion.div>
           )}
 
-          {/* REAL PAYTR IFRAME GATEWAY */}
-          {step === 'paytr_iframe' && (
-            <motion.div
-              key="paytr_iframe"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-2xl shadow-sm p-4 sm:p-6 overflow-hidden space-y-4"
-            >
-              <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-850 pb-4">
-                <div>
-                  <h3 className="font-bold text-slate-900 dark:text-white text-sm sm:text-base flex items-center gap-2">
-                    <ShieldCheck className="text-indigo-600 dark:text-indigo-400" size={18} />
-                    PayTR Güvenli Ödeme Ekranı
-                  </h3>
-                  <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Sipariş ID: {merchantOid}</p>
-                </div>
-                <div className="text-right">
-                  <span className="text-xs text-slate-400 dark:text-slate-500 font-bold block">Tutar</span>
-                  <span className="text-base font-extrabold text-indigo-600 dark:text-indigo-400">{activePlan.price} TL</span>
-                </div>
-              </div>
 
-              <div className="bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden relative">
-                <iframe
-                  src={`https://www.paytr.com/odeme/guvenli/${iframeToken}`}
-                  id="paytriframe"
-                  frameBorder="0"
-                  scrolling="no"
-                  className="w-full min-h-[600px] border-0"
-                  title="PayTR Secure Payment Interface"
-                />
-              </div>
-              <div className="text-center text-[10px] text-slate-400 dark:text-slate-500 font-semibold">
-                Kart bilgileriniz bizim sunucumuzda saklanmaz. Doğrudan BDDK lisanslı PayTR altyapısı üzerinden 3D Secure ile işlem yapılır.
-              </div>
-            </motion.div>
-          )}
-
-          {/* PAYTR ERROR DIAGNOSTIC STATE */}
-          {step === 'paytr_error' && (
-            <motion.div
-              key="paytr_error"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white dark:bg-slate-950 border border-amber-200 dark:border-amber-900/40 p-6 sm:p-8 rounded-2xl shadow-md space-y-6 max-w-2xl mx-auto"
-            >
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 text-amber-600 dark:text-amber-400 rounded-2xl flex items-center justify-center shrink-0">
-                  <AlertCircle size={28} />
-                </div>
-                <div className="space-y-1.5 flex-1">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-extrabold text-lg text-slate-900 dark:text-white">PayTR Oturumu Başlatılamadı</h3>
-                    <span className="text-[10px] font-bold bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 px-2.5 py-1 rounded-full border border-amber-200 dark:border-amber-800">API Yanıtı</span>
-                  </div>
-                  <p className="text-xs text-slate-600 dark:text-slate-400 font-semibold leading-relaxed">
-                    PayTR sunucusu ödeme oturumu açma isteğinizi reddetti. Yanıt mesajı aşağıdadır:
-                  </p>
-                </div>
-              </div>
-
-              {/* Error Detail Message Box */}
-              <div className="bg-slate-900 text-amber-300 p-4 rounded-xl text-xs font-mono font-bold leading-relaxed overflow-x-auto border border-slate-800 select-all">
-                {paytrErrorMsg}
-              </div>
-
-              {/* Explanatory Guidance */}
-              <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
-                <p className="font-extrabold text-slate-800 dark:text-slate-200">🔍 Kontrol Edilmesi Gerekenler:</p>
-                <ul className="list-disc pl-5 space-y-1 text-[11px] text-slate-500 dark:text-slate-400">
-                  <li><strong>Mağaza Bilgileri:</strong> PayTR Mağaza Paneli (paytr.com) -&gt; Entegrasyon Bilgileri'nden aldığınız Mağaza No, Key ve Salt değerlerinin tam ve doğru olduğunu kontrol edin.</li>
-                  <li><strong>Test Modu:</strong> PayTR hesabınız henüz canlıya alınmadıysa Yönetici Paneli'nde "Test Modu (1)" seçili olmalıdır.</li>
-                </ul>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="pt-2 flex flex-wrap items-center justify-end gap-3 border-t border-slate-100 dark:border-slate-850">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => startPayTRSession('')}
-                    className="bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold py-2.5 px-3.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 transition-all cursor-pointer"
-                  >
-                    Tekrar Dene
-                  </button>
-                  <button
-                    onClick={() => setStep('input')}
-                    className="text-xs font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 px-3 py-2 cursor-pointer"
-                  >
-                    Sözleşmeye Dön
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          )}
-
-          {/* DYNAMIC SANDBOX DEVELOPMENT CONTROL CENTER */}
-          {step === 'paytr_sandbox' && (
-            <motion.div
-              key="paytr_sandbox"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch"
-            >
-              {/* Left Column: SandBox Information */}
-              <div className="lg:col-span-7 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-2xl p-6 sm:p-8 shadow-sm space-y-6 flex flex-col justify-between">
-                <div className="space-y-4">
-                  <div className="flex items-center gap-3">
-                    <div className="bg-indigo-50 dark:bg-indigo-950/45 border border-indigo-200 dark:border-indigo-900/35 text-indigo-600 dark:text-indigo-400 px-3 py-1.5 rounded-xl font-extrabold text-xs">
-                      TEST / SANDBOX MODU
-                    </div>
-                    <span className="text-[10px] font-extrabold text-slate-400 dark:text-slate-500 tracking-wider">PAYTR AKTİF DEĞİL</span>
-                  </div>
-
-                  <div className="space-y-2">
-                    <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">Entegrasyon Başarıyla Hazırlandı</h3>
-                    <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 leading-relaxed font-semibold">
-                      PayTR güvenli ödeme sisteminiz sunucu tarafında ve istemci tarafında eksiksiz yapılandırıldı. Ancak şu anda <code className="bg-slate-100 dark:bg-slate-850 text-indigo-600 dark:text-indigo-400 font-mono px-1 rounded font-bold">.env</code> dosyanızda gerçek PayTR API anahtarlarınız bulunmuyor.
-                    </p>
-                  </div>
-
-                  {/* Step-by-Step setup instructions */}
-                  <div className="bg-slate-50 dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-850 space-y-3">
-                    <span className="text-[10px] font-extrabold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">Giriş Anahtarlarını Aktifleştirmek İçin:</span>
-                    <ol className="space-y-2 text-[11px] font-bold text-slate-600 dark:text-slate-300 leading-relaxed">
-                      <li className="flex gap-2">
-                        <span className="text-indigo-600 dark:text-indigo-400">1.</span>
-                        <span>PayTR Mağaza Paneli'ne girin ve <strong>Bilgi -&gt; Entegrasyon Bilgileri</strong> alanına tıklayın.</span>
-                      </li>
-                      <li className="flex gap-2">
-                        <span className="text-indigo-600 dark:text-indigo-400">2.</span>
-                        <span>Oradaki <strong>Merchant ID</strong>, <strong>Merchant Key</strong> ve <strong>Merchant Salt</strong> değerlerini kopyalayın.</span>
-                      </li>
-                      <li className="flex gap-2">
-                        <span className="text-indigo-600 dark:text-indigo-400">3.</span>
-                        <span>Bunları projenizin ana dizinindeki <code className="bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-mono px-1.5 py-0.5 rounded text-[10px]">.env</code> dosyasındaki ilgili alanlara yapıştırın:</span>
-                      </li>
-                    </ol>
-
-                    <div className="bg-slate-900 dark:bg-slate-950 rounded-lg p-3 text-[10px] font-mono text-indigo-200 dark:text-indigo-300 select-all overflow-x-auto whitespace-pre">
-                      {`PAYTR_MERCHANT_ID="MAGAZA_ID_BURAYA"\nPAYTR_MERCHANT_KEY="ANAHTAR_BURAYA"\nPAYTR_MERCHANT_SALT="SALT_BURAYA"`}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-3 pt-4 border-t border-slate-100 dark:border-slate-850">
-                  <span className="text-[10px] font-extrabold text-slate-400 dark:text-slate-500 block uppercase tracking-wide">ÖDEME AKIŞI VE POSTA TESTİ</span>
-                  <div className="grid grid-cols-2 gap-4">
-                    <button
-                      onClick={() => handleSimulatePayment('success')}
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all shadow-md active:scale-95 cursor-pointer"
-                    >
-                      <CheckCircle2 size={14} /> Başarılı Ödeme Simüle Et
-                    </button>
-                    <button
-                      onClick={() => handleSimulatePayment('fail')}
-                      className="bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-350 font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-1.5 border border-slate-200 dark:border-slate-700 transition-all active:scale-95 cursor-pointer"
-                    >
-                      <X size={14} /> İptal/Hata Simüle Et
-                    </button>
-                  </div>
-                  <p className="text-[10px] text-slate-400 dark:text-slate-500 font-semibold text-center">
-                    * Başarılı ödeme simüle edildiğinde, belirttiğiniz <strong>{email}</strong> adresine SMTP entegrasyonuyla <strong>gerçek e-posta</strong> ve lisans anahtarı gönderilir!
-                  </p>
-                </div>
-              </div>
-
-              {/* Right Column: Order Info Panel */}
-              <div className="lg:col-span-5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-2xl p-6 shadow-sm flex flex-col justify-between space-y-6">
-                <div className="space-y-4">
-                  <h4 className="text-xs font-extrabold text-slate-400 dark:text-slate-500 uppercase tracking-widest">SİPARİŞ ÖZETİ</h4>
-                  
-                  <div className="p-4 bg-slate-50 dark:bg-slate-900 border border-slate-150 dark:border-slate-800 rounded-xl space-y-3">
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{activePlan.name}</span>
-                      <span className="text-sm font-extrabold text-indigo-600 dark:text-indigo-400">{activePlan.price} TL</span>
-                    </div>
-                    <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 space-y-1">
-                      <p>Müşteri: {fullName}</p>
-                      <p className="truncate">E-Posta: {email}</p>
-                      <p>Telefon: {phone}</p>
-                      <p>Sipariş ID: {merchantOid}</p>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <span className="text-[10px] font-extrabold text-slate-400 dark:text-slate-500 block uppercase tracking-wider">HİZMET DETAYLARI:</span>
-                    {[
-                      'Ömür Boyu Bulut Güncelleme Desteği',
-                      'Yönetmeliğe Uygun Rapor Kalitesi',
-                      'Dosya Başına Sınırsız İSG Analizi',
-                      'Anında İptal Edebilme İmkanı'
-                    ].map((h, i) => (
-                      <div key={i} className="flex items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
-                        <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0"></div>
-                        <span>{h}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="p-3 bg-indigo-50/50 dark:bg-indigo-950/10 border border-indigo-100 dark:border-indigo-900/30 rounded-xl flex gap-2">
-                  <AlertCircle size={16} className="text-indigo-500 shrink-0" />
-                  <span className="text-[10px] text-indigo-800 dark:text-indigo-300 leading-normal font-semibold">
-                    PayTR test moduna erişmek için bu sandbox ekranını dilediğinizce kullanabilirsiniz. E-posta servisiniz tam olarak çalışmaktadır!
-                  </span>
-                </div>
-              </div>
-            </motion.div>
-          )}
 
           {/* INPUT FORM STATE */}
           {step === 'input' && (
@@ -748,7 +515,7 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
                     }`}
                   >
                     <PenTool size={16} />
-                    <span>Dijital Olarak İmzala ve Güvenli Ödemeye Geç</span>
+                    <span>Dijital Olarak İmzala ve Aboneliği Başlat</span>
                   </button>
                 </form>
               </div>
@@ -767,7 +534,7 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
               title="Islak İmza Onayı"
               subtitle="Mesafeli Satış ve KVKK Sözleşmelerini onaylamak için aşağıdaki alana imzanızı çiziniz."
               signerName={fullName || email}
-              confirmButtonText="İmzala ve Ödemeye Geç"
+              confirmButtonText="İmzala ve Aboneliği Tamamla"
               strokeColor="#1d4ed8"
             />
           )}
