@@ -3743,8 +3743,8 @@ async function startServer() {
     console.log(`[SERVER] Running successfully on http://localhost:${PORT}`);
   });
 
-  // Secondary Port 5001 listener (prevents ERR_CONNECTION_REFUSED if legacy clients fetch from :5001)
-  if (String(PORT) !== '5001') {
+  // Secondary Port 5001 listener (only in development)
+  if (process.env.NODE_ENV !== 'production' && String(PORT) !== '5001') {
     try {
       const server5001 = app.listen(5001, '0.0.0.0', () => {
         console.log(`[SERVER] Secondary Port 5001 listener active on http://localhost:5001`);
