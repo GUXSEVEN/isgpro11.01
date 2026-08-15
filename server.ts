@@ -507,11 +507,30 @@ const getSMTPConfig = async () => {
 
 const createDynamicTransporter = (config: { host: string; port: number; user: string; pass: string }) => {
   const cleanPass = (config.pass || '').replace(/\s+/g, '');
+  const isGmail = !config.host || config.host.includes('gmail.com');
+
+  if (isGmail) {
+    return nodemailer.createTransport({
+      service: 'gmail',
+      family: 4, // Force IPv4 for Render cloud compatibility
+      auth: {
+        user: config.user,
+        pass: cleanPass
+      },
+      tls: {
+        rejectUnauthorized: false
+      },
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
+      socketTimeout: 15000
+    });
+  }
+
   return nodemailer.createTransport({
     host: config.host,
     port: config.port,
     secure: config.port === 465,
-    family: 4, // Force IPv4 to resolve Render container IPv6 ENETUNREACH network errors
+    family: 4,
     auth: {
       user: config.user,
       pass: cleanPass
@@ -519,9 +538,9 @@ const createDynamicTransporter = (config: { host: string; port: number; user: st
     tls: {
       rejectUnauthorized: false
     },
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 10000
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 15000
   });
 };
 
