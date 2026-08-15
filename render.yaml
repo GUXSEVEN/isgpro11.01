@@ -23,7 +23,7 @@ services:
       - key: SMTP_HOST
         value: smtp.gmail.com
       - key: SMTP_PORT
-        value: "465"
+        value: "587"
       - key: SMTP_FROM_NAME
         value: İSG Pro
       - key: SMTP_USER

@@ -476,9 +476,9 @@ const sendEmailViaEmailJS = async (
 // Resolves dynamically from Firestore (smtp_config/default) or falls back to environment variables
 const getSMTPConfig = async () => {
   let host = process.env.SMTP_HOST || "smtp.gmail.com";
-  let port = Number(process.env.SMTP_PORT) || 465;
+  let port = Number(process.env.SMTP_PORT) || 587;
   let user = process.env.SMTP_USER || "";
-  let pass = process.env.SMTP_PASS || "";
+  let pass = (process.env.SMTP_PASS || "").replace(/\s+/g, '');
   let fromName = process.env.SMTP_FROM_NAME || "İSG Pro";
   let active = !!(user && pass);
 
@@ -491,7 +491,7 @@ const getSMTPConfig = async () => {
         if (data.host) host = data.host;
         if (data.port) port = Number(data.port);
         if (data.user) user = data.user;
-        if (data.pass) pass = data.pass;
+        if (data.pass) pass = String(data.pass).replace(/\s+/g, '');
         if (data.fromName) fromName = data.fromName;
         active = !!(user && pass);
       } else {
@@ -506,20 +506,22 @@ const getSMTPConfig = async () => {
 };
 
 const createDynamicTransporter = (config: { host: string; port: number; user: string; pass: string }) => {
+  const cleanPass = (config.pass || '').replace(/\s+/g, '');
   return nodemailer.createTransport({
     host: config.host,
     port: config.port,
     secure: config.port === 465,
+    family: 4, // Force IPv4 to resolve Render container IPv6 ENETUNREACH network errors
     auth: {
       user: config.user,
-      pass: config.pass
+      pass: cleanPass
     },
     tls: {
       rejectUnauthorized: false
     },
-    connectionTimeout: 8000,
-    greetingTimeout: 8000,
-    socketTimeout: 8000
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 10000
   });
 };
 
@@ -3136,7 +3138,7 @@ app.post('/api/smtp-config/test', async (req, res) => {
     host: host || process.env.SMTP_HOST || "smtp.gmail.com",
     port: Number(port) || Number(process.env.SMTP_PORT) || 465,
     user: user || process.env.SMTP_USER || "",
-    pass: finalPass || process.env.SMTP_PASS || ""
+    pass: (finalPass || process.env.SMTP_PASS || "").replace(/\s+/g, '')
   };
 
   if (!testConfig.user || !testConfig.pass) {
@@ -3261,6 +3263,7 @@ app.post('/api/smtp-config/test', async (req, res) => {
   }
 
   let sentViaSMTP = false;
+  let smtpErrorMsg = '';
 
   try {
     const transporter = createDynamicTransporter(testConfig);
@@ -3277,6 +3280,7 @@ app.post('/api/smtp-config/test', async (req, res) => {
     sentViaSMTP = true;
     return res.json({ success: true, message: `E-posta başarıyla '${Array.isArray(testRecipients) ? testRecipients.join(' & ') : testRecipients}' adreslerine PDF ekiyle gönderildi.` });
   } catch (err: any) {
+    smtpErrorMsg = err?.message || String(err);
     console.error('[SMTP Test Error] SMTP direct test failed, trying EmailJS fallback...', err);
   }
 
@@ -3334,7 +3338,7 @@ app.post('/api/smtp-config/test', async (req, res) => {
     } else {
       return res.status(500).json({
         error: 'E-posta sunucusuna bağlanırken hata oluştu.',
-        details: 'Hem SMTP hem de yedek e-posta servisi başarısız oldu.'
+        details: smtpErrorMsg ? `SMTP Hatası: ${smtpErrorMsg}` : 'Hem SMTP hem de yedek e-posta servisi başarısız oldu.'
       });
     }
   }
