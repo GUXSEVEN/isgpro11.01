@@ -5,6 +5,7 @@
 
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
@@ -3755,9 +3756,38 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    const possibleDistPaths = [
+      path.join(process.cwd(), 'dist'),
+      __dirname,
+      path.join(__dirname, 'dist'),
+      path.join(__dirname, '..', 'dist')
+    ];
+    const distPath = possibleDistPaths.find(p => fs.existsSync(path.join(p, 'index.html'))) || path.join(process.cwd(), 'dist');
+    console.log(`[SERVER] Production static assets directory resolved to: ${distPath}`);
+
+    // Serve static files with caching
+    app.use(express.static(distPath, {
+      maxAge: '1y',
+      immutable: true,
+      index: false
+    }));
+
+    // Prevent missing static assets from falling through to SPA index.html (which causes MIME type errors)
+    app.use((req, res, next) => {
+      if (
+        req.path.startsWith('/assets/') ||
+        /\.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot|json|map)$/i.test(req.path)
+      ) {
+        return res.status(404).type('text/plain').send('Resource not found');
+      }
+      next();
+    });
+
+    // SPA catch-all for HTML routes with anti-caching for index.html
     app.get('*', (req, res) => {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
