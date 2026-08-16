@@ -389,8 +389,8 @@ export default function AdminPanel({
       });
       const data = await response.json();
       setSmtpTestResult({
-        success: response.ok,
-        message: data.message || data.error || 'Test e-postası gönderilemedi.'
+        success: response.ok && data.success !== false,
+        message: data.message || (data.details ? `${data.error} - ${data.details}` : data.error) || 'Test e-postası gönderilemedi.'
       });
     } catch (err: any) {
       setSmtpTestResult({

@@ -3350,86 +3350,92 @@ app.post('/api/smtp-config/test', async (req, res) => {
       `;
   }
 
-  let sentViaSMTP = false;
-  let smtpErrorMsg = '';
+  const resSMTP = await sendEmailWithGoogleFallback({
+    config: {
+      host: testConfig.host,
+      port: testConfig.port,
+      user: testConfig.user,
+      pass: testConfig.pass,
+      fromName: fromName || 'İSG Pro'
+    },
+    to: testRecipients,
+    subject: subject,
+    html: html,
+    attachments: testAttachments
+  });
 
-  try {
-    const transporter = createDynamicTransporter(testConfig);
-    await transporter.sendMail({
-      from: `"${fromName || 'İSG Pro'}" <${testConfig.user}>`,
-      to: testRecipients,
-      subject: subject,
-      html: html,
-      attachments: testAttachments
-    });
-
+  if (resSMTP.success) {
     const maskedRecipients = Array.isArray(testRecipients) ? testRecipients.map(m => maskEmail(m)).join(', ') : maskEmail(testRecipients);
     console.log(`[SMTP Test] Test email successfully delivered to ${maskedRecipients}`);
-    sentViaSMTP = true;
-    return res.json({ success: true, message: `E-posta başarıyla '${Array.isArray(testRecipients) ? testRecipients.join(' & ') : testRecipients}' adreslerine PDF ekiyle gönderildi.` });
-  } catch (err: any) {
-    smtpErrorMsg = err?.message || String(err);
-    console.error('[SMTP Test Error] SMTP direct test failed, trying EmailJS fallback...', err);
+    return res.json({ 
+      success: true, 
+      message: `E-posta Google SMTP sunucusu (smtp.gmail.com) üzerinden '${Array.isArray(testRecipients) ? testRecipients.join(' & ') : testRecipients}' adresine başarıyla gönderildi.` 
+    });
   }
 
-  if (!sentViaSMTP) {
-    console.log(`[EmailJS Test] Dispatching EmailJS test email (${templateType}) to ${maskEmail(testEmail)}`);
-    
-    let targetTemplate = EMAILJS_CONTACT_TEMPLATE_ID;
-    let templateParams: any = {};
+  const smtpErrorMsg = resSMTP.error || 'Google SMTP bağlantı hatası';
+  console.error('[SMTP Test Error] Direct Google SMTP test failed, trying EmailJS fallback...', smtpErrorMsg);
 
-    if (templateType === 'otp') {
-      targetTemplate = EMAILJS_TEMPLATE_ID;
-      templateParams = {
-        to_email: testEmail,
-        email: testEmail,
-        to: testEmail,
-        to_name: 'Test Kullanıcısı',
-        otp_code: '748291',
-        passcode: '748291',
-        time: '15 dakika',
-        project_name: "İSG Pro"
-      };
-    } else if (templateType === 'license') {
-      targetTemplate = EMAILJS_LICENSE_TEMPLATE_ID;
-      templateParams = {
-        to_email: testEmail,
-        email: testEmail,
-        to: testEmail,
-        user_name: 'Test Kullanıcısı',
-        licenseKey: 'ISG-PRO-TEST-KEY-748291-2026',
-        plan_name: 'Profesyonel Yıllık Paket',
-        plan_type: 'Premium',
-        price: '2.499,00 TL',
-        licensePurchasedAt: new Date().toLocaleDateString('tr-TR'),
-        licenseExpiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toLocaleDateString('tr-TR')
-      };
-    } else {
-      // For general and contact
-      targetTemplate = EMAILJS_CONTACT_TEMPLATE_ID;
-      templateParams = {
-        name: 'Ahmet Yılmaz (Test)',
-        from_name: 'Ahmet Yılmaz (Test)',
-        email: 'ahmetyilmaz@test.com',
-        from_email: 'ahmetyilmaz@test.com',
-        reply_to: 'ahmetyilmaz@test.com',
-        to_email: testEmail,
-        subject: subject,
-        message: 'Bu e-posta, İSG Pro yönetim panelinden gerçekleştirmiş olduğunuz test işlemi sonucunda yedek servis aracılığıyla başarıyla gönderilmiştir.',
-        project_name: "İSG Pro"
-      };
-    }
+  console.log(`[EmailJS Test] Dispatching EmailJS test email (${templateType}) to ${maskEmail(testEmail)}`);
+  
+  let targetTemplate = EMAILJS_CONTACT_TEMPLATE_ID;
+  let templateParams: any = {};
 
-    const success = await sendEmailViaEmailJS(targetTemplate, templateParams);
-    if (success) {
-      return res.json({ success: true, message: 'E-posta başarıyla gönderildi.' });
-    } else {
-      return res.status(500).json({
-        error: 'E-posta sunucusuna bağlanırken hata oluştu.',
-        details: smtpErrorMsg ? `SMTP Hatası: ${smtpErrorMsg}` : 'Hem SMTP hem de yedek e-posta servisi başarısız oldu.'
-      });
-    }
+  if (templateType === 'otp') {
+    targetTemplate = EMAILJS_TEMPLATE_ID;
+    templateParams = {
+      to_email: testEmail,
+      email: testEmail,
+      to: testEmail,
+      to_name: 'Test Kullanıcısı',
+      otp_code: '748291',
+      passcode: '748291',
+      time: '15 dakika',
+      project_name: "İSG Pro"
+    };
+  } else if (templateType === 'license') {
+    targetTemplate = EMAILJS_LICENSE_TEMPLATE_ID;
+    templateParams = {
+      to_email: testEmail,
+      email: testEmail,
+      to: testEmail,
+      user_name: 'Test Kullanıcısı',
+      licenseKey: 'ISG-PRO-TEST-KEY-748291-2026',
+      plan_name: 'Profesyonel Yıllık Paket',
+      plan_type: 'Premium',
+      price: '2.499,00 TL',
+      licensePurchasedAt: new Date().toLocaleDateString('tr-TR'),
+      licenseExpiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toLocaleDateString('tr-TR')
+    };
+  } else {
+    // For general and contact
+    targetTemplate = EMAILJS_CONTACT_TEMPLATE_ID;
+    templateParams = {
+      name: 'Ahmet Yılmaz (Test)',
+      from_name: 'Ahmet Yılmaz (Test)',
+      email: 'ahmetyilmaz@test.com',
+      from_email: 'ahmetyilmaz@test.com',
+      reply_to: 'ahmetyilmaz@test.com',
+      to_email: testEmail,
+      subject: subject,
+      message: 'Bu e-posta, İSG Pro yönetim panelinden gerçekleştirmiş olduğunuz test işlemi sonucunda yedek servis aracılığıyla başarıyla gönderilmiştir.',
+      project_name: "İSG Pro"
+    };
   }
+
+  const success = await sendEmailViaEmailJS(targetTemplate, templateParams);
+  if (success) {
+    return res.json({ 
+      success: true, 
+      message: 'E-posta başarıyla gönderildi (Yedek e-posta servisi kullanıldı).' 
+    });
+  }
+
+  return res.json({
+    success: false,
+    error: 'E-posta gönderilemedi.',
+    details: `Google SMTP Hatası: ${smtpErrorMsg}. Lütfen Google hesabınızda "2 Adımlı Doğrulama" açıkken üretilen 16 haneli "Uygulama Şifresi"ni (App Password) girdiğinizden emin olun.`
+  });
 });
 
 
