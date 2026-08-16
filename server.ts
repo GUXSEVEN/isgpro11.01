@@ -506,34 +506,102 @@ const getSMTPConfig = async () => {
   return { host, port, user, pass, fromName, active };
 };
 
-const createDynamicTransporter = (config: { host: string; port: number; user: string; pass: string }) => {
+const sendEmailWithGoogleFallback = async (options: {
+  config: { host: string; port: number; user: string; pass: string; fromName?: string };
+  to: string | string[];
+  subject: string;
+  html: string;
+  replyTo?: string;
+  attachments?: any[];
+}): Promise<{ success: boolean; error?: string }> => {
+  const { config, to, subject, html, replyTo, attachments } = options;
   const cleanPass = (config.pass || '').replace(/\s+/g, '');
-  const isGmail = !config.host || config.host.includes('gmail.com');
+  const cleanUser = (config.user || 'infoisgpro@gmail.com').trim();
+  const host = config.host || 'smtp.gmail.com';
+  const fromName = config.fromName || 'İSG Pro';
 
-  if (isGmail) {
-    return nodemailer.createTransport({
-      service: 'gmail',
+  if (!cleanUser || !cleanPass) {
+    return { success: false, error: 'E-posta kullanıcı adı veya uygulama şifresi eksik.' };
+  }
+
+  const isGoogle = !host || host.includes('gmail.com') || host.includes('google');
+
+  // Attempt 1: Port 465 (SSL) over IPv4
+  try {
+    const transporter465 = nodemailer.createTransport({
+      host: isGoogle ? 'smtp.gmail.com' : host,
+      port: 465,
+      secure: true,
       family: 4, // Force IPv4 for Render cloud compatibility
-      auth: {
-        user: config.user,
-        pass: cleanPass
-      },
-      tls: {
-        rejectUnauthorized: false
-      },
+      auth: { user: cleanUser, pass: cleanPass },
+      tls: { rejectUnauthorized: false },
       connectionTimeout: 15000,
       greetingTimeout: 15000,
       socketTimeout: 15000
     });
+
+    await transporter465.sendMail({
+      from: `"${fromName}" <${cleanUser}>`,
+      to,
+      replyTo: replyTo || cleanUser,
+      subject,
+      html,
+      attachments
+    });
+
+    console.log(`[Google SMTP Port 465 Success] Delivered to ${Array.isArray(to) ? to.join(', ') : to}`);
+    return { success: true };
+  } catch (err465: any) {
+    console.warn(`[Google SMTP Port 465 Warning] ${err465?.message}. Retrying Port 587 STARTTLS...`);
   }
 
+  // Attempt 2: Port 587 (STARTTLS) over IPv4
+  try {
+    const transporter587 = nodemailer.createTransport({
+      host: isGoogle ? 'smtp.gmail.com' : host,
+      port: 587,
+      secure: false,
+      requireTLS: true,
+      family: 4, // Force IPv4 for Render cloud compatibility
+      auth: { user: cleanUser, pass: cleanPass },
+      tls: { rejectUnauthorized: false },
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
+      socketTimeout: 15000
+    });
+
+    await transporter587.sendMail({
+      from: `"${fromName}" <${cleanUser}>`,
+      to,
+      replyTo: replyTo || cleanUser,
+      subject,
+      html,
+      attachments
+    });
+
+    console.log(`[Google SMTP Port 587 Success] Delivered to ${Array.isArray(to) ? to.join(', ') : to}`);
+    return { success: true };
+  } catch (err587: any) {
+    console.error(`[Google SMTP Port 587 Error] ${err587?.message}`);
+    return { success: false, error: err587?.message || 'Google SMTP sunucusuna bağlanılamadı.' };
+  }
+};
+
+const createDynamicTransporter = (config: { host: string; port: number; user: string; pass: string }) => {
+  const cleanPass = (config.pass || '').replace(/\s+/g, '');
+  const cleanUser = (config.user || '').trim();
+  const host = config.host || 'smtp.gmail.com';
+  const isGmail = !host || host.includes('gmail.com') || host.includes('google');
+  const targetPort = config.port || (isGmail ? 465 : 587);
+
   return nodemailer.createTransport({
-    host: config.host,
-    port: config.port,
-    secure: config.port === 465,
-    family: 4,
+    host: isGmail ? 'smtp.gmail.com' : host,
+    port: targetPort,
+    secure: targetPort === 465,
+    requireTLS: targetPort === 587,
+    family: 4, // Force IPv4
     auth: {
-      user: config.user,
+      user: cleanUser,
       pass: cleanPass
     },
     tls: {
