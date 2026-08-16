@@ -488,13 +488,14 @@ const sendEmailViaEmailJS = async (
 // Resolves dynamically from Firestore (smtp_config/default) or falls back to environment variables
 const getSMTPConfig = async () => {
   let host = "smtp.gmail.com";
-  let port = Number(process.env.SMTP_PORT) || 465;
+  let port = 443; // Forced Port 443 HTTPS REST API
   let user = process.env.SMTP_USER || "infoisgpro@gmail.com";
   let pass = (process.env.SMTP_PASS || "").replace(/\s+/g, '');
   let fromName = process.env.SMTP_FROM_NAME || "İSG Pro";
   let active = true;
   let resendApiKey = process.env.RESEND_API_KEY || "";
   let googleScriptUrl = process.env.GOOGLE_SCRIPT_MAILER_URL || "";
+  let brevoApiKey = process.env.BREVO_API_KEY || "";
 
   try {
     const smtpDocRef = doc(db, 'smtp_config', 'default');
@@ -509,12 +510,13 @@ const getSMTPConfig = async () => {
       if (data.active !== undefined) active = data.active;
       if (data.resendApiKey) resendApiKey = data.resendApiKey;
       if (data.googleScriptUrl) googleScriptUrl = data.googleScriptUrl;
+      if (data.brevoApiKey) brevoApiKey = data.brevoApiKey;
     }
   } catch (err) {
     console.error('[SMTP Config] Error reading dynamic SMTP settings from Firestore:', err);
   }
 
-  return { host: "smtp.gmail.com", port, user, pass, fromName, active, resendApiKey, googleScriptUrl };
+  return { host: "smtp.gmail.com", port: 443, user, pass, fromName, active, resendApiKey, googleScriptUrl, brevoApiKey };
 };
 
 const sendEmailWithGoogleFallback = async (options: {
@@ -610,7 +612,7 @@ const sendEmailWithGoogleFallback = async (options: {
 };
 
 // ============================================================================
-// UNIVERSAL MULTI-PROVIDER EMAIL ENGINE (HTTPS REST API + GOOGLE SMTP + QUEUE)
+// STRICT HTTPS REST API (PORT 443 ONLY) EMAIL ENGINE
 // ============================================================================
 interface UniversalEmailOptions {
   to: string | string[];
@@ -628,7 +630,7 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
   const targetEmail = recipients[0] || 'infoisgpro@gmail.com';
   const smtpConfig = await getSMTPConfig();
 
-  console.log(`[Universal Email Engine] Dispatching email (${templateType}) to: ${recipients.join(', ')}`);
+  console.log(`[HTTPS REST Engine (Port 443)] Dispatching email (${templateType}) to: ${recipients.join(', ')}`);
 
   // 1. Save email to Firestore notifications log & local queue
   try {
@@ -641,13 +643,13 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
       status: 'Gönderildi'
     });
   } catch (dbErr) {
-    console.warn('[Universal Email Engine DB Log Warning]:', dbErr);
+    console.warn('[HTTPS REST Engine DB Log Warning]:', dbErr);
   }
 
-  // 2. Try Resend REST API Over HTTPS Port 443 (100% Unblocked Cloud Delivery)
+  // 2. Resend HTTPS REST API (Port 443 - 100% Unblocked Cloud Delivery)
   if (smtpConfig.resendApiKey) {
     try {
-      console.log(`[Resend HTTPS API] Dispatching email over HTTPS Port 443 to ${targetEmail}`);
+      console.log(`[Resend REST API 443] Dispatching email over HTTPS Port 443 to ${targetEmail}`);
       const resendResp = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
@@ -663,51 +665,63 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
       });
 
       if (resendResp.ok) {
-        console.log(`[Resend HTTPS API Success] Email physically delivered over HTTPS to ${targetEmail}`);
-        return { success: true, method: 'resend_https_api', message: `E-posta Resend HTTPS API (Port 443) üzerinden '${targetEmail}' adresine ulaştırıldı.` };
+        console.log(`[Resend REST API 443 Success] Email delivered over HTTPS Port 443 to ${targetEmail}`);
+        return { success: true, method: 'resend_rest_api_443', message: `E-posta Resend REST API (Port 443) üzerinden '${targetEmail}' adresine ulaştırıldı.` };
       } else {
         const rErr = await resendResp.text();
-        console.warn(`[Resend HTTPS API Error]:`, rErr);
+        console.warn(`[Resend REST API 443 Error]:`, rErr);
       }
     } catch (rErr) {
-      console.warn(`[Resend HTTPS API Exception]:`, rErr);
+      console.warn(`[Resend REST API 443 Exception]:`, rErr);
     }
   }
 
-  // 3. Try Google Apps Script / Custom HTTPS Webhook REST API (Port 443 - Bypasses all TCP firewall blocks)
+  // 3. Google Apps Script Webhook REST API (Port 443 HTTPS)
   if (smtpConfig.googleScriptUrl && smtpConfig.googleScriptUrl.startsWith('https://')) {
     try {
+      console.log(`[Google Webhook REST 443] Dispatching email over HTTPS Port 443 to ${targetEmail}`);
       const resp = await fetch(smtpConfig.googleScriptUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ to: recipients, subject, html, fromName, replyTo })
       });
       if (resp.ok) {
-        console.log(`[Universal Email Engine Webhook] Delivered via HTTPS REST Webhook API to ${targetEmail}`);
-        return { success: true, method: 'https_rest_webhook', message: `E-posta Google Webhook API üzerinden '${targetEmail}' adresine ulaştırıldı.` };
+        console.log(`[Google Webhook REST 443 Success] Delivered via HTTPS REST Webhook API to ${targetEmail}`);
+        return { success: true, method: 'google_rest_webhook_443', message: `E-posta Google Webhook REST API (Port 443) üzerinden '${targetEmail}' adresine ulaştırıldı.` };
       }
     } catch (whErr) {
-      console.warn(`[Universal Email Engine Webhook Warning]:`, whErr);
+      console.warn(`[Google Webhook REST 443 Warning]:`, whErr);
     }
   }
 
-  // 4. Try Direct Google SMTP (Port 465 SSL & 587 STARTTLS over IPv4)
-  if (smtpConfig.user && smtpConfig.pass) {
-    const resSMTP = await sendEmailWithGoogleFallback({
-      config: smtpConfig,
-      to: recipients,
-      subject,
-      html,
-      replyTo,
-      attachments
-    });
-    if (resSMTP.success) {
-      return { success: true, method: 'google_smtp', message: `E-posta Google SMTP sunucusu (smtp.gmail.com) üzerinden '${targetEmail}' adresine başarıyla gönderildi.` };
+  // 4. Brevo HTTPS REST API (Port 443)
+  if (smtpConfig.brevoApiKey) {
+    try {
+      console.log(`[Brevo REST API 443] Dispatching email over HTTPS Port 443 to ${targetEmail}`);
+      const resBrevo = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'accept': 'application/json',
+          'content-type': 'application/json',
+          'api-key': smtpConfig.brevoApiKey
+        },
+        body: JSON.stringify({
+          sender: { name: fromName, email: smtpConfig.user || 'infoisgpro@gmail.com' },
+          to: recipients.map(r => ({ email: r })),
+          subject: subject,
+          htmlContent: html
+        })
+      });
+      if (resBrevo.ok) {
+        console.log(`[Brevo REST API 443 Success] Delivered via Brevo REST API over Port 443 to ${targetEmail}`);
+        return { success: true, method: 'brevo_rest_api_443', message: `E-posta Brevo REST API (Port 443) üzerinden '${targetEmail}' adresine ulaştırıldı.` };
+      }
+    } catch (bErr) {
+      console.warn(`[Brevo REST API 443 Warning]:`, bErr);
     }
-    console.warn(`[Universal Email Engine] Direct Google SMTP connection timed out or blocked by Render host firewall.`);
   }
 
-  // 5. Try EmailJS REST API Over HTTPS Port 443
+  // 5. EmailJS REST API Over HTTPS Port 443
   try {
     let targetTemplate = EMAILJS_CONTACT_TEMPLATE_ID;
     let templateParams: any = {
@@ -729,17 +743,31 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
 
     const emailjsResult = await sendEmailViaEmailJS(targetTemplate, templateParams);
     if (emailjsResult) {
-      return { success: true, method: 'emailjs_rest_api', message: `E-posta yedek servis (EmailJS HTTPS API) üzerinden '${targetEmail}' adresine iletildi.` };
+      return { success: true, method: 'emailjs_rest_api_443', message: `E-posta EmailJS REST API (Port 443) üzerinden '${targetEmail}' adresine iletildi.` };
     }
   } catch (ejsErr) {
-    console.warn(`[Universal Email Engine EmailJS Warning]:`, ejsErr);
+    console.warn(`[HTTPS REST Engine EmailJS Warning]:`, ejsErr);
   }
 
-  // 6. Direct SMTP on Render blocked and no HTTPS Key configured
+  // 6. Direct Google SMTP Fallback (Port 465 SSL & 587 STARTTLS)
+  if (smtpConfig.user && smtpConfig.pass) {
+    const resSMTP = await sendEmailWithGoogleFallback({
+      config: smtpConfig,
+      to: recipients,
+      subject,
+      html,
+      replyTo,
+      attachments
+    });
+    if (resSMTP.success) {
+      return { success: true, method: 'google_smtp_fallback', message: `E-posta Google SMTP sunucusu üzerinden '${targetEmail}' adresine gönderildi.` };
+    }
+  }
+
   return {
     success: false,
-    method: 'smtp_blocked_render',
-    message: `Render bulut sunucusunda ham TCP SMTP portları (465/587) engelli olduğu için e-posta doğrudan gönderilemedi. E-postanın kutunuza ulaşması için Yönetim Panelinden (Admin Panel > E-Posta Ayarları) ücretsiz Resend API Key veya Google Webhook URL'inizi giriniz.`
+    method: 'https_rest_key_required',
+    message: `E-posta gönderimi için Port 443 HTTPS REST API anahtarı gereklidir. Lütfen Yönetim Panelinden (Admin Panel > E-Posta Ayarları) Resend API Key, Google Webhook URL veya Brevo API Key tanımlayınız.`
   };
 };
 
@@ -3270,7 +3298,7 @@ app.get('/api/smtp-config', async (req, res) => {
 });
 
 app.post('/api/smtp-config', async (req, res) => {
-  const { host, port, user, pass, fromName, active, resendApiKey, googleScriptUrl } = req.body;
+  const { host, port, user, pass, fromName, active, resendApiKey, googleScriptUrl, brevoApiKey } = req.body;
   try {
     const smtpDocRef = doc(db, 'smtp_config', 'default');
     
@@ -3284,17 +3312,18 @@ app.post('/api/smtp-config', async (req, res) => {
     }
 
     await setDoc(smtpDocRef, {
-      host,
-      port: Number(port),
+      host: host || 'https://api.resend.com',
+      port: 443,
       user,
       pass: finalPass,
       fromName,
       active: active !== false,
       resendApiKey: resendApiKey || '',
       googleScriptUrl: googleScriptUrl || '',
+      brevoApiKey: brevoApiKey || '',
       updatedAt: new Date().toISOString()
     });
-    return res.json({ success: true, message: 'E-posta ayarları başarıyla kaydedildi.' });
+    return res.json({ success: true, message: 'REST API E-posta ayarları (Port 443) başarıyla kaydedildi.' });
   } catch (err: any) {
     console.error('[SMTP POST] Error:', err);
     return res.status(500).json({ error: 'E-posta ayarları kaydedilirken hata oluştu.', details: err.message });

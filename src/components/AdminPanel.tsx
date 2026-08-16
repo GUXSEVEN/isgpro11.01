@@ -158,6 +158,7 @@ export default function AdminPanel({
   const [smtpActive, setSmtpActive] = useState(true);
   const [resendApiKey, setResendApiKey] = useState('');
   const [googleScriptUrl, setGoogleScriptUrl] = useState('');
+  const [brevoApiKey, setBrevoApiKey] = useState('');
   const [smtpLoading, setSmtpLoading] = useState(false);
   const [smtpSaveSuccess, setSmtpSaveSuccess] = useState(false);
   const [testEmailAddress, setTestEmailAddress] = useState('');
@@ -330,6 +331,7 @@ export default function AdminPanel({
           setSmtpActive(data.config.active !== false);
           setResendApiKey(data.config.resendApiKey || '');
           setGoogleScriptUrl(data.config.googleScriptUrl || '');
+          setBrevoApiKey(data.config.brevoApiKey || '');
         }
       }
     } catch (err) {
@@ -353,7 +355,8 @@ export default function AdminPanel({
           fromName: smtpFromName,
           active: smtpActive,
           resendApiKey,
-          googleScriptUrl
+          googleScriptUrl,
+          brevoApiKey
         })
       });
       if (response.ok) {
@@ -391,6 +394,7 @@ export default function AdminPanel({
           active: smtpActive,
           resendApiKey,
           googleScriptUrl,
+          brevoApiKey,
           testEmail: testEmailAddress,
           templateType: testTemplateType
         })
@@ -2562,6 +2566,19 @@ export default function AdminPanel({
                             value={googleScriptUrl}
                             onChange={(e) => setGoogleScriptUrl(e.target.value)}
                             placeholder="https://script.google.com/macros/s/.../exec"
+                            className="mt-1 w-full bg-white dark:bg-slate-900 border border-indigo-200 dark:border-slate-750 rounded-xl p-3 text-slate-950 dark:text-white text-xs sm:text-sm outline-none font-mono focus:ring-2 focus:ring-indigo-500/30"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] font-extrabold uppercase text-indigo-900 dark:text-indigo-300 tracking-wider flex items-center gap-1">
+                            ⚡ Brevo (Sendinblue) API Key (Port 443 HTTPS REST API)
+                          </label>
+                          <input
+                            type="text"
+                            value={brevoApiKey}
+                            onChange={(e) => setBrevoApiKey(e.target.value)}
+                            placeholder="xkeysib-..."
                             className="mt-1 w-full bg-white dark:bg-slate-900 border border-indigo-200 dark:border-slate-750 rounded-xl p-3 text-slate-950 dark:text-white text-xs sm:text-sm outline-none font-mono focus:ring-2 focus:ring-indigo-500/30"
                           />
                         </div>
