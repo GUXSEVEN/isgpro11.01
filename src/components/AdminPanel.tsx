@@ -387,7 +387,13 @@ export default function AdminPanel({
           templateType: testTemplateType
         })
       });
-      const data = await response.json();
+      const text = await response.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        data = { success: false, error: response.status === 502 ? 'Sunucu bağlantı yanıt süresi aşıldı.' : 'Sunucudan geçersiz yanıt alındı.' };
+      }
       setSmtpTestResult({
         success: response.ok && data.success !== false,
         message: data.message || (data.details ? `${data.error} - ${data.details}` : data.error) || 'Test e-postası gönderilemedi.'

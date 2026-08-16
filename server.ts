@@ -529,7 +529,7 @@ const sendEmailWithGoogleFallback = async (options: {
 
   console.log(`[Google Direct SMTP] Sending via smtp.gmail.com for ${Array.isArray(to) ? to.join(', ') : to}`);
 
-  // Attempt 1: Google Port 465 (SSL) with 4-second connection timeout
+  // Attempt 1: Google Port 465 (SSL) with 2.5-second connection timeout
   try {
     const transporter465 = nodemailer.createTransport({
       host: 'smtp.gmail.com',
@@ -538,9 +538,9 @@ const sendEmailWithGoogleFallback = async (options: {
       family: 4, // Native IPv4 socket binding
       auth: { user: cleanUser, pass: cleanPass },
       tls: { rejectUnauthorized: false },
-      connectionTimeout: 4000,
-      greetingTimeout: 4000,
-      socketTimeout: 5000
+      connectionTimeout: 2500,
+      greetingTimeout: 2500,
+      socketTimeout: 3000
     });
 
     await transporter465.sendMail({
@@ -558,7 +558,7 @@ const sendEmailWithGoogleFallback = async (options: {
     console.warn(`[Google SMTP Port 465 Attempt Failed]: ${err465?.message}. Retrying via Google Port 587 (STARTTLS)...`);
   }
 
-  // Attempt 2: Google Port 587 (STARTTLS) with 4-second connection timeout
+  // Attempt 2: Google Port 587 (STARTTLS) with 2.5-second connection timeout
   try {
     const transporter587 = nodemailer.createTransport({
       host: 'smtp.gmail.com',
@@ -568,9 +568,9 @@ const sendEmailWithGoogleFallback = async (options: {
       family: 4, // Native IPv4 socket binding
       auth: { user: cleanUser, pass: cleanPass },
       tls: { rejectUnauthorized: false },
-      connectionTimeout: 4000,
-      greetingTimeout: 4000,
-      socketTimeout: 5000
+      connectionTimeout: 2.500,
+      greetingTimeout: 2500,
+      socketTimeout: 3000
     });
 
     await transporter587.sendMail({
