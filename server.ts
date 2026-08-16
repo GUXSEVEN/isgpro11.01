@@ -6,6 +6,7 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import dns from 'dns';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
@@ -473,37 +474,44 @@ const sendEmailViaEmailJS = async (
   }
 };
 
-// Direct SMTP / Nodemailer Configuration (Alternative & more reliable than EmailJS)
+// Custom IPv4 lookup resolver to bypass Render IPv6 timeouts when connecting to smtp.gmail.com
+const customIPv4Lookup = (hostname: string, options: any, callback: any) => {
+  dns.resolve4(hostname, (err, addresses) => {
+    if (err || !addresses || !addresses.length) {
+      dns.lookup(hostname, { family: 4 }, callback);
+    } else {
+      callback(null, addresses[0], 4);
+    }
+  });
+};
+
+// Direct SMTP / Nodemailer Configuration
 // Resolves dynamically from Firestore (smtp_config/default) or falls back to environment variables
 const getSMTPConfig = async () => {
-  let host = process.env.SMTP_HOST || "smtp.gmail.com";
-  let port = Number(process.env.SMTP_PORT) || 587;
-  let user = process.env.SMTP_USER || "";
+  let host = "smtp.gmail.com";
+  let port = Number(process.env.SMTP_PORT) || 465;
+  let user = process.env.SMTP_USER || "infoisgpro@gmail.com";
   let pass = (process.env.SMTP_PASS || "").replace(/\s+/g, '');
   let fromName = process.env.SMTP_FROM_NAME || "İSG Pro";
-  let active = !!(user && pass);
+  let active = true;
 
   try {
     const smtpDocRef = doc(db, 'smtp_config', 'default');
     const smtpSnap = await getDoc(smtpDocRef);
     if (smtpSnap.exists()) {
       const data = smtpSnap.data();
-      if (data.active !== false) {
-        if (data.host) host = data.host;
-        if (data.port) port = Number(data.port);
-        if (data.user) user = data.user;
-        if (data.pass) pass = String(data.pass).replace(/\s+/g, '');
-        if (data.fromName) fromName = data.fromName;
-        active = !!(user && pass);
-      } else {
-        active = false;
-      }
+      if (data.host) host = data.host;
+      if (data.port) port = Number(data.port);
+      if (data.user) user = data.user;
+      if (data.pass) pass = String(data.pass).replace(/\s+/g, '');
+      if (data.fromName) fromName = data.fromName;
+      if (data.active !== undefined) active = data.active;
     }
   } catch (err) {
     console.error('[SMTP Config] Error reading dynamic SMTP settings from Firestore:', err);
   }
 
-  return { host, port, user, pass, fromName, active };
+  return { host: "smtp.gmail.com", port, user, pass, fromName, active };
 };
 
 const sendEmailWithGoogleFallback = async (options: {
@@ -517,27 +525,33 @@ const sendEmailWithGoogleFallback = async (options: {
   const { config, to, subject, html, replyTo, attachments } = options;
   const cleanPass = (config.pass || '').replace(/\s+/g, '');
   const cleanUser = (config.user || 'infoisgpro@gmail.com').trim();
-  const host = config.host || 'smtp.gmail.com';
   const fromName = config.fromName || 'İSG Pro';
 
-  if (!cleanUser || !cleanPass) {
-    return { success: false, error: 'E-posta kullanıcı adı veya uygulama şifresi eksik.' };
+  if (!cleanUser) {
+    return { success: false, error: 'Google e-posta adresi (SMTP_USER) tanımlanmamış.' };
+  }
+  if (!cleanPass) {
+    return { 
+      success: false, 
+      error: 'Google 16 haneli Uygulama Şifresi (App Password) girilmemiş.',
+      details: 'Gmail hesabınızdan (myaccount.google.com/apppasswords) 16 karakterlik bir Uygulama Şifresi alıp kaydediniz.'
+    };
   }
 
-  const isGoogle = !host || host.includes('gmail.com') || host.includes('google');
+  console.log(`[Google Direct SMTP] Sending via smtp.gmail.com over IPv4 for ${Array.isArray(to) ? to.join(', ') : to}`);
 
-  // Attempt 1: Port 465 (SSL) over IPv4
+  // Attempt 1: Google Port 465 (SSL) forced IPv4
   try {
     const transporter465 = nodemailer.createTransport({
-      host: isGoogle ? 'smtp.gmail.com' : host,
+      host: 'smtp.gmail.com',
       port: 465,
       secure: true,
-      family: 4, // Force IPv4 for Render cloud compatibility
+      lookup: customIPv4Lookup,
       auth: { user: cleanUser, pass: cleanPass },
       tls: { rejectUnauthorized: false },
-      connectionTimeout: 15000,
-      greetingTimeout: 15000,
-      socketTimeout: 15000
+      connectionTimeout: 20000,
+      greetingTimeout: 20000,
+      socketTimeout: 20000
     });
 
     await transporter465.sendMail({
@@ -549,25 +563,25 @@ const sendEmailWithGoogleFallback = async (options: {
       attachments
     });
 
-    console.log(`[Google SMTP Port 465 Success] Delivered to ${Array.isArray(to) ? to.join(', ') : to}`);
+    console.log(`[Google Direct SMTP Success - Port 465] Email delivered via smtp.gmail.com to ${Array.isArray(to) ? to.join(', ') : to}`);
     return { success: true };
   } catch (err465: any) {
-    console.warn(`[Google SMTP Port 465 Warning] ${err465?.message}. Retrying Port 587 STARTTLS...`);
+    console.warn(`[Google SMTP Port 465 Attempt Failed]: ${err465?.message}. Retrying via Google Port 587 (STARTTLS)...`);
   }
 
-  // Attempt 2: Port 587 (STARTTLS) over IPv4
+  // Attempt 2: Google Port 587 (STARTTLS) forced IPv4
   try {
     const transporter587 = nodemailer.createTransport({
-      host: isGoogle ? 'smtp.gmail.com' : host,
+      host: 'smtp.gmail.com',
       port: 587,
       secure: false,
       requireTLS: true,
-      family: 4, // Force IPv4 for Render cloud compatibility
+      lookup: customIPv4Lookup,
       auth: { user: cleanUser, pass: cleanPass },
       tls: { rejectUnauthorized: false },
-      connectionTimeout: 15000,
-      greetingTimeout: 15000,
-      socketTimeout: 15000
+      connectionTimeout: 20000,
+      greetingTimeout: 20000,
+      socketTimeout: 20000
     });
 
     await transporter587.sendMail({
@@ -579,11 +593,14 @@ const sendEmailWithGoogleFallback = async (options: {
       attachments
     });
 
-    console.log(`[Google SMTP Port 587 Success] Delivered to ${Array.isArray(to) ? to.join(', ') : to}`);
+    console.log(`[Google Direct SMTP Success - Port 587] Email delivered via smtp.gmail.com to ${Array.isArray(to) ? to.join(', ') : to}`);
     return { success: true };
   } catch (err587: any) {
-    console.error(`[Google SMTP Port 587 Error] ${err587?.message}`);
-    return { success: false, error: err587?.message || 'Google SMTP sunucusuna bağlanılamadı.' };
+    console.error(`[Google Direct SMTP Error - Port 587]: ${err587?.message}`);
+    return { 
+      success: false, 
+      error: `Google Sunucu Hatası: ${err587?.message || 'Google SMTP sunucusu ile bağlantı kurulamadı.'}`
+    };
   }
 };
 
