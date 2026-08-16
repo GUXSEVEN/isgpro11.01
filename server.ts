@@ -1757,37 +1757,13 @@ const getTrialExpiryReminderHtmlTemplate = (options: {
 
 // Direct Email Dispatch Helper
 async function sendEmailDirect(toEmail: string, subject: string, htmlContent: string): Promise<boolean> {
-  try {
-    const smtpConfig = await getSMTPConfig();
-    if (smtpConfig.active) {
-      const transporter = createDynamicTransporter(smtpConfig);
-      await transporter.sendMail({
-        from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
-        to: toEmail,
-        subject,
-        html: htmlContent
-      });
-      console.log(`[Direct Mail Sent] Sent email '${subject}' to ${toEmail} via SMTP`);
-      return true;
-    }
-  } catch (err) {
-    console.warn(`[Direct Mail Failed] Could not send email to ${toEmail} via SMTP:`, err);
-  }
-
-  // Fallback: Queue message
-  try {
-    messageQueue.push({
-      id: 'msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
-      name: toEmail,
-      email: toEmail,
-      subject,
-      message: htmlContent,
-      sentAt: new Date().toISOString(),
-      status: 'Beklemede'
-    });
-  } catch (e) {}
-
-  return false;
+  const result = await sendEmailUniversal({
+    to: toEmail,
+    subject,
+    html: htmlContent,
+    templateType: 'general'
+  });
+  return result.success;
 }
 
 // Initialize Gemini SDK with server-side environment key
@@ -2229,7 +2205,7 @@ app.post('/api/send-email-update-link', async (req, res) => {
   const host = req.headers.host || 'isgpro.com';
   const cleanLink = updateLink || `https://${host}/#profile`;
 
-  console.log(`[Email Update Link] Dispatching update link email to: ${maskEmail(email)}`);
+  console.log(`[Email Update Link] Dispatching update link email via Port 443 HTTPS to: ${maskEmail(email)}`);
 
   const htmlContent = getUpdateEmailHtmlTemplate({
     name: cleanName,
@@ -2237,24 +2213,14 @@ app.post('/api/send-email-update-link', async (req, res) => {
     updateLink: cleanLink
   });
 
-  const smtpConfig = await getSMTPConfig();
-  if (smtpConfig.active) {
-    try {
-      const transporter = createDynamicTransporter(smtpConfig);
-      await transporter.sendMail({
-        from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
-        to: email,
-        subject: `İSG Pro - E-Posta Adresi Güncelleme Bağlantısı`,
-        html: htmlContent
-      });
-      console.log(`[SMTP Email Update] Link sent to ${maskEmail(email)}`);
-      return res.json({ success: true, message: 'E-posta güncelleme bağlantısı gönderildi.' });
-    } catch (err: any) {
-      console.error('[SMTP Email Update Error]:', err);
-    }
-  }
+  const resVal = await sendEmailUniversal({
+    to: email,
+    subject: `İSG Pro - E-Posta Adresi Güncelleme Bağlantısı`,
+    html: htmlContent,
+    templateType: 'general'
+  });
 
-  return res.json({ success: true, message: 'Güncelleme talebi işleme alındı.' });
+  return res.json({ success: true, message: resVal.message });
 });
 
 // Proxy endpoint for Email Verification Code & Link
@@ -2269,7 +2235,7 @@ app.post('/api/send-email-verification', async (req, res) => {
   const host = req.headers.host || 'isgpro.com';
   const cleanLink = verifyLink || `https://${host}/#verify?code=${cleanCode}`;
 
-  console.log(`[Email Verification] Dispatching verification email to: ${maskEmail(email)}`);
+  console.log(`[Email Verification] Dispatching verification email via Port 443 HTTPS to: ${maskEmail(email)}`);
 
   const htmlContent = getVerificationHtmlTemplate({
     name: cleanName,
@@ -2278,24 +2244,14 @@ app.post('/api/send-email-verification', async (req, res) => {
     verifyLink: cleanLink
   });
 
-  const smtpConfig = await getSMTPConfig();
-  if (smtpConfig.active) {
-    try {
-      const transporter = createDynamicTransporter(smtpConfig);
-      await transporter.sendMail({
-        from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
-        to: email,
-        subject: `${cleanCode} - İSG Pro E-Posta Adresi Doğrulama Kodunuz`,
-        html: htmlContent
-      });
-      console.log(`[SMTP Verification] Verification email sent to ${maskEmail(email)}`);
-      return res.json({ success: true, code: cleanCode, message: 'Doğrulama e-postası gönderildi.' });
-    } catch (err: any) {
-      console.error('[SMTP Verification Error]:', err);
-    }
-  }
+  const resVal = await sendEmailUniversal({
+    to: email,
+    subject: `${cleanCode} - İSG Pro E-Posta Adresi Doğrulama Kodunuz`,
+    html: htmlContent,
+    templateType: 'otp'
+  });
 
-  return res.json({ success: true, code: cleanCode, message: 'Doğrulama e-postası işlendi.' });
+  return res.json({ success: true, message: resVal.message });
 });
 
 // In-memory registry for PayTR transactions with Firestore persistence
@@ -2598,73 +2554,64 @@ async function activateAndNotifyOrder(merchantOid: string): Promise<boolean> {
   const smtpConfig = await getSMTPConfig();
   let sentViaSMTP = false;
 
-  if (smtpConfig.active) {
-    console.log(`[SMTP Activation] Dispatching direct SMTP license email to: ${maskEmail(order.email)}`);
-    try {
-      const htmlContent = getLicenseHtmlTemplate({
-        name: order.name || 'Değerli İSG Pro Kullanıcısı',
-        licenseKey: order.licenseKey,
-        planName,
-        planType,
-        price: priceStr,
-        purchaseDate: purchaseDateStr,
-        expiryDate: expiryDateStr
-      });
-      const transporter = createDynamicTransporter(smtpConfig);
-      await transporter.sendMail({
-        from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
-        to: order.email,
-        subject: `Tebrikler, İSG Pro Lisansınız Hazır!`,
-        html: htmlContent
-      });
-      console.log(`[SMTP Activation] License email sent: ${maskEmail(order.email)}`);
-      sentViaSMTP = true;
-    } catch (smtpError: any) {
-      console.error("[SMTP Activation Error] SMTP direct mailer failed, trying EmailJS fallback...", smtpError);
-    }
+  console.log(`[HTTPS REST 443 Activation] Dispatching Resend Port 443 license email to: ${maskEmail(order.email)}`);
+  const htmlContent = getLicenseHtmlTemplate({
+    name: order.name || 'Değerli İSG Pro Kullanıcısı',
+    licenseKey: order.licenseKey,
+    planName,
+    planType,
+    price: priceStr,
+    purchaseDate: purchaseDateStr,
+    expiryDate: expiryDateStr
+  });
 
-    // Also send approved contracts copy to user and admin email (infoisgpro@gmail.com) with PDF attachment
+  await sendEmailUniversal({
+    to: order.email,
+    subject: `Tebrikler, İSG Pro Lisansınız Hazır!`,
+    html: htmlContent,
+    templateType: 'license'
+  });
+
+  // Also send approved contracts copy to user and admin email (infoisgpro@gmail.com) with PDF attachment
+  try {
+    const contractHtml = getContractsApprovalHtmlTemplate({
+      customerName: order.name || 'Değerli İSG Pro Kullanıcısı',
+      customerEmail: order.email,
+      planName,
+      price: priceStr,
+      orderId: merchantOid,
+      approvalDate: purchaseDateStr
+    });
+
+    let pdfAttachments: Array<{ filename: string; content: Buffer; contentType: string }> = [];
     try {
-      const contractHtml = getContractsApprovalHtmlTemplate({
+      pdfAttachments = await generateAllContractsPDFAttachments({
         customerName: order.name || 'Değerli İSG Pro Kullanıcısı',
         customerEmail: order.email,
+        customerPhone: order.phone,
+        customerAddress: order.address,
+        orderId: merchantOid,
         planName,
         price: priceStr,
-        orderId: merchantOid,
-        approvalDate: purchaseDateStr
+        approvalDate: purchaseDateStr,
+        customerSignature: order.userSignature,
+        sellerSignature: '',
+        sellerName: 'İbrahim Coşkun'
       });
-
-      let pdfAttachments: Array<{ filename: string; content: Buffer; contentType: string }> = [];
-      try {
-        pdfAttachments = await generateAllContractsPDFAttachments({
-          customerName: order.name || 'Değerli İSG Pro Kullanıcısı',
-          customerEmail: order.email,
-          customerPhone: order.phone,
-          customerAddress: order.address,
-          orderId: merchantOid,
-          planName,
-          price: priceStr,
-          approvalDate: purchaseDateStr,
-          customerSignature: order.userSignature,
-          sellerSignature: '',
-          sellerName: 'İbrahim Coşkun'
-        });
-      } catch (pdfErr) {
-        console.error('[PayTR PDF Generation Error]:', pdfErr);
-      }
-
-      const transporter = createDynamicTransporter(smtpConfig);
-      await transporter.sendMail({
-        from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
-        to: `${order.email}, infoisgpro@gmail.com`,
-        subject: `İSG Pro Onaylı Mesafeli Satış Sözleşmesi ve Evrakları`,
-        html: contractHtml,
-        attachments: pdfAttachments
-      });
-      console.log(`[SMTP Activation] Contracts and PDFs sent: ${maskEmail(order.email)}`);
-    } catch (contractErr) {
-      console.error('[SMTP Contract Delivery Error]:', contractErr);
+    } catch (pdfErr) {
+      console.error('[PayTR PDF Generation Error]:', pdfErr);
     }
+
+    await sendEmailUniversal({
+      to: [order.email, 'infoisgpro@gmail.com'],
+      subject: `İSG Pro Onaylı Mesafeli Satış Sözleşmesi ve Evrakları`,
+      html: contractHtml,
+      attachments: pdfAttachments,
+      templateType: 'contracts'
+    });
+    console.log(`[HTTPS REST 443 Activation] Contracts and PDFs dispatched via Port 443: ${maskEmail(order.email)}`);
+  } catch (contractErr) {
+    console.error('[HTTPS REST 443 Contract Delivery Error]:', contractErr);
   }
 
   if (!sentViaSMTP) {
