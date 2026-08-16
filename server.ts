@@ -474,17 +474,6 @@ const sendEmailViaEmailJS = async (
   }
 };
 
-// Custom IPv4 lookup resolver to bypass Render IPv6 timeouts when connecting to smtp.gmail.com
-const customIPv4Lookup = (hostname: string, options: any, callback: any) => {
-  dns.resolve4(hostname, (err, addresses) => {
-    if (err || !addresses || !addresses.length) {
-      dns.lookup(hostname, { family: 4 }, callback);
-    } else {
-      callback(null, addresses[0], 4);
-    }
-  });
-};
-
 // Direct SMTP / Nodemailer Configuration
 // Resolves dynamically from Firestore (smtp_config/default) or falls back to environment variables
 const getSMTPConfig = async () => {
@@ -538,20 +527,20 @@ const sendEmailWithGoogleFallback = async (options: {
     };
   }
 
-  console.log(`[Google Direct SMTP] Sending via smtp.gmail.com over IPv4 for ${Array.isArray(to) ? to.join(', ') : to}`);
+  console.log(`[Google Direct SMTP] Sending via smtp.gmail.com for ${Array.isArray(to) ? to.join(', ') : to}`);
 
-  // Attempt 1: Google Port 465 (SSL) forced IPv4
+  // Attempt 1: Google Port 465 (SSL) with 4-second connection timeout
   try {
     const transporter465 = nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 465,
       secure: true,
-      lookup: customIPv4Lookup,
+      family: 4, // Native IPv4 socket binding
       auth: { user: cleanUser, pass: cleanPass },
       tls: { rejectUnauthorized: false },
-      connectionTimeout: 20000,
-      greetingTimeout: 20000,
-      socketTimeout: 20000
+      connectionTimeout: 4000,
+      greetingTimeout: 4000,
+      socketTimeout: 5000
     });
 
     await transporter465.sendMail({
@@ -569,19 +558,19 @@ const sendEmailWithGoogleFallback = async (options: {
     console.warn(`[Google SMTP Port 465 Attempt Failed]: ${err465?.message}. Retrying via Google Port 587 (STARTTLS)...`);
   }
 
-  // Attempt 2: Google Port 587 (STARTTLS) forced IPv4
+  // Attempt 2: Google Port 587 (STARTTLS) with 4-second connection timeout
   try {
     const transporter587 = nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 587,
       secure: false,
       requireTLS: true,
-      lookup: customIPv4Lookup,
+      family: 4, // Native IPv4 socket binding
       auth: { user: cleanUser, pass: cleanPass },
       tls: { rejectUnauthorized: false },
-      connectionTimeout: 20000,
-      greetingTimeout: 20000,
-      socketTimeout: 20000
+      connectionTimeout: 4000,
+      greetingTimeout: 4000,
+      socketTimeout: 5000
     });
 
     await transporter587.sendMail({
