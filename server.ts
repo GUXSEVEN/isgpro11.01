@@ -7,6 +7,16 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import dns from 'dns';
+
+// Force Node.js globally to resolve IPv4 addresses FIRST for all DNS lookups across the server
+dns.setDefaultResultOrder('ipv4first');
+
+const forceIPv4Lookup = (hostname: string, options: any, callback: any) => {
+  const cb = typeof options === 'function' ? options : callback;
+  dns.lookup(hostname, { family: 4 }, (err, address, family) => {
+    cb(err, address, family || 4);
+  });
+};
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
@@ -527,20 +537,21 @@ const sendEmailWithGoogleFallback = async (options: {
     };
   }
 
-  console.log(`[Google Direct SMTP] Sending via smtp.gmail.com for ${Array.isArray(to) ? to.join(', ') : to}`);
+  console.log(`[Google Direct SMTP] Sending via smtp.gmail.com over IPv4 for ${Array.isArray(to) ? to.join(', ') : to}`);
 
-  // Attempt 1: Google Port 465 (SSL) with 2.5-second connection timeout
+  // Attempt 1: Google Port 465 (SSL) over IPv4
   try {
     const transporter465 = nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 465,
       secure: true,
-      family: 4, // Native IPv4 socket binding
+      family: 4,
+      lookup: forceIPv4Lookup,
       auth: { user: cleanUser, pass: cleanPass },
       tls: { rejectUnauthorized: false },
-      connectionTimeout: 2500,
-      greetingTimeout: 2500,
-      socketTimeout: 3000
+      connectionTimeout: 4000,
+      greetingTimeout: 4000,
+      socketTimeout: 5000
     });
 
     await transporter465.sendMail({
@@ -558,19 +569,20 @@ const sendEmailWithGoogleFallback = async (options: {
     console.warn(`[Google SMTP Port 465 Attempt Failed]: ${err465?.message}. Retrying via Google Port 587 (STARTTLS)...`);
   }
 
-  // Attempt 2: Google Port 587 (STARTTLS) with 2.5-second connection timeout
+  // Attempt 2: Google Port 587 (STARTTLS) over IPv4
   try {
     const transporter587 = nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 587,
       secure: false,
       requireTLS: true,
-      family: 4, // Native IPv4 socket binding
+      family: 4,
+      lookup: forceIPv4Lookup,
       auth: { user: cleanUser, pass: cleanPass },
       tls: { rejectUnauthorized: false },
-      connectionTimeout: 2.500,
-      greetingTimeout: 2500,
-      socketTimeout: 3000
+      connectionTimeout: 4000,
+      greetingTimeout: 4000,
+      socketTimeout: 5000
     });
 
     await transporter587.sendMail({
@@ -605,7 +617,8 @@ const createDynamicTransporter = (config: { host: string; port: number; user: st
     port: targetPort,
     secure: targetPort === 465,
     requireTLS: targetPort === 587,
-    family: 4, // Force IPv4
+    family: 4,
+    lookup: forceIPv4Lookup,
     auth: {
       user: cleanUser,
       pass: cleanPass
