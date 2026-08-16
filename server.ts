@@ -493,6 +493,8 @@ const getSMTPConfig = async () => {
   let pass = (process.env.SMTP_PASS || "").replace(/\s+/g, '');
   let fromName = process.env.SMTP_FROM_NAME || "İSG Pro";
   let active = true;
+  let resendApiKey = process.env.RESEND_API_KEY || "";
+  let googleScriptUrl = process.env.GOOGLE_SCRIPT_MAILER_URL || "";
 
   try {
     const smtpDocRef = doc(db, 'smtp_config', 'default');
@@ -505,12 +507,14 @@ const getSMTPConfig = async () => {
       if (data.pass) pass = String(data.pass).replace(/\s+/g, '');
       if (data.fromName) fromName = data.fromName;
       if (data.active !== undefined) active = data.active;
+      if (data.resendApiKey) resendApiKey = data.resendApiKey;
+      if (data.googleScriptUrl) googleScriptUrl = data.googleScriptUrl;
     }
   } catch (err) {
     console.error('[SMTP Config] Error reading dynamic SMTP settings from Firestore:', err);
   }
 
-  return { host: "smtp.gmail.com", port, user, pass, fromName, active };
+  return { host: "smtp.gmail.com", port, user, pass, fromName, active, resendApiKey, googleScriptUrl };
 };
 
 const sendEmailWithGoogleFallback = async (options: {
@@ -622,6 +626,7 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
   const { to, subject, html, fromName = 'İSG Pro', replyTo, attachments, templateType = 'general' } = options;
   const recipients = Array.isArray(to) ? to : [to];
   const targetEmail = recipients[0] || 'infoisgpro@gmail.com';
+  const smtpConfig = await getSMTPConfig();
 
   console.log(`[Universal Email Engine] Dispatching email (${templateType}) to: ${recipients.join(', ')}`);
 
@@ -639,26 +644,54 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
     console.warn('[Universal Email Engine DB Log Warning]:', dbErr);
   }
 
-  // 2. Try Google Apps Script / Custom HTTPS Webhook REST API (Port 443 - Bypasses all TCP firewall blocks)
-  const webhookUrl = process.env.GOOGLE_SCRIPT_MAILER_URL;
-  if (webhookUrl && webhookUrl.startsWith('https://')) {
+  // 2. Try Resend REST API Over HTTPS Port 443 (100% Unblocked Cloud Delivery)
+  if (smtpConfig.resendApiKey) {
     try {
-      const resp = await fetch(webhookUrl, {
+      console.log(`[Resend HTTPS API] Dispatching email over HTTPS Port 443 to ${targetEmail}`);
+      const resendResp = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${smtpConfig.resendApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          from: `${fromName} <onboarding@resend.dev>`,
+          to: recipients,
+          subject,
+          html
+        })
+      });
+
+      if (resendResp.ok) {
+        console.log(`[Resend HTTPS API Success] Email physically delivered over HTTPS to ${targetEmail}`);
+        return { success: true, method: 'resend_https_api', message: `E-posta Resend HTTPS API (Port 443) üzerinden '${targetEmail}' adresine ulaştırıldı.` };
+      } else {
+        const rErr = await resendResp.text();
+        console.warn(`[Resend HTTPS API Error]:`, rErr);
+      }
+    } catch (rErr) {
+      console.warn(`[Resend HTTPS API Exception]:`, rErr);
+    }
+  }
+
+  // 3. Try Google Apps Script / Custom HTTPS Webhook REST API (Port 443 - Bypasses all TCP firewall blocks)
+  if (smtpConfig.googleScriptUrl && smtpConfig.googleScriptUrl.startsWith('https://')) {
+    try {
+      const resp = await fetch(smtpConfig.googleScriptUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ to: recipients, subject, html, fromName, replyTo })
       });
       if (resp.ok) {
-        console.log(`[Universal Email Engine] Delivered via HTTPS REST Webhook API to ${targetEmail}`);
-        return { success: true, method: 'https_rest_webhook', message: `E-posta HTTPS REST API üzerinden '${targetEmail}' adresine ulaştırıldı.` };
+        console.log(`[Universal Email Engine Webhook] Delivered via HTTPS REST Webhook API to ${targetEmail}`);
+        return { success: true, method: 'https_rest_webhook', message: `E-posta Google Webhook API üzerinden '${targetEmail}' adresine ulaştırıldı.` };
       }
     } catch (whErr) {
       console.warn(`[Universal Email Engine Webhook Warning]:`, whErr);
     }
   }
 
-  // 3. Try Direct Google SMTP (Port 465 SSL & 587 STARTTLS over IPv4)
-  const smtpConfig = await getSMTPConfig();
+  // 4. Try Direct Google SMTP (Port 465 SSL & 587 STARTTLS over IPv4)
   if (smtpConfig.user && smtpConfig.pass) {
     const resSMTP = await sendEmailWithGoogleFallback({
       config: smtpConfig,
@@ -671,10 +704,10 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
     if (resSMTP.success) {
       return { success: true, method: 'google_smtp', message: `E-posta Google SMTP sunucusu (smtp.gmail.com) üzerinden '${targetEmail}' adresine başarıyla gönderildi.` };
     }
-    console.warn(`[Universal Email Engine] Google SMTP direct connection timed out or blocked by host firewall.`);
+    console.warn(`[Universal Email Engine] Direct Google SMTP connection timed out or blocked by Render host firewall.`);
   }
 
-  // 4. Try EmailJS REST API Over HTTPS Port 443
+  // 5. Try EmailJS REST API Over HTTPS Port 443
   try {
     let targetTemplate = EMAILJS_CONTACT_TEMPLATE_ID;
     let templateParams: any = {
@@ -702,11 +735,11 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
     console.warn(`[Universal Email Engine EmailJS Warning]:`, ejsErr);
   }
 
-  // 5. Guaranteed Fallback — Recorded in Firestore and Queue
+  // 6. Direct SMTP on Render blocked and no HTTPS Key configured
   return {
-    success: true,
-    method: 'firestore_system_queue',
-    message: `E-posta kaydı başarıyla oluşturuldu ve '${targetEmail}' için sisteme iletildi.`
+    success: false,
+    method: 'smtp_blocked_render',
+    message: `Render bulut sunucusunda ham TCP SMTP portları (465/587) engelli olduğu için e-posta doğrudan gönderilemedi. E-postanın kutunuza ulaşması için Yönetim Panelinden (Admin Panel > E-Posta Ayarları) ücretsiz Resend API Key veya Google Webhook URL'inizi giriniz.`
   };
 };
 
@@ -3237,7 +3270,7 @@ app.get('/api/smtp-config', async (req, res) => {
 });
 
 app.post('/api/smtp-config', async (req, res) => {
-  const { host, port, user, pass, fromName, active } = req.body;
+  const { host, port, user, pass, fromName, active, resendApiKey, googleScriptUrl } = req.body;
   try {
     const smtpDocRef = doc(db, 'smtp_config', 'default');
     
@@ -3257,12 +3290,14 @@ app.post('/api/smtp-config', async (req, res) => {
       pass: finalPass,
       fromName,
       active: active !== false,
+      resendApiKey: resendApiKey || '',
+      googleScriptUrl: googleScriptUrl || '',
       updatedAt: new Date().toISOString()
     });
-    return res.json({ success: true, message: 'SMTP ayarları başarıyla kaydedildi.' });
+    return res.json({ success: true, message: 'E-posta ayarları başarıyla kaydedildi.' });
   } catch (err: any) {
     console.error('[SMTP POST] Error:', err);
-    return res.status(500).json({ error: 'SMTP ayarları kaydedilirken hata oluştu.', details: err.message });
+    return res.status(500).json({ error: 'E-posta ayarları kaydedilirken hata oluştu.', details: err.message });
   }
 });
 

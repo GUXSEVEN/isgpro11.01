@@ -149,13 +149,15 @@ export default function AdminPanel({
   const [yonetmelikLink, setYonetmelikLink] = useState(siteConfig.yonetmelikLink || '');
   const [contentSuccess, setContentSuccess] = useState(false);
 
-  // SMTP Config states
+  // SMTP & HTTPS REST Config states
   const [smtpHost, setSmtpHost] = useState('smtp.gmail.com');
   const [smtpPort, setSmtpPort] = useState(465);
   const [smtpUser, setSmtpUser] = useState('');
   const [smtpPass, setSmtpPass] = useState('');
   const [smtpFromName, setSmtpFromName] = useState('İSG Pro');
   const [smtpActive, setSmtpActive] = useState(true);
+  const [resendApiKey, setResendApiKey] = useState('');
+  const [googleScriptUrl, setGoogleScriptUrl] = useState('');
   const [smtpLoading, setSmtpLoading] = useState(false);
   const [smtpSaveSuccess, setSmtpSaveSuccess] = useState(false);
   const [testEmailAddress, setTestEmailAddress] = useState('');
@@ -326,6 +328,8 @@ export default function AdminPanel({
           setSmtpPass(data.config.pass || '');
           setSmtpFromName(data.config.fromName || 'İSG Pro');
           setSmtpActive(data.config.active !== false);
+          setResendApiKey(data.config.resendApiKey || '');
+          setGoogleScriptUrl(data.config.googleScriptUrl || '');
         }
       }
     } catch (err) {
@@ -347,7 +351,9 @@ export default function AdminPanel({
           user: smtpUser,
           pass: smtpPass,
           fromName: smtpFromName,
-          active: smtpActive
+          active: smtpActive,
+          resendApiKey,
+          googleScriptUrl
         })
       });
       if (response.ok) {
@@ -383,6 +389,8 @@ export default function AdminPanel({
           pass: smtpPass,
           fromName: smtpFromName,
           active: smtpActive,
+          resendApiKey,
+          googleScriptUrl,
           testEmail: testEmailAddress,
           templateType: testTemplateType
         })
@@ -2577,6 +2585,37 @@ export default function AdminPanel({
                         placeholder="İSG Pro Destek"
                         className="mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-750 rounded-xl p-3 text-slate-950 dark:text-white text-xs sm:text-sm outline-none"
                       />
+                    </div>
+
+                    <div className="pt-3 border-t border-slate-200/60 dark:border-slate-750 mt-4 space-y-3">
+                      <div className="bg-indigo-50/70 dark:bg-indigo-950/30 p-3 rounded-xl border border-indigo-100 dark:border-indigo-900/50">
+                        <span className="text-xs font-bold text-indigo-700 dark:text-indigo-400 block mb-1">🚀 Port Engellerini Aşan HTTPS REST API Göndericisi (Tavsiye Edilen)</span>
+                        <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-snug">
+                          Render bulut sunucularında TCP 465/587 portları engellendiği için aşağıdaki HTTPS API Key veya Webhook URL'inizi girerek <strong>kutunuza anında ve fiziki e-posta düşmesini</strong> sağlayabilirsiniz.
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Ücretsiz Resend API Key (Port 443 HTTPS)</label>
+                        <input
+                          type="text"
+                          value={resendApiKey}
+                          onChange={(e) => setResendApiKey(e.target.value)}
+                          placeholder="re_123456789..."
+                          className="mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-750 rounded-xl p-3 text-slate-950 dark:text-white text-xs sm:text-sm outline-none font-mono"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Google Webhook REST URL (Port 443 HTTPS)</label>
+                        <input
+                          type="text"
+                          value={googleScriptUrl}
+                          onChange={(e) => setGoogleScriptUrl(e.target.value)}
+                          placeholder="https://script.google.com/macros/s/.../exec"
+                          className="mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-750 rounded-xl p-3 text-slate-950 dark:text-white text-xs sm:text-sm outline-none font-mono"
+                        />
+                      </div>
                     </div>
                   </div>
 
