@@ -2529,91 +2529,104 @@ export default function AdminPanel({
                       </label>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">SMTP Sunucusu (Host) *</label>
-                        <input
-                          type="text" required
-                          value={smtpHost}
-                          onChange={(e) => setSmtpHost(e.target.value)}
-                          placeholder="smtp.gmail.com"
-                          className="mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-750 rounded-xl p-3 text-slate-950 dark:text-white text-xs sm:text-sm outline-none focus:ring-2 focus:ring-indigo-500/20"
-                        />
+                    {/* 🚀 HTTPS REST API (Port 443 - Bypasses all Render TCP Port Blocks) */}
+                    <div className="bg-gradient-to-br from-indigo-50 to-blue-50 dark:from-indigo-950/40 dark:to-slate-900 p-4 rounded-2xl border-2 border-indigo-200 dark:border-indigo-800/60 shadow-sm space-y-3">
+                      <div className="flex items-center gap-2">
+                        <span className="bg-indigo-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">Tavsiye Edilen (Port 443)</span>
+                        <h5 className="text-xs sm:text-sm font-extrabold text-indigo-950 dark:text-indigo-200">HTTPS REST API Göndericisi (Resend & Google)</h5>
                       </div>
-                      <div>
-                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">SMTP Portu *</label>
-                        <select
-                          value={smtpPort}
-                          onChange={(e) => setSmtpPort(Number(e.target.value))}
-                          className="mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-750 rounded-xl p-3 text-slate-950 dark:text-white text-xs sm:text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 font-bold"
-                        >
-                          <option value={465}>465 (SSL / Önerilen)</option>
-                          <option value={587}>587 (TLS / STARTTLS)</option>
-                        </select>
+                      <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-snug font-medium">
+                        Render bulut sunucularında klasik TCP 465/587 portları engellendiği için aşağıdaki Resend API Key veya Google Webhook URL'inizi girerek <strong>fiziki e-postanın kutunuza 1 saniyede düşmesini</strong> sağlayabilirsiniz.
+                      </p>
+
+                      <div className="space-y-3 pt-1">
+                        <div>
+                          <label className="text-[10px] font-extrabold uppercase text-indigo-900 dark:text-indigo-300 tracking-wider flex items-center gap-1">
+                            🔑 Ücretsiz Resend API Key (Port 443 HTTPS REST API)
+                          </label>
+                          <input
+                            type="text"
+                            value={resendApiKey}
+                            onChange={(e) => setResendApiKey(e.target.value)}
+                            placeholder="re_123456789... (resend.com adresinden ücretsiz 15 saniyede alınır)"
+                            className="mt-1 w-full bg-white dark:bg-slate-900 border border-indigo-200 dark:border-slate-750 rounded-xl p-3 text-slate-950 dark:text-white text-xs sm:text-sm outline-none font-mono focus:ring-2 focus:ring-indigo-500/30"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] font-extrabold uppercase text-indigo-900 dark:text-indigo-300 tracking-wider flex items-center gap-1">
+                            🔗 Google Webhook REST URL (Port 443 HTTPS REST API)
+                          </label>
+                          <input
+                            type="text"
+                            value={googleScriptUrl}
+                            onChange={(e) => setGoogleScriptUrl(e.target.value)}
+                            placeholder="https://script.google.com/macros/s/.../exec"
+                            className="mt-1 w-full bg-white dark:bg-slate-900 border border-indigo-200 dark:border-slate-750 rounded-xl p-3 text-slate-950 dark:text-white text-xs sm:text-sm outline-none font-mono focus:ring-2 focus:ring-indigo-500/30"
+                          />
+                        </div>
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Gönderen E-Posta (Kullanıcı Adı) *</label>
-                        <input
-                          type="email" required
-                          value={smtpUser}
-                          onChange={(e) => setSmtpUser(e.target.value)}
-                          placeholder="ornek@alanadi.com"
-                          className="mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-750 rounded-xl p-3 text-slate-950 dark:text-white text-xs sm:text-sm outline-none"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">E-Posta Şifresi / Uygulama Şifresi *</label>
-                        <input
-                          type="password" required
-                          value={smtpPass}
-                          onChange={(e) => setSmtpPass(e.target.value)}
-                          placeholder="••••••••••••••••"
-                          className="mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-750 rounded-xl p-3 text-slate-950 dark:text-white text-xs sm:text-sm outline-none"
-                        />
-                      </div>
-                    </div>
+                    {/* Classic Nodemailer SMTP Section */}
+                    <div className="pt-2 space-y-3">
+                      <h5 className="text-xs font-bold text-slate-700 dark:text-slate-300 border-b border-slate-200 dark:border-slate-800 pb-1">Klasik Nodemailer SMTP Ayarları (Alternatif)</h5>
 
-                    <div>
-                      <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Görünen Gönderici Adı (From Name) *</label>
-                      <input
-                        type="text" required
-                        value={smtpFromName}
-                        onChange={(e) => setSmtpFromName(e.target.value)}
-                        placeholder="İSG Pro Destek"
-                        className="mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-750 rounded-xl p-3 text-slate-950 dark:text-white text-xs sm:text-sm outline-none"
-                      />
-                    </div>
-
-                    <div className="pt-3 border-t border-slate-200/60 dark:border-slate-750 mt-4 space-y-3">
-                      <div className="bg-indigo-50/70 dark:bg-indigo-950/30 p-3 rounded-xl border border-indigo-100 dark:border-indigo-900/50">
-                        <span className="text-xs font-bold text-indigo-700 dark:text-indigo-400 block mb-1">🚀 Port Engellerini Aşan HTTPS REST API Göndericisi (Tavsiye Edilen)</span>
-                        <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-snug">
-                          Render bulut sunucularında TCP 465/587 portları engellendiği için aşağıdaki HTTPS API Key veya Webhook URL'inizi girerek <strong>kutunuza anında ve fiziki e-posta düşmesini</strong> sağlayabilirsiniz.
-                        </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">SMTP Sunucusu (Host)</label>
+                          <input
+                            type="text"
+                            value={smtpHost}
+                            onChange={(e) => setSmtpHost(e.target.value)}
+                            placeholder="smtp.gmail.com"
+                            className="mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-750 rounded-xl p-3 text-slate-950 dark:text-white text-xs sm:text-sm outline-none focus:ring-2 focus:ring-indigo-500/20"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">SMTP Portu</label>
+                          <select
+                            value={smtpPort}
+                            onChange={(e) => setSmtpPort(Number(e.target.value))}
+                            className="mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-750 rounded-xl p-3 text-slate-950 dark:text-white text-xs sm:text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 font-bold"
+                          >
+                            <option value={465}>465 (SSL / Önerilen)</option>
+                            <option value={587}>587 (TLS / STARTTLS)</option>
+                          </select>
+                        </div>
                       </div>
 
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Gönderen E-Posta (Kullanıcı Adı)</label>
+                          <input
+                            type="email"
+                            value={smtpUser}
+                            onChange={(e) => setSmtpUser(e.target.value)}
+                            placeholder="ornek@alanadi.com"
+                            className="mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-750 rounded-xl p-3 text-slate-950 dark:text-white text-xs sm:text-sm outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">E-Posta Şifresi / Uygulama Şifresi</label>
+                          <input
+                            type="password"
+                            value={smtpPass}
+                            onChange={(e) => setSmtpPass(e.target.value)}
+                            placeholder="••••••••••••••••"
+                            className="mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-750 rounded-xl p-3 text-slate-950 dark:text-white text-xs sm:text-sm outline-none"
+                          />
+                        </div>
+                      </div>
+
                       <div>
-                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Ücretsiz Resend API Key (Port 443 HTTPS)</label>
+                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Görünen Gönderici Adı (From Name)</label>
                         <input
                           type="text"
-                          value={resendApiKey}
-                          onChange={(e) => setResendApiKey(e.target.value)}
-                          placeholder="re_123456789..."
-                          className="mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-750 rounded-xl p-3 text-slate-950 dark:text-white text-xs sm:text-sm outline-none font-mono"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Google Webhook REST URL (Port 443 HTTPS)</label>
-                        <input
-                          type="text"
-                          value={googleScriptUrl}
-                          onChange={(e) => setGoogleScriptUrl(e.target.value)}
-                          placeholder="https://script.google.com/macros/s/.../exec"
-                          className="mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-750 rounded-xl p-3 text-slate-950 dark:text-white text-xs sm:text-sm outline-none font-mono"
+                          value={smtpFromName}
+                          onChange={(e) => setSmtpFromName(e.target.value)}
+                          placeholder="İSG Pro Destek"
+                          className="mt-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-750 rounded-xl p-3 text-slate-950 dark:text-white text-xs sm:text-sm outline-none"
                         />
                       </div>
                     </div>
