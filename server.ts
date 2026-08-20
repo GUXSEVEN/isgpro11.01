@@ -1789,12 +1789,26 @@ const maskLicenseKey = (key: string): string => {
 };
 
 const app = express();
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+
+// Health check endpoints for Render and uptime monitoring (bypasses HTTPS redirects)
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
+app.get('/api/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
 // Force HTTPS redirect on Render (maintaining POST/PUT methods via 308 redirects)
 app.use((req, res, next) => {
+  if (req.path === '/health' || req.path === '/api/health') {
+    return next();
+  }
   if (process.env.NODE_ENV === 'production' && req.headers['x-forwarded-proto'] === 'http') {
-    return res.redirect(308, `https://${req.headers.host}${req.url}`);
+    const host = req.headers.host || '';
+    if (!host.includes('localhost') && !host.includes('127.0.0.1')) {
+      return res.redirect(308, `https://${host}${req.url}`);
+    }
   }
   next();
 });
@@ -3829,7 +3843,8 @@ async function startServer() {
       path.join(__dirname, 'dist'),
       path.join(__dirname, '..', 'dist')
     ];
-    const distPath = possibleDistPaths.find(p => fs.existsSync(path.join(p, 'index.html'))) || path.join(process.cwd(), 'dist');
+    const rawDistPath = possibleDistPaths.find(p => fs.existsSync(path.join(p, 'index.html'))) || path.join(process.cwd(), 'dist');
+    const distPath = path.resolve(rawDistPath);
     console.log(`[SERVER] Production static assets directory resolved to: ${distPath}`);
 
     // Serve static files with caching
