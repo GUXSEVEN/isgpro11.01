@@ -1,4 +1,6 @@
-// Import from pre-bundled server module to guarantee zero runtime TypeScript resolution errors on Vercel
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
 let appInstance: any = null;
 
 function getApp() {
