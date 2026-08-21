@@ -1,5 +1,6 @@
-import app from '../server';
+import { app } from '../server.ts';
 
 export default function handler(req: any, res: any) {
-  return app(req, res);
+  const handlerFn = (app as any)?.default || app;
+  return handlerFn(req, res);
 }

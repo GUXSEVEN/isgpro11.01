@@ -1,6 +1,6 @@
-import { db } from './firebase';
+import { db } from './firebase.ts';
 import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
-import { encryptSensitiveData } from './crypto';
+import { encryptSensitiveData } from './crypto.ts';
 
 export type LicenseType = 'monthly' | 'yearly' | 'trial' | 'demo';
 

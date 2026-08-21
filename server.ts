@@ -24,7 +24,7 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, doc, getDoc, setDoc, getDocs, collection } from 'firebase/firestore';
 import nodemailer from 'nodemailer';
 import PDFDocument from 'pdfkit';
-import { generateLicenseKey, registerGeneratedLicense, validateLicenseAgainstDb, requestTrialLicense, LicenseType } from './src/lib/licenseUtils';
+import { generateLicenseKey, registerGeneratedLicense, validateLicenseAgainstDb, requestTrialLicense, LicenseType } from './src/lib/licenseUtils.ts';
 
 function toLatin(str: string): string {
   if (!str) return '';
