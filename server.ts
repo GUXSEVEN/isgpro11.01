@@ -526,7 +526,7 @@ const sendEmailWithGoogleFallback = async (options: {
   html: string;
   replyTo?: string;
   attachments?: any[];
-}): Promise<{ success: boolean; error?: string }> => {
+}): Promise<{ success: boolean; error?: string; details?: string }> => {
   const { config, to, subject, html, replyTo, attachments } = options;
   const cleanPass = (config.pass || '').replace(/\s+/g, '');
   const cleanUser = (config.user || 'infoisgpro@gmail.com').trim();
@@ -558,7 +558,7 @@ const sendEmailWithGoogleFallback = async (options: {
       connectionTimeout: 4000,
       greetingTimeout: 4000,
       socketTimeout: 5000
-    });
+    } as any);
 
     await transporter465.sendMail({
       from: `"${fromName}" <${cleanUser}>`,
@@ -589,7 +589,7 @@ const sendEmailWithGoogleFallback = async (options: {
       connectionTimeout: 4000,
       greetingTimeout: 4000,
       socketTimeout: 5000
-    });
+    } as any);
 
     await transporter587.sendMail({
       from: `"${fromName}" <${cleanUser}>`,
@@ -800,7 +800,7 @@ const createDynamicTransporter = (config: { host: string; port: number; user: st
     connectionTimeout: 15000,
     greetingTimeout: 15000,
     socketTimeout: 15000
-  });
+  } as any);
 };
 
 // Using secure direct image URL from postimg.cc for high email client compatibility
@@ -2369,6 +2369,23 @@ function resolvePublicAppUrl(req: express.Request, customDomain?: string): strin
     return domain.replace(/\/$/, '');
   }
 
+  // Priority 1: Configured APP_URL environment variable
+  if (process.env.APP_URL && process.env.APP_URL.trim() && !process.env.APP_URL.includes('localhost')) {
+    let appUrl = process.env.APP_URL.trim();
+    if (!appUrl.startsWith('http://') && !appUrl.startsWith('https://')) {
+      appUrl = 'https://' + appUrl;
+    }
+    return appUrl.replace(/\/$/, '');
+  }
+
+  // Priority 2: Vercel system environment variables
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL.replace(/\/$/, '')}`;
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL.replace(/\/$/, '')}`;
+  }
+
   const rawForwardedHost = (req.headers['x-forwarded-host'] as string || '').split(',')[0].trim();
   const rawHost = (req.headers.host || '').trim();
   let host = rawForwardedHost || rawHost;
@@ -2384,15 +2401,23 @@ function resolvePublicAppUrl(req: express.Request, customDomain?: string): strin
     return host ? `http://${host}` : 'http://localhost:3000';
   }
 
-  const protocol = req.headers['x-forwarded-proto'] === 'https' || req.secure ? 'https' : 'https';
+  const protocol = req.headers['x-forwarded-proto'] === 'http' ? 'http' : 'https';
   return `${protocol}://${host}`;
 }
 
 function getPublicUserIp(req: express.Request): string {
+  const realIp = (req.headers['x-real-ip'] as string || '').split(',')[0].trim();
   const forwardedFor = (req.headers['x-forwarded-for'] as string || '').split(',')[0].trim();
-  const rawIp = forwardedFor || req.socket.remoteAddress || '85.105.1.1';
+  const rawIp = realIp || forwardedFor || req.socket.remoteAddress || '85.105.1.1';
   let cleanIp = rawIp.replace(/^::ffff:/, '');
-  if (cleanIp === '127.0.0.1' || cleanIp === '::1' || cleanIp === 'localhost' || !cleanIp) {
+  if (
+    cleanIp === '127.0.0.1' || 
+    cleanIp === '::1' || 
+    cleanIp === 'localhost' || 
+    cleanIp.startsWith('10.') || 
+    cleanIp.startsWith('192.168.') || 
+    !cleanIp
+  ) {
     cleanIp = '85.105.1.1';
   }
   return cleanIp;
@@ -3895,4 +3920,14 @@ async function startServer() {
   }
 }
 
-startServer();
+// Only start the standalone listening server when NOT running inside Vercel Serverless environment
+const isVercelServerless = !!process.env.VERCEL || !!process.env.NOW_REGION;
+if (!isVercelServerless) {
+  startServer();
+} else {
+  // In Vercel serverless function, trigger background warm-up
+  initReleasesFromFirestore().catch(e => console.warn('[Vercel Serverless Init Error]:', e));
+}
+
+export { app };
+export default app;
