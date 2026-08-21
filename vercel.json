@@ -17,7 +17,7 @@
       "destination": "/api"
     },
     {
-      "source": "/((?!assets/|.*\\.[a-zA-Z0-9]+).*)",
+      "source": "/((?!api/|paytr/|health|assets/|favicon.png|.*\\.[a-zA-Z0-9]+).*)",
       "destination": "/index.html"
     }
   ],

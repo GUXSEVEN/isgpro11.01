@@ -17,7 +17,6 @@ const forceIPv4Lookup = (hostname: string, options: any, callback: any) => {
     cb(err, address, family || 4);
   });
 };
-import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
@@ -1799,12 +1798,28 @@ app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Global CORS & URL Normalization for Vercel Serverless Function compatibility
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+
+  // Normalize path if Vercel serverless functions stripped the /api prefix
+  if (!req.url.startsWith('/api') && !req.url.startsWith('/health') && !req.url.startsWith('/assets')) {
+    req.url = '/api' + (req.url.startsWith('/') ? req.url : '/' + req.url);
+  }
+  next();
+});
+
 // Force HTTPS redirect on Render (maintaining POST/PUT methods via 308 redirects)
 app.use((req, res, next) => {
   if (req.path === '/health' || req.path === '/api/health') {
     return next();
   }
-  if (process.env.NODE_ENV === 'production' && req.headers['x-forwarded-proto'] === 'http') {
+  if (process.env.NODE_ENV === 'production' && !process.env.VERCEL && req.headers['x-forwarded-proto'] === 'http') {
     const host = req.headers.host || '';
     if (!host.includes('localhost') && !host.includes('127.0.0.1')) {
       return res.redirect(308, `https://${host}${req.url}`);
@@ -3856,6 +3871,7 @@ async function startServer() {
 
   const isProduction = process.env.NODE_ENV === 'production' || (typeof __filename !== 'undefined' ? !__filename.endsWith('.ts') : true);
   if (!isProduction) {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
