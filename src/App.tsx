@@ -14,7 +14,7 @@ import { User as UserType, FAQItem, Review, RiskPreset, SiteConfig } from './typ
 // Firebase imports
 import { db } from './lib/firebase';
 import { collection, getDocs, doc, setDoc, getDoc, onSnapshot, deleteDoc } from 'firebase/firestore';
-import { hashPassword, encryptUser, decryptUser, getObfuscatedSecret } from './lib/crypto';
+import { hashPassword, encryptUser, decryptUser, decryptData, encryptData, getObfuscatedSecret } from './lib/crypto';
 import { logActivity } from './lib/activity';
 
 // Component imports
@@ -116,7 +116,7 @@ export default function App() {
           const expectedHash = "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8";
           if (parsed[adminIndex].password !== expectedHash) {
             parsed[adminIndex].password = expectedHash;
-            localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(parsed.map(u => encryptUser(u))));
+            localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(parsed));
           }
         }
         return parsed;
@@ -659,7 +659,7 @@ export default function App() {
             }
             setCurrentUser(loggedInUser);
             try {
-              localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(encryptUser(loggedInUser)));
+              localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(loggedInUser));
             } catch (e) {}
             // Log successful login
             logActivity(usernameKey, 'login', { role: loggedInUser.role || 'user', email: loggedInUser.email || '' })
@@ -696,7 +696,7 @@ export default function App() {
       }
       setCurrentUser(loggedInUser);
       try {
-        localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(encryptUser(loggedInUser)));
+        localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(loggedInUser));
       } catch (e) {}
       // Log successful login fallback
       logActivity(usernameKey, 'login', { role: loggedInUser.role || 'user', email: loggedInUser.email || '' })
