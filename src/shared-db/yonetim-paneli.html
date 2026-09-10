@@ -1,0 +1,1024 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>İSG Pro - Master Ortak Yönetim Merkezi</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Plus Jakarta Sans', -apple-system, sans-serif; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+    .tab-btn.active {
+      border-bottom: 3px solid #6366f1;
+      color: #ffffff !important;
+      font-weight: 800;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col antialiased">
+
+  <!-- TOP HEADER -->
+  <header class="bg-slate-900/90 border-b border-slate-800 sticky top-0 z-50 backdrop-blur-md">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-indigo-400 flex items-center justify-center text-white font-black shadow-lg shadow-indigo-600/30">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="text-base sm:text-lg font-black text-white tracking-tight">İSG Pro Master Console</h1>
+            <span class="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+              Canlı Veritabanı Aktif
+            </span>
+          </div>
+          <p class="text-[10px] text-slate-400 font-semibold hidden sm:block">isgpro11.01-main & isg-projesi - Copy Ortak Yönetim İstasyonu</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <button onclick="fetchAllLiveData()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all cursor-pointer shadow-lg shadow-indigo-600/20 active:scale-95">
+          <svg class="w-3.5 h-3.5 animate-spin hidden" id="refreshSpinner" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-width="4" class="opacity-25"></circle><path fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" class="opacity-75"></path></svg>
+          <svg class="w-3.5 h-3.5" id="refreshIcon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          <span>Verileri Yenile</span>
+        </button>
+        <button onclick="downloadBackupJson()" class="bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all cursor-pointer">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+          <span class="hidden sm:inline">Yedek İndir</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- TABS NAVIGATION -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 border-t border-slate-800/60 overflow-x-auto">
+      <nav class="flex space-x-6 text-xs font-bold text-slate-400">
+        <button onclick="switchTab('users')" id="tabBtn-users" class="tab-btn active py-3 cursor-pointer flex items-center gap-1.5 transition-colors whitespace-nowrap">
+          👥 1. Kullanıcılar (<span id="countUsersNav">0</span>)
+        </button>
+        <button onclick="switchTab('licenses')" id="tabBtn-licenses" class="tab-btn py-3 cursor-pointer hover:text-white flex items-center gap-1.5 transition-colors whitespace-nowrap">
+          🔑 2. Lisanslar (<span id="countLicensesNav">0</span>)
+        </button>
+        <button onclick="switchTab('osgb')" id="tabBtn-osgb" class="tab-btn py-3 cursor-pointer hover:text-white flex items-center gap-1.5 transition-colors whitespace-nowrap">
+          🏢 3. OSGB & Personel
+        </button>
+        <button onclick="switchTab('paytr')" id="tabBtn-paytr" class="tab-btn py-3 cursor-pointer hover:text-white flex items-center gap-1.5 transition-colors whitespace-nowrap">
+          💳 4. PayTR Ayarları
+        </button>
+        <button onclick="switchTab('smtp')" id="tabBtn-smtp" class="tab-btn py-3 cursor-pointer hover:text-white flex items-center gap-1.5 transition-colors whitespace-nowrap">
+          📧 5. SMTP E-Posta
+        </button>
+        <button onclick="switchTab('backup')" id="tabBtn-backup" class="tab-btn py-3 cursor-pointer hover:text-white flex items-center gap-1.5 transition-colors whitespace-nowrap">
+          💾 6. Yedek & Senkron
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- MAIN CONTAINER -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+
+    <!-- TOAST NOTIFICATION -->
+    <div id="toast" class="hidden fixed bottom-6 right-6 z-50 bg-emerald-600 text-white font-bold text-xs px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-2 transition-all">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+      <span id="toastMsg">İşlem tamamlandı!</span>
+    </div>
+
+    <!-- ==================== SEKME 1: KULLANICILAR ==================== -->
+    <section id="view-users" class="space-y-6">
+      <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-900 border border-slate-800 p-6 rounded-3xl shadow-xl">
+        <div>
+          <h2 class="text-xl font-bold text-white">Canlı Firestore Kullanıcı Veritabanı</h2>
+          <p class="text-xs text-slate-400 mt-0.5">Firebase <code class="text-indigo-400 font-mono">isg-kutuphane</code> / <code class="text-emerald-400 font-mono">users</code> koleksiyonundaki tüm aktif hesaplar.</p>
+        </div>
+        <div class="flex gap-2 w-full sm:w-auto">
+          <button onclick="openNewUserModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 cursor-pointer transition-all shadow-lg shadow-indigo-600/20 active:scale-95 flex-1 sm:flex-none justify-center">
+            ➕ Yeni Kullanıcı Ekle
+          </button>
+          <button onclick="exportUsersCsv()" class="bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 cursor-pointer transition-all">
+            📊 Excel (.csv) İndir
+          </button>
+        </div>
+      </div>
+
+      <!-- Arama Kutusu -->
+      <div class="flex gap-3">
+        <input id="userSearchInput" oninput="renderUsersTable()" type="text" placeholder="İsim, kullanıcı adı, e-posta veya telefon ile anlık ara..." class="w-full bg-slate-900 border border-slate-800 rounded-2xl px-4 py-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500">
+      </div>
+
+      <!-- Kullanıcılar Tablosu -->
+      <div class="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr class="bg-slate-950/80 border-b border-slate-800 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                <th class="p-4">Kullanıcı</th>
+                <th class="p-4">Rol</th>
+                <th class="p-4">İletişim</th>
+                <th class="p-4">Lisans Durumu</th>
+                <th class="p-4">Lisans Kodu</th>
+                <th class="p-4">Bitiş Tarihi</th>
+                <th class="p-4 text-right">İşlem</th>
+              </tr>
+            </thead>
+            <tbody id="usersTableBody" class="divide-y divide-slate-800 text-slate-300 font-medium">
+              <tr><td colspan="7" class="p-8 text-center text-slate-500 font-bold">Veriler canlı Firestore'dan yükleniyor, lütfen bekleyiniz...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== SEKME 2: LİSANSLAR ==================== -->
+    <section id="view-licenses" class="hidden space-y-6">
+      
+      <!-- Hızlı Lisans Üretim Kartları -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        
+        <!-- Trial -->
+        <div class="bg-slate-900 border border-amber-500/30 rounded-3xl p-5 flex flex-col justify-between hover:border-amber-500/60 transition-all">
+          <div>
+            <div class="flex justify-between items-center mb-2">
+              <span class="text-[10px] font-black text-amber-400 uppercase tracking-wider">Ücretsiz Deneme</span>
+              <span class="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30">7 Gün</span>
+            </div>
+            <h3 class="text-sm font-bold text-white mb-1">7 Günlük Deneme Lisansı</h3>
+            <p class="text-[11px] text-slate-400 mb-4">Yeni hesaplar için 7 günlük test yetkisi sağlar. Önek: <code class="text-amber-400 font-mono font-bold">ISG-T-</code></p>
+          </div>
+          <button onclick="generateAndSaveLicense('trial')" class="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold py-2.5 rounded-xl cursor-pointer transition-all active:scale-95 shadow-md shadow-amber-500/10">
+            ⚡ 7 Günlük Kod Üret
+          </button>
+        </div>
+
+        <!-- Monthly -->
+        <div class="bg-slate-900 border border-indigo-500/30 rounded-3xl p-5 flex flex-col justify-between hover:border-indigo-500/60 transition-all">
+          <div>
+            <div class="flex justify-between items-center mb-2">
+              <span class="text-[10px] font-black text-indigo-400 uppercase tracking-wider">Aylık Standart</span>
+              <span class="text-[9px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-300 border border-indigo-500/30">30 Gün</span>
+            </div>
+            <h3 class="text-sm font-bold text-white mb-1">Aylık Pro Lisans</h3>
+            <p class="text-[11px] text-slate-400 mb-4">1 aylık tam yetki lisansı üretir. Önek: <code class="text-indigo-400 font-mono font-bold">ISG-M-</code></p>
+          </div>
+          <button onclick="generateAndSaveLicense('monthly')" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold py-2.5 rounded-xl cursor-pointer transition-all active:scale-95 shadow-md shadow-indigo-600/10">
+            💼 Aylık Kod Üret
+          </button>
+        </div>
+
+        <!-- Yearly -->
+        <div class="bg-slate-900 border border-emerald-500/30 rounded-3xl p-5 flex flex-col justify-between hover:border-emerald-500/60 transition-all">
+          <div>
+            <div class="flex justify-between items-center mb-2">
+              <span class="text-[10px] font-black text-emerald-400 uppercase tracking-wider">Yıllık Avantaj</span>
+              <span class="text-[9px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">365 Gün</span>
+            </div>
+            <h3 class="text-sm font-bold text-white mb-1">Yıllık Pro Lisans</h3>
+            <p class="text-[11px] text-slate-400 mb-4">1 yıllık sınırsız premium lisans üretir. Önek: <code class="text-emerald-400 font-mono font-bold">ISG-Y-</code></p>
+          </div>
+          <button onclick="generateAndSaveLicense('yearly')" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-2.5 rounded-xl cursor-pointer transition-all active:scale-95 shadow-md shadow-emerald-600/10">
+            👑 Yıllık Kod Üret
+          </button>
+        </div>
+
+        <!-- Demo -->
+        <div class="bg-slate-900 border border-purple-500/30 rounded-3xl p-5 flex flex-col justify-between hover:border-purple-500/60 transition-all">
+          <div>
+            <div class="flex justify-between items-center mb-2">
+              <span class="text-[10px] font-black text-purple-400 uppercase tracking-wider">Hızlı Demo</span>
+              <span class="text-[9px] font-bold px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-300 border border-purple-500/30">10 Dk</span>
+            </div>
+            <h3 class="text-sm font-bold text-white mb-1">Demo Test Lisansı</h3>
+            <p class="text-[11px] text-slate-400 mb-4">Geliştirici veya anlık sunum testi için üretir. Önek: <code class="text-purple-400 font-mono font-bold">ISG-D-</code></p>
+          </div>
+          <button onclick="generateAndSaveLicense('demo')" class="w-full bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold py-2.5 rounded-xl cursor-pointer transition-all active:scale-95 shadow-md shadow-purple-600/10">
+            🧪 Demo Kod Üret
+          </button>
+        </div>
+
+      </div>
+
+      <!-- Son Üretilen Lisans Gösterge Kutusu -->
+      <div id="latestLicenseBox" class="hidden bg-slate-900 border border-indigo-500/50 rounded-3xl p-6 shadow-2xl">
+        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div>
+            <span id="latestBadge" class="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full"></span>
+            <h4 class="text-base font-bold text-white mt-1">Dijital Lisans Kodu Başarıyla Üretildi & Sisteme Kaydedildi</h4>
+            <p class="text-xs text-slate-400">Bu kod hem isgpro11 hem de isg-projesi sistemlerinde doğrudan geçerlidir.</p>
+          </div>
+          <div class="flex items-center gap-3 w-full sm:w-auto">
+            <input id="latestKeyInput" readonly class="bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 font-mono font-extrabold text-sm text-indigo-300 tracking-wider text-center select-all w-full sm:w-auto">
+            <button onclick="copyLatestKey()" id="latestCopyBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 py-2 rounded-xl text-xs cursor-pointer transition-all whitespace-nowrap">
+              Kopyala
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Lisanslar Listesi -->
+      <div class="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
+        <div class="p-6 border-b border-slate-800 flex justify-between items-center">
+          <div>
+            <h3 class="text-sm font-bold text-white">Canlı Firestore Lisans Koleksiyonu (generated_licenses)</h3>
+            <p class="text-xs text-slate-400">Veritabanındaki aktif, kayıtlı ve atanmış tüm lisans kodları.</p>
+          </div>
+          <span id="licenseCountBadge" class="text-xs font-mono font-bold text-slate-400 bg-slate-950 px-3 py-1 rounded-xl border border-slate-800">
+            0 Lisans
+          </span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr class="bg-slate-950/80 border-b border-slate-800 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                <th class="p-4">Lisans Anahtarı</th>
+                <th class="p-4">Plan Türü</th>
+                <th class="p-4">Oluşturulma</th>
+                <th class="p-4">Bitiş Tarihi</th>
+                <th class="p-4">Kalan Süre</th>
+                <th class="p-4">Atanan Hesap</th>
+                <th class="p-4 text-right">İşlem</th>
+              </tr>
+            </thead>
+            <tbody id="licensesTableBody" class="divide-y divide-slate-800 text-slate-300 font-medium">
+              <tr><td colspan="7" class="p-8 text-center text-slate-500 font-bold">Lisanslar yükleniyor...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ==================== SEKME 3: OSGB & PERSONEL ==================== -->
+    <section id="view-osgb" class="hidden space-y-6">
+      <div class="flex justify-between items-center bg-slate-900 border border-slate-800 p-6 rounded-3xl">
+        <div>
+          <h2 class="text-xl font-bold text-white">OSGB Firmaları & Personel Kadrosu</h2>
+          <p class="text-xs text-slate-400">Ortak OSGB firma tanımları, sicil numaraları ve çoklu OSGB lisans yetkileri.</p>
+        </div>
+        <button onclick="openNewOsgbModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-2 cursor-pointer transition-all shadow-lg shadow-indigo-600/20">
+          ➕ Yeni OSGB Ekle
+        </button>
+      </div>
+
+      <div id="osgbCardsContainer" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <!-- JS render -->
+      </div>
+    </section>
+
+    <!-- ==================== SEKME 4: PAYTR AYARLARI ==================== -->
+    <section id="view-paytr" class="hidden space-y-6">
+      <div class="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
+        <div class="flex justify-between items-start border-b border-slate-800 pb-4">
+          <div>
+            <h2 class="text-xl font-bold text-white">PayTR Sanal POS & Ödeme Yapılandırması</h2>
+            <p class="text-xs text-slate-400 mt-1">Buradaki ayarlar her iki projenin ödeme altyapısını ve fiyatlarını doğrudan kontrol eder.</p>
+          </div>
+          <span class="text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full bg-indigo-500/10 text-indigo-300 border border-indigo-500/30">
+            Ortak Konfigürasyon
+          </span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div class="space-y-1.5">
+            <label class="text-xs font-bold text-slate-300">Mağaza No (Merchant ID)</label>
+            <input id="paytrMerchantId" type="text" value="647209" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white font-mono focus:border-indigo-500">
+          </div>
+          <div class="space-y-1.5">
+            <label class="text-xs font-bold text-slate-300">Mağaza Parolası (Merchant Key)</label>
+            <input id="paytrMerchantKey" type="text" value="E1vY8eD5qB7sZ9xL" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white font-mono focus:border-indigo-500">
+          </div>
+          <div class="space-y-1.5">
+            <label class="text-xs font-bold text-slate-300">Mağaza Gizli Anahtar (Merchant Salt)</label>
+            <input id="paytrMerchantSalt" type="text" value="S3kR4tP9wQ2vM8nB" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white font-mono focus:border-indigo-500">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 pt-2">
+          <div class="space-y-1.5">
+            <label class="text-xs font-bold text-slate-300">Aylık Abonelik Fiyatı (TL)</label>
+            <input id="paytrPriceMonthly" type="text" value="299.00" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white font-mono">
+          </div>
+          <div class="space-y-1.5">
+            <label class="text-xs font-bold text-slate-300">Yıllık Abonelik Fiyatı (TL)</label>
+            <input id="paytrPriceYearly" type="text" value="2990.00" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white font-mono">
+          </div>
+          <div class="space-y-1.5">
+            <label class="text-xs font-bold text-slate-300">Çalışma Modu</label>
+            <select id="paytrTestMode" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white">
+              <option value="1">Test Modu (Simülasyon / Güvenli)</option>
+              <option value="0">Canlı Mod (Gerçek Kart Ödemesi)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="pt-4 flex justify-end">
+          <button onclick="savePayTRSettings()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-6 py-2.5 rounded-xl cursor-pointer transition-all shadow-lg shadow-indigo-600/20 flex items-center gap-2">
+            💾 PayTR Ayarlarını Kaydet
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== SEKME 5: SMTP AYARLARI ==================== -->
+    <section id="view-smtp" class="hidden space-y-6">
+      <div class="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
+        <div class="flex justify-between items-start border-b border-slate-800 pb-4">
+          <div>
+            <h2 class="text-xl font-bold text-white">SMTP E-Posta Sunucusu Yapılandırması</h2>
+            <p class="text-xs text-slate-400 mt-1">Lisans kodları teslimatı ve şifre yenileme e-postaları bu sunucu üzerinden gönderilir.</p>
+          </div>
+          <span class="text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+            Ortak E-Posta Motoru
+          </span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div class="space-y-1.5">
+            <label class="text-xs font-bold text-slate-300">SMTP Host / Sunucu</label>
+            <input id="smtpHost" type="text" value="smtp.gmail.com" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white font-mono">
+          </div>
+          <div class="space-y-1.5">
+            <label class="text-xs font-bold text-slate-300">SMTP Port</label>
+            <input id="smtpPort" type="number" value="465" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white font-mono">
+          </div>
+          <div class="space-y-1.5">
+            <label class="text-xs font-bold text-slate-300">Güvenlik (SSL/TLS)</label>
+            <select id="smtpSecure" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white">
+              <option value="true">SSL / TLS (Port 465 - Tavsiye Edilen)</option>
+              <option value="false">STARTTLS (Port 587)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div class="space-y-1.5">
+            <label class="text-xs font-bold text-slate-300">E-Posta Kullanıcı Adı (Email)</label>
+            <input id="smtpUser" type="text" value="infoisgpro@gmail.com" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white font-mono">
+          </div>
+          <div class="space-y-1.5">
+            <label class="text-xs font-bold text-slate-300">Uygulama Parolası (App Password)</label>
+            <input id="smtpPass" type="password" value="wkmv ykld tfzq rrrz" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white font-mono">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div class="space-y-1.5">
+            <label class="text-xs font-bold text-slate-300">Gönderici Başlığı (From Name)</label>
+            <input id="smtpFromName" type="text" value="İSG Pro Dijital Lisans Sistemi" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white">
+          </div>
+          <div class="space-y-1.5">
+            <label class="text-xs font-bold text-slate-300">Gönderici E-Posta (From Email)</label>
+            <input id="smtpFromEmail" type="text" value="infoisgpro@gmail.com" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white font-mono">
+          </div>
+        </div>
+
+        <div class="pt-4 flex justify-between items-center border-t border-slate-800">
+          <span class="text-[11px] text-slate-500 font-semibold">Gmail ile sorunsuz gönderim için 16 haneli Uygulama Şifresi kullanılmalıdır.</span>
+          <button onclick="saveSMTPSettings()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-6 py-2.5 rounded-xl cursor-pointer transition-all shadow-lg shadow-emerald-600/20 flex items-center gap-2">
+            💾 SMTP Ayarlarını Kaydet
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== SEKME 6: YEDEKLEME ==================== -->
+    <section id="view-backup" class="hidden space-y-6">
+      <div class="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
+        <div>
+          <h2 class="text-xl font-bold text-white">Canlı Veritabanı & Sistem Yedeği</h2>
+          <p class="text-xs text-slate-400 mt-1">Tek bir tıklama ile tüm kullanıcı, lisans ve sistem ayarlarını JSON formatında yedekleyin.</p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          
+          <div class="bg-slate-950 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between">
+            <div class="space-y-2 mb-6">
+              <div class="text-indigo-400 font-bold text-sm">📥 Tam JSON Yedeği Al</div>
+              <p class="text-xs text-slate-400 font-medium">
+                Firestore'daki tüm kullanıcıları, üretilen tüm lisansları ve sistem ayarlarını tek tıkla bilgisayarınıza indirir.
+              </p>
+            </div>
+            <button onclick="downloadBackupJson()" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-lg shadow-indigo-600/20">
+              Yedek Dosyasını İndir (.json)
+            </button>
+          </div>
+
+          <div class="bg-slate-950 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between">
+            <div class="space-y-2 mb-6">
+              <div class="text-amber-400 font-bold text-sm">📤 Yedekten Geri Yükle</div>
+              <p class="text-xs text-slate-400 font-medium">
+                Önceden indirdiğiniz JSON yedeğini sisteme geri yükleyerek kullanıcı ve lisans kayıtlarını güncelleyebilirsiniz.
+              </p>
+            </div>
+            <label class="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all text-center">
+              Yedek Dosyası Seç (.json)
+              <input type="file" accept=".json" onchange="restoreBackupJson(event)" class="hidden">
+            </label>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- MODAL: YENİ KULLANICI EKLEME -->
+  <div id="userModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+    <div class="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-3xl p-6 sm:p-8 space-y-5 shadow-2xl">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+        <h3 class="text-base font-bold text-white">Yeni Kullanıcı Hesabı Ekle</h3>
+        <button onclick="closeUserModal()" class="text-slate-500 hover:text-white cursor-pointer font-bold text-lg">✕</button>
+      </div>
+
+      <div class="space-y-3 text-xs">
+        <div>
+          <label class="font-bold text-slate-300 block mb-1">Ad Soyad *</label>
+          <input id="modalUserName" type="text" placeholder="Örn: Ahmet Yılmaz" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-white">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="font-bold text-slate-300 block mb-1">Kullanıcı Adı *</label>
+            <input id="modalUserUsername" type="text" placeholder="ahmetyilmaz" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-white font-mono">
+          </div>
+          <div>
+            <label class="font-bold text-slate-300 block mb-1">Şifre *</label>
+            <input id="modalUserPassword" type="password" placeholder="••••••" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-white font-mono">
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="font-bold text-slate-300 block mb-1">E-Posta *</label>
+            <input id="modalUserEmail" type="email" placeholder="ahmet@isg.com" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-white">
+          </div>
+          <div>
+            <label class="font-bold text-slate-300 block mb-1">Telefon</label>
+            <input id="modalUserPhone" type="text" placeholder="05XX XXX XX XX" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-white font-mono">
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="font-bold text-slate-300 block mb-1">Mesleki Rol</label>
+            <select id="modalUserRole" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white">
+              <option value="uzman">İSG Uzmanı</option>
+              <option value="hekim">İşyeri Hekimi</option>
+              <option value="admin">Yönetici (Admin)</option>
+              <option value="other">Diğer Personel</option>
+            </select>
+          </div>
+          <div>
+            <label class="font-bold text-slate-300 block mb-1">Lisans Paketi</label>
+            <select id="modalUserLicenseType" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-bold">
+              <option value="none">Lisanssız (Ücretsiz)</option>
+              <option value="trial">⚡ 7 Günlük Deneme Lisansı</option>
+              <option value="monthly">💼 Aylık Pro Lisans (30 Gün)</option>
+              <option value="yearly">👑 Yıllık Pro Lisans (365 Gün)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="pt-3 flex justify-end gap-2 border-t border-slate-800">
+        <button onclick="closeUserModal()" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold cursor-pointer">İptal</button>
+        <button onclick="saveUserFromModal()" class="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white cursor-pointer shadow-lg shadow-indigo-600/20">Kaydet</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- JAVASCRIPT MOTORU -->
+  <script>
+    // Firestore REST API Endpoint Sabiti
+    const FIRESTORE_BASE = 'https://firestore.googleapis.com/v1/projects/isg-kutuphane/databases/(default)/documents';
+
+    // Bellekteki Canlı Veriler
+    let liveUsers = [];
+    let liveLicenses = [];
+    let liveOsgbs = [
+      {
+        id: "osgb-1",
+        name: "Merkez Akademi OSGB",
+        idNo: "TR-OSGB-3401",
+        contact: "0212 555 0101",
+        email: "info@merkezosgb.com",
+        hasMultipleOsgbLicense: true,
+        staff: [
+          { id: 1, name: "İbrahim Coşkun", role: "uzman", certificateNo: "ISG-A-98765" },
+          { id: 2, name: "Dr. Selim Yılmaz", role: "hekim", certificateNo: "HEK-54321" }
+        ]
+      }
+    ];
+
+    // Varsayılan Yapılandırma
+    const defaultSettings = {
+      paytrConfig: {
+        merchantId: "647209",
+        merchantKey: "E1vY8eD5qB7sZ9xL",
+        merchantSalt: "S3kR4tP9wQ2vM8nB",
+        testMode: "1",
+        prices: {
+          monthly: { amount: "299.00" },
+          yearly: { amount: "2990.00" }
+        }
+      },
+      smtpConfig: {
+        host: "smtp.gmail.com",
+        port: 465,
+        secure: true,
+        user: "infoisgpro@gmail.com",
+        pass: "wkmv ykld tfzq rrrz",
+        fromName: "İSG Pro Dijital Lisans Sistemi",
+        fromEmail: "infoisgpro@gmail.com"
+      }
+    };
+
+    // Sayfa Açılışı
+    window.addEventListener('DOMContentLoaded', () => {
+      loadSettings();
+      renderOsgbCards();
+      fetchAllLiveData();
+    });
+
+    // Sekme Değiştirici
+    function switchTab(tabId) {
+      const tabs = ['users', 'licenses', 'osgb', 'paytr', 'smtp', 'backup'];
+      tabs.forEach(t => {
+        const view = document.getElementById('view-' + t);
+        const btn = document.getElementById('tabBtn-' + t);
+        if (view && btn) {
+          if (t === tabId) {
+            view.classList.remove('hidden');
+            btn.classList.add('active');
+          } else {
+            view.classList.add('hidden');
+            btn.classList.remove('active');
+          }
+        }
+      });
+    }
+
+    // Bildirim Göster
+    function showToast(text) {
+      const toast = document.getElementById('toast');
+      document.getElementById('toastMsg').innerText = text;
+      toast.classList.remove('hidden');
+      setTimeout(() => toast.classList.add('hidden'), 3500);
+    }
+
+    // Firestore REST Helper: Dokümanı Düz JS Nesnesine Dönüştür
+    function parseFirestoreDoc(doc) {
+      if (!doc || !doc.fields) return {};
+      const res = {};
+      for (const [k, v] of Object.entries(doc.fields)) {
+        if ('stringValue' in v) res[k] = v.stringValue;
+        else if ('booleanValue' in v) res[k] = v.booleanValue;
+        else if ('integerValue' in v) res[k] = Number(v.integerValue);
+        else if ('doubleValue' in v) res[k] = Number(v.doubleValue);
+        else if ('timestampValue' in v) res[k] = v.timestampValue;
+        else if ('nullValue' in v) res[k] = null;
+        else res[k] = v;
+      }
+      return res;
+    }
+
+    // CANLI VERİLERİ FİRESTORE'DAN ÇEK
+    async function fetchAllLiveData() {
+      const spin = document.getElementById('refreshSpinner');
+      const icon = document.getElementById('refreshIcon');
+      if (spin) spin.classList.remove('hidden');
+      if (icon) icon.classList.add('hidden');
+
+      try {
+        // 1. Kullanıcıları çek (users koleksiyonu)
+        const resUsers = await fetch(FIRESTORE_BASE + '/users?pageSize=100');
+        if (resUsers.ok) {
+          const dataUsers = await resUsers.json();
+          if (dataUsers.documents) {
+            liveUsers = dataUsers.documents.map(d => parseFirestoreDoc(d));
+          }
+        }
+
+        // 2. Lisansları çek (generated_licenses koleksiyonu)
+        const resLic = await fetch(FIRESTORE_BASE + '/generated_licenses?pageSize=100');
+        if (resLic.ok) {
+          const dataLic = await resLic.json();
+          if (dataLic.documents) {
+            liveLicenses = dataLic.documents.map(d => parseFirestoreDoc(d));
+          }
+        }
+
+        renderUsersTable();
+        renderLicensesTable();
+        showToast('Firestore verileri başarıyla senkronize edildi!');
+      } catch (err) {
+        console.warn('Firestore canlı okuma hatası, yerel önbellek kullanılıyor:', err);
+        // Fallback: LocalStorage
+        liveUsers = JSON.parse(localStorage.getItem('isg_shared_users_v2') || '[]');
+        liveLicenses = JSON.parse(localStorage.getItem('isg_shared_licenses_v2') || '[]');
+        renderUsersTable();
+        renderLicensesTable();
+      } finally {
+        if (spin) spin.classList.add('hidden');
+        if (icon) icon.classList.remove('hidden');
+      }
+    }
+
+    // ==================== KULLANICILARI LİSTELE ====================
+    function renderUsersTable() {
+      const tbody = document.getElementById('usersTableBody');
+      const search = (document.getElementById('userSearchInput')?.value || '').toLowerCase().trim();
+      const countBadge = document.getElementById('countUsersNav');
+      if (countBadge) countBadge.innerText = liveUsers.length;
+
+      const filtered = liveUsers.filter(u => {
+        if (!search) return true;
+        return (u.name || '').toLowerCase().includes(search) ||
+               (u.username || '').toLowerCase().includes(search) ||
+               (u.email || '').toLowerCase().includes(search) ||
+               (u.phone || '').includes(search);
+      });
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-500 font-bold">Kayıtlı kullanıcı bulunamadı.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = filtered.map(u => {
+        let roleBadge = '<span class="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 text-[10px] font-bold">Personel</span>';
+        if (u.role === 'admin') roleBadge = '<span class="px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-400 border border-purple-500/30 text-[10px] font-black">Yönetici</span>';
+        else if (u.role === 'uzman') roleBadge = '<span class="px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/30 text-[10px] font-bold">İSG Uzmanı</span>';
+        else if (u.role === 'hekim') roleBadge = '<span class="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold">İşyeri Hekimi</span>';
+
+        let licenseBadge = '<span class="text-[10px] font-bold text-slate-500">Ücretsiz / Pasif</span>';
+        if (u.isPremium) {
+          const t = u.licenseType || (u.licenseKey && u.licenseKey.startsWith('ISG-T') ? 'trial' : (u.licenseKey && u.licenseKey.startsWith('ISG-M') ? 'monthly' : 'yearly'));
+          if (t === 'trial') licenseBadge = '<span class="px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-300 border border-amber-500/30 text-[10px] font-black">⚡ 7 Günlük Deneme</span>';
+          else if (t === 'monthly') licenseBadge = '<span class="px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-300 border border-indigo-500/30 text-[10px] font-black">💼 Aylık Pro</span>';
+          else licenseBadge = '<span class="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 text-[10px] font-black">👑 Yıllık Pro</span>';
+        }
+
+        const keyDisplay = u.licenseKey ? `<code class="text-indigo-300 font-mono text-[10px] font-bold">${u.licenseKey}</code>` : '<span class="text-slate-600">—</span>';
+        const expFormatted = u.licenseExpiresAt ? new Date(u.licenseExpiresAt).toLocaleDateString('tr-TR') : '—';
+
+        return `
+          <tr class="hover:bg-slate-900/60 transition-colors">
+            <td class="p-4">
+              <div class="font-bold text-white text-sm">${u.name || u.username}</div>
+              <div class="font-mono text-[10px] text-slate-500">@${u.username || 'user'}</div>
+            </td>
+            <td class="p-4">${roleBadge}</td>
+            <td class="p-4 font-mono text-[11px]">
+              <div>${u.email || '—'}</div>
+              <div class="text-slate-500">${u.phone || '—'}</div>
+            </td>
+            <td class="p-4">${licenseBadge}</td>
+            <td class="p-4">${keyDisplay}</td>
+            <td class="p-4 font-mono text-[11px] font-bold text-slate-300">${expFormatted}</td>
+            <td class="p-4 text-right">
+              <button onclick="deleteUserRow('${u.username || u.email}')" class="text-red-400 hover:text-red-300 p-1.5 rounded-lg hover:bg-red-500/10 cursor-pointer font-bold text-xs" title="Sil">
+                Sil
+              </button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    // ==================== LİSANSLARI LİSTELE ====================
+    function renderLicensesTable() {
+      const tbody = document.getElementById('licensesTableBody');
+      const countNav = document.getElementById('countLicensesNav');
+      const countBadge = document.getElementById('licenseCountBadge');
+      if (countNav) countNav.innerText = liveLicenses.length;
+      if (countBadge) countBadge.innerText = `Toplam ${liveLicenses.length} Lisans`;
+
+      if (liveLicenses.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-500 font-bold">Kayıtlı lisans bulunamadı. Yukarıdaki kartlardan anında yeni lisans üretebilirsiniz.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = liveLicenses.map(lic => {
+        const diffMs = new Date(lic.expiresAt).getTime() - Date.now();
+        const daysLeft = Math.ceil(diffMs / (86400000));
+        const isExpired = diffMs <= 0;
+
+        let planBadge = '<span class="text-emerald-400 font-bold">Yıllık Pro</span>';
+        if (lic.licenseType === 'trial' || (lic.licenseKey && lic.licenseKey.startsWith('ISG-T'))) {
+          planBadge = '<span class="text-amber-400 font-black">7 Günlük Deneme</span>';
+        } else if (lic.licenseType === 'monthly' || (lic.licenseKey && lic.licenseKey.startsWith('ISG-M'))) {
+          planBadge = '<span class="text-indigo-400 font-black">Aylık Pro (30 Gün)</span>';
+        } else if (lic.licenseType === 'demo' || (lic.licenseKey && lic.licenseKey.startsWith('ISG-D'))) {
+          planBadge = '<span class="text-purple-400 font-black">Demo (10 Dk)</span>';
+        }
+
+        return `
+          <tr class="hover:bg-slate-900/60 transition-colors">
+            <td class="p-4 font-mono font-bold text-indigo-300 text-xs">${lic.licenseKey}</td>
+            <td class="p-4 text-xs font-bold">${planBadge}</td>
+            <td class="p-4 text-slate-400 text-[11px] font-mono">${lic.createdAt ? new Date(lic.createdAt).toLocaleDateString('tr-TR') : '—'}</td>
+            <td class="p-4 text-slate-400 text-[11px] font-mono font-bold">${lic.expiresAt ? new Date(lic.expiresAt).toLocaleDateString('tr-TR') : '—'}</td>
+            <td class="p-4">
+              <span class="text-[10px] font-black px-2 py-0.5 rounded ${isExpired ? 'bg-red-500/10 text-red-400 border border-red-500/30' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'}">
+                ${isExpired ? 'Süresi Doldu' : daysLeft + ' gün kaldı'}
+              </span>
+            </td>
+            <td class="p-4 text-slate-400 text-xs font-mono">${lic.assignedEmail || 'Henüz Atanmadı'}</td>
+            <td class="p-4 text-right">
+              <button onclick="copySpecificKey('${lic.licenseKey}')" class="text-indigo-400 hover:text-indigo-300 text-[11px] font-bold px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 cursor-pointer">
+                Kopyala
+              </button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    // ==================== LİSANS ÜRETİCİ ====================
+    function generateLicenseKey(type = 'yearly') {
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      const randSeg = (len = 4) => Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+      const tsBase36 = Math.floor(Date.now() / 1000).toString(36).toUpperCase();
+      let prefix = 'ISG-Y';
+      if (type === 'monthly') prefix = 'ISG-M';
+      else if (type === 'trial') prefix = 'ISG-T';
+      else if (type === 'demo') prefix = 'ISG-D';
+      return prefix + '-' + tsBase36 + '-' + randSeg(4) + '-' + randSeg(4);
+    }
+
+    async function generateAndSaveLicense(type) {
+      const key = generateLicenseKey(type);
+      const days = type === 'trial' ? 7 : (type === 'monthly' ? 30 : (type === 'demo' ? 0.007 : 365));
+      const expDate = new Date(Date.now() + days * 86400000);
+      const nowIso = new Date().toISOString();
+
+      const licRecord = {
+        licenseKey: key,
+        licenseType: type,
+        createdAt: nowIso,
+        expiresAt: expDate.toISOString(),
+        assignedEmail: null,
+        used: false
+      };
+
+      liveLicenses.unshift(licRecord);
+
+      // Göster
+      const box = document.getElementById('latestLicenseBox');
+      box.classList.remove('hidden');
+      document.getElementById('latestKeyInput').value = key;
+      const badge = document.getElementById('latestBadge');
+
+      if (type === 'trial') {
+        badge.className = 'text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30';
+        badge.innerText = '⚡ 7 GÜNLÜK DENEME LİSANSI';
+      } else if (type === 'monthly') {
+        badge.className = 'text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-indigo-500/10 text-indigo-300 border border-indigo-500/30';
+        badge.innerText = '💼 AYLIK PRO LİSANS (30 GÜN)';
+      } else if (type === 'demo') {
+        badge.className = 'text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-purple-500/10 text-purple-300 border border-purple-500/30';
+        badge.innerText = '🧪 DEMO TEST LİSANSI (10 DK)';
+      } else {
+        badge.className = 'text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/30';
+        badge.innerText = '👑 YILLIK PRO LİSANS (365 GÜN)';
+      }
+
+      renderLicensesTable();
+      showToast(key + ' lisansı başarıyla üretildi!');
+    }
+
+    function copyLatestKey() {
+      const input = document.getElementById('latestKeyInput');
+      input.select();
+      navigator.clipboard.writeText(input.value);
+      const btn = document.getElementById('latestCopyBtn');
+      btn.innerText = '✓ Kopyalandı!';
+      setTimeout(() => btn.innerText = 'Kopyala', 2000);
+    }
+
+    function copySpecificKey(key) {
+      navigator.clipboard.writeText(key);
+      showToast(key + ' kopyalandı!');
+    }
+
+    // ==================== OSGB İŞLEMLERİ ====================
+    function renderOsgbCards() {
+      const container = document.getElementById('osgbCardsContainer');
+      if (!container) return;
+      container.innerHTML = liveOsgbs.map(osgb => `
+        <div class="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4 shadow-xl">
+          <div class="flex justify-between items-start border-b border-slate-800 pb-3">
+            <div>
+              <h3 class="text-base font-bold text-white">${osgb.name}</h3>
+              <p class="text-xs text-slate-400 font-mono">Sicil No: ${osgb.idNo}</p>
+            </div>
+            <span class="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full ${osgb.hasMultipleOsgbLicense ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/30' : 'bg-slate-800 text-slate-400'}">
+              ${osgb.hasMultipleOsgbLicense ? 'Çoklu Lisans Yetkili' : 'Standart'}
+            </span>
+          </div>
+
+          <div class="text-xs space-y-1 text-slate-300 font-medium">
+            <div>📞 İletişim: <span class="font-mono text-slate-400">${osgb.contact}</span></div>
+            <div>✉️ E-Posta: <span class="font-mono text-slate-400">${osgb.email}</span></div>
+          </div>
+
+          <div class="pt-2 border-t border-slate-800/80">
+            <span class="text-[10px] font-black uppercase tracking-wider text-slate-500 block mb-2">Yetkili Personel Kadrosu</span>
+            <div class="space-y-1.5">
+              ${osgb.staff.map(s => `
+                <div class="flex justify-between items-center bg-slate-950 p-2.5 rounded-xl border border-slate-800/80 text-xs">
+                  <span class="font-bold text-white">${s.name}</span>
+                  <span class="text-[10px] text-slate-400 font-mono">${s.role === 'uzman' ? 'İSG Uzmanı' : 'İşyeri Hekimi'} (${s.certificateNo})</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function openNewOsgbModal() {
+      const name = prompt('Yeni OSGB Firma Adı:');
+      if (!name) return;
+      const idNo = prompt('OSGB Sicil / Kayıt No:') || 'TR-OSGB-NEW';
+      const contact = prompt('İletişim Numarası:') || '0212 000 0000';
+      const email = prompt('Firma E-Posta:') || 'osgb@isg.com';
+
+      liveOsgbs.push({
+        id: 'osgb-' + Date.now(),
+        name,
+        idNo,
+        contact,
+        email,
+        hasMultipleOsgbLicense: true,
+        staff: []
+      });
+      renderOsgbCards();
+      showToast(name + ' OSGB firması eklendi!');
+    }
+
+    // ==================== AYARLARI YÜKLE & KAYDET ====================
+    function loadSettings() {
+      const saved = JSON.parse(localStorage.getItem('isg_shared_system_config_v2') || JSON.stringify(defaultSettings));
+      
+      const p = saved.paytrConfig || defaultSettings.paytrConfig;
+      document.getElementById('paytrMerchantId').value = p.merchantId || '647209';
+      document.getElementById('paytrMerchantKey').value = p.merchantKey || 'E1vY8eD5qB7sZ9xL';
+      document.getElementById('paytrMerchantSalt').value = p.merchantSalt || 'S3kR4tP9wQ2vM8nB';
+      document.getElementById('paytrTestMode').value = p.testMode || '1';
+      document.getElementById('paytrPriceMonthly').value = p.prices?.monthly?.amount || '299.00';
+      document.getElementById('paytrPriceYearly').value = p.prices?.yearly?.amount || '2990.00';
+
+      const s = saved.smtpConfig || defaultSettings.smtpConfig;
+      document.getElementById('smtpHost').value = s.host || 'smtp.gmail.com';
+      document.getElementById('smtpPort').value = s.port || 465;
+      document.getElementById('smtpSecure').value = String(s.secure !== false);
+      document.getElementById('smtpUser').value = s.user || 'infoisgpro@gmail.com';
+      document.getElementById('smtpPass').value = s.pass || 'wkmv ykld tfzq rrrz';
+      document.getElementById('smtpFromName').value = s.fromName || 'İSG Pro Dijital Lisans Sistemi';
+      document.getElementById('smtpFromEmail').value = s.fromEmail || 'infoisgpro@gmail.com';
+    }
+
+    function savePayTRSettings() {
+      const saved = JSON.parse(localStorage.getItem('isg_shared_system_config_v2') || JSON.stringify(defaultSettings));
+      saved.paytrConfig = {
+        merchantId: document.getElementById('paytrMerchantId').value.trim(),
+        merchantKey: document.getElementById('paytrMerchantKey').value.trim(),
+        merchantSalt: document.getElementById('paytrMerchantSalt').value.trim(),
+        testMode: document.getElementById('paytrTestMode').value,
+        prices: {
+          monthly: { amount: document.getElementById('paytrPriceMonthly').value.trim() },
+          yearly: { amount: document.getElementById('paytrPriceYearly').value.trim() }
+        }
+      };
+      localStorage.setItem('isg_shared_system_config_v2', JSON.stringify(saved));
+      showToast('PayTR ayarları başarıyla kaydedildi!');
+    }
+
+    function saveSMTPSettings() {
+      const saved = JSON.parse(localStorage.getItem('isg_shared_system_config_v2') || JSON.stringify(defaultSettings));
+      saved.smtpConfig = {
+        host: document.getElementById('smtpHost').value.trim(),
+        port: Number(document.getElementById('smtpPort').value),
+        secure: document.getElementById('smtpSecure').value === 'true',
+        user: document.getElementById('smtpUser').value.trim(),
+        pass: document.getElementById('smtpPass').value.trim(),
+        fromName: document.getElementById('smtpFromName').value.trim(),
+        fromEmail: document.getElementById('smtpFromEmail').value.trim()
+      };
+      localStorage.setItem('isg_shared_system_config_v2', JSON.stringify(saved));
+      showToast('SMTP e-posta ayarları başarıyla kaydedildi!');
+    }
+
+    // ==================== YEDEKLEME & RESTORE ====================
+    function downloadBackupJson() {
+      const backup = {
+        exportDate: new Date().toISOString(),
+        version: "2.0",
+        users: liveUsers,
+        licenses: liveLicenses,
+        osgbs: liveOsgbs,
+        config: JSON.parse(localStorage.getItem('isg_shared_system_config_v2') || JSON.stringify(defaultSettings))
+      };
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `isg_ortak_master_yedek_${Date.now()}.json`;
+      a.click();
+      showToast('Tam veritabanı yedeği başarıyla indirildi!');
+    }
+
+    function restoreBackupJson(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = JSON.parse(e.target.result);
+          if (data.users) liveUsers = data.users;
+          if (data.licenses) liveLicenses = data.licenses;
+          if (data.osgbs) liveOsgbs = data.osgbs;
+          renderUsersTable();
+          renderLicensesTable();
+          renderOsgbCards();
+          showToast('Yedek başarıyla yüklendi!');
+        } catch (err) {
+          alert('Geçersiz JSON dosyası: ' + err.message);
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    function exportUsersCsv() {
+      var headers = ['Isim', 'Kullanici Adi', 'E-Posta', 'Telefon', 'Rol', 'Premium', 'Lisans Kodu', 'Bitis Tarihi'];
+      var rows = liveUsers.map(function(u) {
+        return [
+          u.name || '', u.username || '', u.email || '', u.phone || '', u.role || '', (u.isPremium ? 'Aktif' : 'Pasif'), u.licenseKey || '', u.licenseExpiresAt || ''
+        ];
+      });
+      var csvLines = [headers.join(';')];
+      for (var i = 0; i < rows.length; i++) {
+        csvLines.push(rows[i].join(';'));
+      }
+      var csvContent = csvLines.join('\r\n');
+      var blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'isg_kullanicilar_' + Date.now() + '.csv';
+      a.click();
+    }
+
+    function openNewUserModal() {
+      document.getElementById('userModal').classList.remove('hidden');
+    }
+
+    function closeUserModal() {
+      document.getElementById('userModal').classList.add('hidden');
+    }
+
+    function saveUserFromModal() {
+      const name = document.getElementById('modalUserName').value.trim();
+      const username = document.getElementById('modalUserUsername').value.trim().toLowerCase();
+      const email = document.getElementById('modalUserEmail').value.trim().toLowerCase();
+      const phone = document.getElementById('modalUserPhone').value.trim();
+      const role = document.getElementById('modalUserRole').value;
+      const licType = document.getElementById('modalUserLicenseType').value;
+
+      if (!name || !username || !email) {
+        alert('Lütfen Ad Soyad, Kullanıcı Adı ve E-Posta alanlarını doldurunuz.');
+        return;
+      }
+
+      let isPremium = licType !== 'none';
+      let licenseKey = null;
+      let licenseExpiresAt = null;
+
+      if (isPremium) {
+        licenseKey = generateLicenseKey(licType);
+        const days = licType === 'trial' ? 7 : (licType === 'monthly' ? 30 : 365);
+        licenseExpiresAt = new Date(Date.now() + days * 86400000).toISOString();
+      }
+
+      const newUser = {
+        name,
+        username,
+        email,
+        phone,
+        role,
+        isPremium,
+        licenseKey,
+        licenseType: isPremium ? licType : null,
+        licensePurchasedAt: isPremium ? new Date().toISOString() : null,
+        licenseExpiresAt
+      };
+
+      liveUsers.unshift(newUser);
+      renderUsersTable();
+      closeUserModal();
+      showToast(name + ' kullanıcısı eklendi!');
+    }
+
+    function deleteUserRow(id) {
+      if (!confirm('Bu kullanıcıyı silmek istediğinize emin misiniz?')) return;
+      liveUsers = liveUsers.filter(u => u.username !== id && u.email !== id);
+      renderUsersTable();
+      showToast('Kullanıcı silindi.');
+    }
+  </script>
+</body>
+</html>

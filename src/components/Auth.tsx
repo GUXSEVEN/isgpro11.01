@@ -7,11 +7,12 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, User, Lock, Mail, Phone, ArrowLeft, KeyRound, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { User as UserType } from '../types';
+import { normalizeUsername } from '../lib/userUtils';
 
 interface AuthProps {
   onClose: () => void;
   onLogin: (username: string, password: string) => boolean | Promise<boolean>;
-  onRegister: (newUser: UserType) => boolean | Promise<boolean>;
+  onRegister: (newUser: UserType) => boolean | { success: boolean; reason?: string; suggestions?: string[]; message?: string } | Promise<boolean | { success: boolean; reason?: string; suggestions?: string[]; message?: string }>;
   checkUserExists: (username: string) => UserType | undefined | Promise<UserType | undefined>;
   onResetPassword: (username: string, newPass: string) => boolean | Promise<boolean>;
 }
@@ -29,7 +30,12 @@ export default function Auth({
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [role, setRole] = useState<'uzman' | 'hekim' | 'other'>('uzman');
+  const [role, setRole] = useState<'uzman' | 'hekim' | 'dsp' | 'other'>('uzman');
+  const [tcNo, setTcNo] = useState('');
+  const [certificateNo, setCertificateNo] = useState('');
+  const [diplomaNo, setDiplomaNo] = useState('');
+  const [tescilNo, setTescilNo] = useState('');
+  const [usernameSuggestions, setUsernameSuggestions] = useState<string[]>([]);
 
   // Reset password states
   const [resetUsername, setResetUsername] = useState('');
@@ -43,12 +49,14 @@ export default function Auth({
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!username || !password) return;
+    const cleanUser = normalizeUsername(username);
+    const cleanPass = password.trim();
+    if (!cleanUser || !cleanPass) return;
 
     setLoading(true);
     setMessage({ type: '', text: '' });
     try {
-      const success = await onLogin(username, password);
+      const success = await onLogin(cleanUser, cleanPass);
       if (success) {
         onClose();
       } else {
@@ -63,30 +71,101 @@ export default function Auth({
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !username || !password || !email || !phone) {
-      setMessage({ type: 'error', text: 'Lütfen tüm yıldızlı (*) alanları doldurunuz.' });
+    const cleanName = name.trim();
+    const cleanUser = normalizeUsername(username);
+    const cleanPass = password.trim();
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPhone = phone.trim();
+    const cleanTcNo = tcNo.trim();
+    const cleanCertNo = certificateNo.trim();
+    const cleanDiplomaNo = diplomaNo.trim();
+    const cleanTescilNo = tescilNo.trim();
+
+    // 1. Zorunlu Alan Kontrolleri
+    if (!cleanName) {
+      setMessage({ type: 'error', text: 'Ad Soyad alanı zorunludur.' });
+      return;
+    }
+    if (!cleanUser || cleanUser.length < 3) {
+      setMessage({ type: 'error', text: 'Kullanıcı adı zorunludur ve en az 3 karakter olmalıdır.' });
+      return;
+    }
+    if (!cleanPass || cleanPass.length < 4) {
+      setMessage({ type: 'error', text: 'Şifre zorunludur ve en az 4 karakter olmalıdır.' });
+      return;
+    }
+
+    // 2. T.C. Kimlik No Kontrolü (İsteğe bağlı, girildiyse 11 hane)
+    if (cleanTcNo && cleanTcNo.length !== 11) {
+      setMessage({ type: 'error', text: 'T.C. Kimlik Numarası girildiyse tam 11 haneli olmalıdır.' });
+      return;
+    }
+
+    // 3. E-Posta Format Kontrolü (Zorunlu, RFC Standardı)
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!cleanEmail || !emailRegex.test(cleanEmail)) {
+      setMessage({ type: 'error', text: 'Lütfen geçerli bir e-posta adresi giriniz (örn: ad.soyad@isgpro.com).' });
+      return;
+    }
+
+    // 4. Telefon Numarası Kontrolü (İsteğe bağlı, girildiyse 05XX formatı)
+    const digitsOnlyPhone = cleanPhone.replace(/\D/g, '');
+    const phoneRegex = /^(0?5\d{9})$/;
+    if (digitsOnlyPhone && !phoneRegex.test(digitsOnlyPhone)) {
+      setMessage({ type: 'error', text: 'Lütfen geçerli bir Türkiye cep telefonu numarası giriniz (05XX XXX XX XX) veya boş bırakınız.' });
       return;
     }
 
     setLoading(true);
     setMessage({ type: '', text: '' });
+
     const newUser: UserType = {
-      username: username.toLowerCase().trim().replace(/\s/g, ''),
-      password,
-      name: name.trim(),
-      email: email.trim(),
-      phone: phone.trim(),
+      username: cleanUser,
+      password: cleanPass,
+      name: cleanName,
+      email: cleanEmail,
+      phone: digitsOnlyPhone || cleanPhone,
       role,
+      tcNo: cleanTcNo || '',
+      certificateNo: cleanCertNo || '',
+      diplomaNo: cleanDiplomaNo || '',
+      tescilNo: cleanTescilNo || '',
       isPremium: false,
+      isEmailVerified: false,
+      hasAcceptedLegalTerms: false,
+      createdBy: 'web_register',
+      createdAt: new Date().toISOString()
     };
 
     try {
-      const success = await onRegister(newUser);
-      if (success) {
-        setMessage({ type: 'success', text: 'Hesabınız başarıyla oluşturuldu! Şimdi giriş yapabilirsiniz.' });
-        setView('login');
+      const result = await onRegister(newUser);
+      const isSuccess = typeof result === 'boolean' ? result : result?.success;
+      if (isSuccess) {
+        setUsernameSuggestions([]);
+        onClose();
       } else {
-        setMessage({ type: 'error', text: 'Bu kullanıcı adı zaten alınmış.' });
+        // Sunucudan/App'ten gelen müsait kullanıcı adı önerilerini kullan
+        const returnedSuggestions = (typeof result === 'object' && Array.isArray(result?.suggestions)) ? result.suggestions : [];
+        if (returnedSuggestions.length > 0) {
+          setUsernameSuggestions(returnedSuggestions);
+        } else {
+          // Yedek öneriler
+          const randomNum = Math.floor(10 + Math.random() * 89);
+          const currentYear = new Date().getFullYear();
+          const suggestions = [
+            `${cleanUser}${randomNum}`,
+            `${cleanUser}_${currentYear}`,
+            `${cleanUser}_isg`,
+            `${cleanUser}.isg`
+          ];
+          setUsernameSuggestions(suggestions);
+        }
+        setMessage({ 
+          type: 'error', 
+          text: (typeof result === 'object' && result?.message)
+            ? result.message
+            : `⚠️ "@${cleanUser}" kullanıcı adı sistemde zaten kayıtlı! Lütfen aşağıdaki müsait önerilerden birine tıklayarak seçin veya farklı bir ad yazın:` 
+        });
       }
     } catch (err) {
       setMessage({ type: 'error', text: 'Kayıt olurken bir hata oluştu.' });
@@ -97,12 +176,13 @@ export default function Auth({
 
   const handleResetCheck = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!resetUsername) return;
+    const cleanResetUser = normalizeUsername(resetUsername);
+    if (!cleanResetUser) return;
 
     setLoading(true);
     setMessage({ type: '', text: '' });
     try {
-      const user = await checkUserExists(resetUsername);
+      const user = await checkUserExists(cleanResetUser);
       if (user) {
         setFoundUser(user);
         const code = Math.floor(100000 + Math.random() * 900000).toString();
@@ -223,9 +303,14 @@ export default function Auth({
                   <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider">Kullanıcı Adı</label>
                   <input
                     type="text" required
-                    className="mt-1 w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition text-slate-800 dark:text-white font-semibold placeholder-slate-400 dark:placeholder-slate-500"
+                    className="mt-1 w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition text-slate-800 dark:text-white font-semibold placeholder-slate-400 dark:placeholder-slate-500 font-mono"
                     placeholder="kullaniciadi"
-                    value={username} onChange={e => setUsername(e.target.value.toLowerCase().trim())}
+                    value={username}
+                    onChange={e => setUsername(e.target.value.replace(/^\s+/, ''))}
+                    onBlur={() => setUsername(prev => normalizeUsername(prev))}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck="false"
                   />
                 </div>
                 <div>
@@ -282,14 +367,59 @@ export default function Auth({
                     value={name} onChange={e => setName(e.target.value)}
                   />
                 </div>
+
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider">Kullanıcı Adı *</label>
+                  <input
+                    type="text" required
+                    className="mt-0.5 w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-xs sm:text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800 dark:text-white font-semibold placeholder-slate-400 dark:placeholder-slate-500 font-mono"
+                    placeholder="ahmetyilmaz"
+                    value={username}
+                    onChange={e => {
+                      setUsername(e.target.value.replace(/^\s+/, ''));
+                      if (usernameSuggestions.length > 0) setUsernameSuggestions([]);
+                    }}
+                    onBlur={() => setUsername(prev => normalizeUsername(prev))}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck="false"
+                  />
+                </div>
+
+                {usernameSuggestions.length > 0 && (
+                  <div className="p-2.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-xl space-y-1.5 animate-in fade-in duration-150">
+                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-amber-800 dark:text-amber-300">
+                      <span>Önerilen Müsait Kullanıcı Adları (Seçmek için tıklayın):</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {usernameSuggestions.map((sug, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            setUsername(sug);
+                            setUsernameSuggestions([]);
+                            setMessage({ type: '', text: '' });
+                          }}
+                          className="px-2.5 py-1 bg-white dark:bg-slate-800 border border-indigo-200 dark:border-indigo-700 hover:border-indigo-500 text-indigo-600 dark:text-indigo-300 rounded-lg text-xs font-mono font-bold shadow-xs transition hover:scale-105 active:scale-95 cursor-pointer flex items-center gap-1"
+                        >
+                          <span>@{sug}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider">Kullanıcı Adı *</label>
+                    <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider">T.C. Kimlik No (11 Hane)</label>
                     <input
-                      type="text" required
+                      type="text"
+                      maxLength={11}
                       className="mt-0.5 w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-xs sm:text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800 dark:text-white font-semibold placeholder-slate-400 dark:placeholder-slate-500"
-                      placeholder="ahmetyilmaz"
-                      value={username} onChange={e => setUsername(e.target.value)}
+                      placeholder="11 haneli kimlik no"
+                      value={tcNo}
+                      onChange={e => setTcNo(e.target.value.replace(/\D/g, '').slice(0, 11))}
                     />
                   </div>
                   <div>
@@ -297,11 +427,12 @@ export default function Auth({
                     <input
                       type="password" required
                       className="mt-0.5 w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-xs sm:text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800 dark:text-white"
-                      placeholder="••••••"
+                      placeholder="En az 4 karakter"
                       value={password} onChange={e => setPassword(e.target.value)}
                     />
                   </div>
                 </div>
+
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider">E-Posta *</label>
@@ -313,32 +444,72 @@ export default function Auth({
                     />
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider">Telefon *</label>
+                    <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider">Telefon (İsteğe Bağlı)</label>
                     <input
-                      type="tel" required
+                      type="tel"
                       className="mt-0.5 w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-xs sm:text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800 dark:text-white font-semibold placeholder-slate-400 dark:placeholder-slate-500"
-                      placeholder="555..."
-                      value={phone} onChange={e => setPhone(e.target.value)}
+                      placeholder="05XX XXX XX XX"
+                      value={phone}
+                      onChange={e => setPhone(e.target.value.replace(/\D/g, '').slice(0, 11))}
                     />
                   </div>
                 </div>
+
                 <div>
-                  <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider">İSG Rolü</label>
+                  <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider">Mesleki Rol / Branş</label>
                   <select
                     value={role} onChange={e => setRole(e.target.value as any)}
                     className="mt-0.5 w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-xs sm:text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-semibold text-slate-800 dark:text-white"
                   >
+                    <option value="other" className="text-slate-900 bg-white dark:bg-slate-900 dark:text-white">Diğer / Yönetici</option>
                     <option value="uzman" className="text-slate-900 bg-white dark:bg-slate-900 dark:text-white">İş Güvenliği Uzmanı (İGU)</option>
                     <option value="hekim" className="text-slate-900 bg-white dark:bg-slate-900 dark:text-white">İşyeri Hekimi (İH)</option>
-                    <option value="other" className="text-slate-900 bg-white dark:bg-slate-900 dark:text-white">Diğer / Yönetici</option>
+                    <option value="dsp" className="text-slate-900 bg-white dark:bg-slate-900 dark:text-white">Diğer Sağlık Personeli (DSP)</option>
                   </select>
+                </div>
+
+                {(role === 'uzman' || role === 'hekim' || role === 'dsp') && (
+                  <div>
+                    <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider">Sertifika / Belge Numarası</label>
+                    <input
+                      type="text"
+                      className="mt-0.5 w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-xs sm:text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800 dark:text-white font-semibold placeholder-slate-400 dark:placeholder-slate-500"
+                      placeholder="Örn: 123456"
+                      value={certificateNo}
+                      onChange={e => setCertificateNo(e.target.value)}
+                    />
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider">Diploma No (İsteğe Bağlı)</label>
+                    <input
+                      type="text"
+                      className="mt-0.5 w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-xs sm:text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800 dark:text-white font-semibold placeholder-slate-400 dark:placeholder-slate-500"
+                      placeholder="Örn: DIP-12345"
+                      value={diplomaNo}
+                      onChange={e => setDiplomaNo(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider">Tescil No (İsteğe Bağlı)</label>
+                    <input
+                      type="text"
+                      className="mt-0.5 w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-xs sm:text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800 dark:text-white font-semibold placeholder-slate-400 dark:placeholder-slate-500"
+                      placeholder="Örn: TSC-98765"
+                      value={tescilNo}
+                      onChange={e => setTescilNo(e.target.value)}
+                    />
+                  </div>
                 </div>
 
                 <button
                   type="submit"
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 rounded-xl shadow-md hover:shadow-lg transition-all text-xs sm:text-sm active:scale-95 cursor-pointer"
+                  disabled={loading || !name.trim() || !username.trim() || !password.trim() || !email.trim() || (tcNo.length > 0 && tcNo.length !== 11)}
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3.5 rounded-xl shadow-md hover:shadow-lg transition-all text-xs sm:text-sm active:scale-95 cursor-pointer"
                 >
-                  Kayıt Ol ve Giriş Yap
+                  {loading ? 'Kayıt Oluşturuluyor...' : 'Kayıt Ol'}
                 </button>
 
                 <div className="text-center text-xs font-semibold text-slate-500 dark:text-slate-400 pt-1">
@@ -364,9 +535,14 @@ export default function Auth({
                   <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider">Kullanıcı Adı Girin</label>
                   <input
                     type="text" required
-                    className="mt-1 w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition text-slate-800 dark:text-white font-semibold placeholder-slate-400 dark:placeholder-slate-500"
+                    className="mt-1 w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition text-slate-800 dark:text-white font-semibold placeholder-slate-400 dark:placeholder-slate-500 font-mono"
                     placeholder="kullaniciadi"
-                    value={resetUsername} onChange={e => setResetUsername(e.target.value.toLowerCase().trim())}
+                    value={resetUsername}
+                    onChange={e => setResetUsername(e.target.value.replace(/^\s+/, ''))}
+                    onBlur={() => setResetUsername(prev => normalizeUsername(prev))}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck="false"
                   />
                 </div>
 

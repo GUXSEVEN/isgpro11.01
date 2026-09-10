@@ -1,0 +1,7 @@
+{
+  "name": "isg-ortak-veritabani",
+  "private": true,
+  "dependencies": {
+    "firebase": "^12.15.0"
+  }
+}

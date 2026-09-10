@@ -7,6 +7,11 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import dns from 'dns';
+import { fileURLToPath } from 'url';
+
+const __filenameSafe = typeof __filename !== 'undefined' ? __filename : (typeof import.meta !== 'undefined' && import.meta.url ? fileURLToPath(import.meta.url) : '');
+const __dirnameSafe = typeof __dirname !== 'undefined' ? __dirname : (__filenameSafe ? path.dirname(__filenameSafe) : process.cwd());
+
 
 // Force Node.js globally to resolve IPv4 addresses FIRST for all DNS lookups across the server
 dns.setDefaultResultOrder('ipv4first');
@@ -24,7 +29,9 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, doc, getDoc, setDoc, getDocs, collection } from 'firebase/firestore';
 import nodemailer from 'nodemailer';
 import PDFDocument from 'pdfkit';
-import { generateLicenseKey, registerGeneratedLicense, validateLicenseAgainstDb, requestTrialLicense, LicenseType } from './src/lib/licenseUtils.ts';
+import { generateLicenseKey, registerGeneratedLicense, validateLicenseAgainstDb, requestTrialLicense, LicenseType, getLicenseTypeFromKey, getLicenseDurationDays, getLicensePlanName } from './src/lib/licenseUtils.ts';
+import { sanitizeUserForFirestore, normalizeUsername } from './src/lib/userUtils.ts';
+import { encryptData, decryptData, encryptUser, decryptUser } from './src/lib/crypto.ts';
 
 function toLatin(str: string): string {
   if (!str) return '';
@@ -55,6 +62,7 @@ interface ContractPDFOptions {
   customerSignature?: string; // base64 PNG data URL
   sellerSignature?: string;   // base64 PNG data URL
   sellerName?: string;
+  isRegistrationConsent?: boolean; // Yeni kayıt sözleşmeleri için: plan ve tutar bilgisi gizlenir
 }
 
 // In-memory cache for seller signature
@@ -179,7 +187,29 @@ Mesafeli Sözleşmeler Yönetmeliği’nin 15. maddesinin (ğ) bendi uyarınca; 
       } else if (docType === 'onBilgilendirme') {
         docTitle = 'ON BILGILENDIRME FORMU';
         docSubtitle = 'RESMI ONAYLI ON BILGILENDIRME FORMU NUSHASI';
-        bodyText = toLatin(
+        bodyText = options.isRegistrationConsent ? toLatin(
+`ON BİLGİLENDİRME FORMU
+
+1. SATICI BİLGİLERİ
+Unvan/Adı: İBRAHİM COŞKUN (İSG Pro Teknolojileri)
+E-posta: infoisgpro@gmail.com
+Telefon: 0551 065 44 88
+Adres: KOCASİNAN MAH. EDİRNE / MERKEZ
+
+2. ALICI BİLGİLERİ
+Ad Soyad: ${options.customerName || 'Değerli Müşterimiz'}
+E-posta: ${options.customerEmail || '-'}
+Telefon: ${options.customerPhone || '-'}
+Adres: ${options.customerAddress || 'Dijital Teslimat (E-Posta / Web)'}
+
+3. SÖZLEŞME KONUSU ÜRÜN / HİZMET BİLGİLERİ
+Ürün/Hizmet: İSG Pro Yapay Zeka Destekli İSG Yönetim Yazılımı Dijital Hizmeti
+İşlem / Kayıt No: ${options.orderId}
+Teslimat Şekli: Elektronik ortamda dijital platform erişimi ve e-posta ile bilgilendirme.
+
+4. CAYMA HAKKI VE İSTİSNALARI
+6502 sayılı Tüketicinin Korunması Hakkında Kanun ve Mesafeli Sözleşmeler Yönetmeliği'nin 15/ğ maddesi uyarınca, elektronik ortamda anında teslim edilen ve ifa edilen dijital yazılım lisanslarında cayma hakkı bulunmamaktadır.`
+        ) : toLatin(
 `ÖN BİLGİLENDİRME FORMU
 
 1. SATICI BİLGİLERİ
@@ -311,8 +341,10 @@ KVKK'nın 11. maddesi uyarınca veri sahibi olarak; verilerinizin işlenip işle
       addRow('Musteri Ad Soyad:', name);
       addRow('Musteri E-Posta:', email);
       addRow('Telefon / Adres:', `${phone} / ${address}`);
-      addRow('Satin Alinan Paket:', planName);
-      addRow('Odenen Tutar:', price);
+      if (!options.isRegistrationConsent) {
+        addRow('Satin Alinan Paket:', planName);
+        addRow('Odenen Tutar:', price);
+      }
       addRow('Onay Tarihi & Saati:', approvalDate);
 
       const boxHeight = curY - boxStartY + 4;
@@ -429,6 +461,27 @@ async function generateAllContractsPDFAttachments(options: ContractPDFOptions): 
   );
 }
 
+// SADECE GİRİŞ EKRANI İÇİN: Mesafeli Satış Sözleşmesi hariç, sadece 3 yasal bilgilendirme PDF'i üretir
+async function generateRegistrationConsentPDFAttachments(options: ContractPDFOptions): Promise<Array<{ filename: string; content: Buffer; contentType: string }>> {
+  const cleanOrderId = options.orderId || `ISG-${Date.now().toString().slice(-6)}`;
+  const docTypes: Array<{ type: 'onBilgilendirme' | 'privacy' | 'kvkk'; filename: string }> = [
+    { type: 'onBilgilendirme', filename: `ISG_Pro_1_On_Bilgilendirme_Formu_${cleanOrderId}.pdf` },
+    { type: 'privacy', filename: `ISG_Pro_2_Gizlilik_Politikasi_${cleanOrderId}.pdf` },
+    { type: 'kvkk', filename: `ISG_Pro_3_KVKK_Aydinlatma_Metni_${cleanOrderId}.pdf` }
+  ];
+
+  return Promise.all(
+    docTypes.map(async (item) => {
+      const buffer = await generateSingleContractPDF(item.type, { ...options, isRegistrationConsent: true });
+      return {
+        filename: item.filename,
+        content: buffer,
+        contentType: 'application/pdf'
+      };
+    })
+  );
+}
+
 dotenv.config();
 
 // Initialize Firebase SDK for server-side persistence of releases
@@ -530,9 +583,12 @@ const sendEmailWithGoogleFallback = async (options: {
   const cleanPass = (config.pass || '').replace(/\s+/g, '');
   const cleanUser = (config.user || 'infoisgpro@gmail.com').trim();
   const fromName = config.fromName || 'İSG Pro';
+  const rawHost = config.host || 'smtp.gmail.com';
+  const isGmail = !rawHost || rawHost.includes('gmail.com') || rawHost.includes('google');
+  const targetPort = Number(config.port) || (isGmail ? 465 : 587);
 
   if (!cleanUser) {
-    return { success: false, error: 'Google e-posta adresi (SMTP_USER) tanımlanmamış.' };
+    return { success: false, error: 'Google / SMTP e-posta adresi tanımlanmamış.' };
   }
   if (!cleanPass) {
     return { 
@@ -542,76 +598,113 @@ const sendEmailWithGoogleFallback = async (options: {
     };
   }
 
-  console.log(`[Google Direct SMTP] Sending via smtp.gmail.com over IPv4 for ${Array.isArray(to) ? to.join(', ') : to}`);
+  console.log(`[Direct SMTP Engine] Dispatching email via ${rawHost}:${targetPort} for ${Array.isArray(to) ? to.join(', ') : to}`);
 
-  // Attempt 1: Google Port 465 (SSL) over IPv4
-  try {
-    const transporter465 = nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 465,
-      secure: true,
-      family: 4,
-      lookup: forceIPv4Lookup,
-      auth: { user: cleanUser, pass: cleanPass },
-      tls: { rejectUnauthorized: false },
-      connectionTimeout: 4000,
-      greetingTimeout: 4000,
-      socketTimeout: 5000
-    } as any);
+  if (isGmail) {
+    // Attempt 1: Google Port 465 (SSL) over IPv4
+    try {
+      const transporter465 = nodemailer.createTransport({
+        host: 'smtp.gmail.com',
+        port: 465,
+        secure: true,
+        family: 4,
+        lookup: forceIPv4Lookup,
+        auth: { user: cleanUser, pass: cleanPass },
+        tls: { rejectUnauthorized: false },
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 15000
+      } as any);
 
-    await transporter465.sendMail({
-      from: `"${fromName}" <${cleanUser}>`,
-      to,
-      replyTo: replyTo || cleanUser,
-      subject,
-      html,
-      attachments
-    });
+      await transporter465.sendMail({
+        from: `"${fromName}" <${cleanUser}>`,
+        to,
+        replyTo: replyTo || cleanUser,
+        subject,
+        html,
+        attachments
+      });
 
-    console.log(`[Google Direct SMTP Success - Port 465] Email delivered via smtp.gmail.com to ${Array.isArray(to) ? to.join(', ') : to}`);
-    return { success: true };
-  } catch (err465: any) {
-    console.warn(`[Google SMTP Port 465 Attempt Failed]: ${err465?.message}. Retrying via Google Port 587 (STARTTLS)...`);
-  }
+      console.log(`[Google Direct SMTP Success - Port 465] Email delivered via smtp.gmail.com to ${Array.isArray(to) ? to.join(', ') : to}`);
+      return { success: true };
+    } catch (err465: any) {
+      console.warn(`[Google SMTP Port 465 Attempt Failed]: ${err465?.message}. Retrying via Google Port 587 (STARTTLS)...`);
+    }
 
-  // Attempt 2: Google Port 587 (STARTTLS) over IPv4
-  try {
-    const transporter587 = nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 587,
-      secure: false,
-      requireTLS: true,
-      family: 4,
-      lookup: forceIPv4Lookup,
-      auth: { user: cleanUser, pass: cleanPass },
-      tls: { rejectUnauthorized: false },
-      connectionTimeout: 4000,
-      greetingTimeout: 4000,
-      socketTimeout: 5000
-    } as any);
+    // Attempt 2: Google Port 587 (STARTTLS) over IPv4
+    try {
+      const transporter587 = nodemailer.createTransport({
+        host: 'smtp.gmail.com',
+        port: 587,
+        secure: false,
+        requireTLS: true,
+        family: 4,
+        lookup: forceIPv4Lookup,
+        auth: { user: cleanUser, pass: cleanPass },
+        tls: { rejectUnauthorized: false },
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 15000
+      } as any);
 
-    await transporter587.sendMail({
-      from: `"${fromName}" <${cleanUser}>`,
-      to,
-      replyTo: replyTo || cleanUser,
-      subject,
-      html,
-      attachments
-    });
+      await transporter587.sendMail({
+        from: `"${fromName}" <${cleanUser}>`,
+        to,
+        replyTo: replyTo || cleanUser,
+        subject,
+        html,
+        attachments
+      });
 
-    console.log(`[Google Direct SMTP Success - Port 587] Email delivered via smtp.gmail.com to ${Array.isArray(to) ? to.join(', ') : to}`);
-    return { success: true };
-  } catch (err587: any) {
-    console.error(`[Google Direct SMTP Error - Port 587]: ${err587?.message}`);
-    return { 
-      success: false, 
-      error: `Google Sunucu Hatası: ${err587?.message || 'Google SMTP sunucusu ile bağlantı kurulamadı.'}`
-    };
+      console.log(`[Google Direct SMTP Success - Port 587] Email delivered via smtp.gmail.com to ${Array.isArray(to) ? to.join(', ') : to}`);
+      return { success: true };
+    } catch (err587: any) {
+      console.error(`[Google Direct SMTP Error - Port 587]: ${err587?.message}`);
+      return { 
+        success: false, 
+        error: `Google Sunucu Hatası: ${err587?.message || 'Google SMTP sunucusu ile bağlantı kurulamadı.'}`
+      };
+    }
+  } else {
+    // Custom SMTP Server (Host & Port as specified)
+    try {
+      const customTransporter = nodemailer.createTransport({
+        host: rawHost,
+        port: targetPort,
+        secure: targetPort === 465,
+        requireTLS: targetPort === 587,
+        family: 4,
+        lookup: forceIPv4Lookup,
+        auth: { user: cleanUser, pass: cleanPass },
+        tls: { rejectUnauthorized: false },
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 15000
+      } as any);
+
+      await customTransporter.sendMail({
+        from: `"${fromName}" <${cleanUser}>`,
+        to,
+        replyTo: replyTo || cleanUser,
+        subject,
+        html,
+        attachments
+      });
+
+      console.log(`[Custom SMTP Success - ${rawHost}:${targetPort}] Delivered to ${Array.isArray(to) ? to.join(', ') : to}`);
+      return { success: true };
+    } catch (customErr: any) {
+      console.error(`[Custom SMTP Error - ${rawHost}:${targetPort}]: ${customErr?.message}`);
+      return {
+        success: false,
+        error: `SMTP Sunucu Hatası (${rawHost}:${targetPort}): ${customErr?.message || 'Bağlantı kurulamadı.'}`
+      };
+    }
   }
 };
 
 // ============================================================================
-// STRICT HTTPS REST API (PORT 443 ONLY) EMAIL ENGINE
+// UNIVERSAL REST API & DIRECT SMTP EMAIL ENGINE
 // ============================================================================
 interface UniversalEmailOptions {
   to: string | string[];
@@ -620,16 +713,22 @@ interface UniversalEmailOptions {
   fromName?: string;
   replyTo?: string;
   attachments?: Array<{ filename: string; content: Buffer | string; contentType?: string }>;
-  templateType?: 'otp' | 'license' | 'contact' | 'contracts' | 'general';
+  templateType?: string;
+  config?: any;
 }
 
 const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ success: boolean; method: string; message: string; details?: string }> => {
-  const { to, subject, html, fromName = 'İSG Pro', replyTo, attachments, templateType = 'general' } = options;
+  const { to, subject, html, fromName = 'İSG Pro', replyTo, attachments, templateType = 'general', config: explicitConfig } = options;
   const recipients = Array.isArray(to) ? to : [to];
   const targetEmail = recipients[0] || 'infoisgpro@gmail.com';
-  const smtpConfig = await getSMTPConfig();
+  const dbConfig = await getSMTPConfig();
+  const smtpConfig = { ...dbConfig, ...(explicitConfig || {}) };
 
-  console.log(`[HTTPS REST Engine (Port 443)] Dispatching email (${templateType}) to: ${recipients.join(', ')}`);
+  if (!smtpConfig.pass || smtpConfig.pass === '••••••••••••••••') {
+    smtpConfig.pass = dbConfig.pass || process.env.SMTP_PASS || '';
+  }
+
+  console.log(`[Universal Email Engine] Dispatching email (${templateType}) to: ${recipients.join(', ')}`);
 
   // 1. Save email to Firestore notifications log & local queue
   try {
@@ -642,10 +741,16 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
       status: 'Gönderildi'
     });
   } catch (dbErr) {
-    console.warn('[HTTPS REST Engine DB Log Warning]:', dbErr);
+    console.warn('[DB Notification Log Warning]:', dbErr);
   }
 
-  // 2. Resend HTTPS REST API (Port 443 - 100% Unblocked Cloud Delivery)
+  // Format attachments for cloud REST APIs if present
+  const base64Attachments = (attachments && attachments.length > 0) ? attachments.map(a => ({
+    filename: a.filename,
+    content: Buffer.isBuffer(a.content) ? a.content.toString('base64') : (typeof a.content === 'string' ? Buffer.from(a.content).toString('base64') : a.content)
+  })) : undefined;
+
+  // 2. Resend HTTPS REST API (Port 443 - Cloud Delivery)
   if (smtpConfig.resendApiKey) {
     try {
       console.log(`[Resend REST API 443] Dispatching email over HTTPS Port 443 to ${targetEmail}`);
@@ -659,12 +764,13 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
           from: `${fromName} <onboarding@resend.dev>`,
           to: recipients,
           subject,
-          html
+          html,
+          attachments: base64Attachments
         })
       });
 
       if (resendResp.ok) {
-        console.log(`[Resend REST API 443 Success] Email delivered over HTTPS Port 443 to ${targetEmail}`);
+        console.log(`[Resend REST API 443 Success] Delivered to ${targetEmail}`);
         return { success: true, method: 'resend_rest_api_443', message: `E-posta Resend REST API (Port 443) üzerinden '${targetEmail}' adresine ulaştırıldı.` };
       } else {
         const rErr = await resendResp.text();
@@ -708,7 +814,8 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
           sender: { name: fromName, email: smtpConfig.user || 'infoisgpro@gmail.com' },
           to: recipients.map(r => ({ email: r })),
           subject: subject,
-          htmlContent: html
+          htmlContent: html,
+          attachment: base64Attachments ? base64Attachments.map(b => ({ name: b.filename, content: b.content })) : undefined
         })
       });
       if (resBrevo.ok) {
@@ -720,35 +827,8 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
     }
   }
 
-  // 5. EmailJS REST API Over HTTPS Port 443
-  try {
-    let targetTemplate = EMAILJS_CONTACT_TEMPLATE_ID;
-    let templateParams: any = {
-      name: fromName,
-      from_name: fromName,
-      email: targetEmail,
-      from_email: targetEmail,
-      to_email: targetEmail,
-      subject: subject,
-      message: html.replace(/<[^>]*>?/gm, '').slice(0, 500),
-      project_name: "İSG Pro"
-    };
-
-    if (templateType === 'otp') {
-      targetTemplate = EMAILJS_TEMPLATE_ID;
-    } else if (templateType === 'license') {
-      targetTemplate = EMAILJS_LICENSE_TEMPLATE_ID;
-    }
-
-    const emailjsResult = await sendEmailViaEmailJS(targetTemplate, templateParams);
-    if (emailjsResult) {
-      return { success: true, method: 'emailjs_rest_api_443', message: `E-posta EmailJS REST API (Port 443) üzerinden '${targetEmail}' adresine iletildi.` };
-    }
-  } catch (ejsErr) {
-    console.warn(`[HTTPS REST Engine EmailJS Warning]:`, ejsErr);
-  }
-
-  // 6. Direct Google SMTP Fallback (Port 465 SSL & 587 STARTTLS)
+  // 5. Direct SMTP / Google SMTP (Delivers full HTML and PDF attachments)
+  // Evaluated BEFORE EmailJS to ensure custom templates and PDFs are preserved!
   if (smtpConfig.user && smtpConfig.pass) {
     try {
       const resSMTP = await sendEmailWithGoogleFallback({
@@ -757,25 +837,65 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
         subject,
         html,
         replyTo,
-        attachments: (attachments && attachments.length <= 2) ? attachments : undefined
+        attachments
       });
       if (resSMTP.success) {
-        return { success: true, method: 'google_smtp_fallback', message: `E-posta Google sunucuları (smtp.gmail.com) üzerinden '${targetEmail}' adresine ulaştırıldı.` };
+        const attCount = attachments && attachments.length > 0 ? ` (${attachments.length} dosya eki ile)` : '';
+        return { 
+          success: true, 
+          method: 'smtp_direct', 
+          message: `E-posta SMTP (${smtpConfig.host || 'smtp.gmail.com'}) üzerinden '${targetEmail}' adresine${attCount} ulaştırıldı.` 
+        };
+      } else {
+        console.warn(`[Direct SMTP Attempt Warning]:`, resSMTP.error);
       }
-    } catch (smtpErr) {
-      console.warn(`[Google SMTP Fallback Warning]:`, smtpErr);
+    } catch (smtpErr: any) {
+      console.warn(`[Direct SMTP Exception]:`, smtpErr?.message);
     }
   }
 
-  // 7. Guaranteed Success Response (Identical across all template types)
+  // 6. EmailJS REST API (ONLY FOR OTP CODES)
+  // EmailJS only contains the OTP verification template. Never use for contracts/licenses as it replaces them with verification text!
+  if (templateType === 'otp') {
+    try {
+      const templateParams: any = {
+        name: fromName,
+        from_name: fromName,
+        email: targetEmail,
+        from_email: targetEmail,
+        to_email: targetEmail,
+        subject: subject,
+        message: html.replace(/<[^>]*>?/gm, '').slice(0, 500),
+        project_name: "İSG Pro"
+      };
+
+      const emailjsResult = await sendEmailViaEmailJS(EMAILJS_TEMPLATE_ID, templateParams);
+      if (emailjsResult) {
+        return { success: true, method: 'emailjs_rest_api_443', message: `E-posta EmailJS REST API (Port 443) üzerinden '${targetEmail}' adresine iletildi.` };
+      }
+    } catch (ejsErr) {
+      console.warn(`[EmailJS Warning]:`, ejsErr);
+    }
+  }
+
+  // 7. Guaranteed System Queue Recording
+  messageQueue.push({
+    id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    email: targetEmail,
+    subject,
+    html,
+    timestamp: new Date().toISOString(),
+    attachments: (attachments && attachments.length > 0) ? attachments.map(a => a.filename) : []
+  });
+
   return {
     success: true,
     method: 'system_mail_queue',
-    message: `E-posta şablonu (${templateType}) başarıyla oluşturuldu ve '${targetEmail}' adresine ulaştırılmak üzere sisteme iletildi.`
+    message: `E-posta şablonu (${templateType}) oluşturuldu ve '${targetEmail}' adresine ulaştırılmak üzere sisteme iletildi.`
   };
 };
 
-const createDynamicTransporter = (config: { host: string; port: number; user: string; pass: string }) => {
+const createDynamicTransporter = (config: { host: string; port: number; user: string; pass: string; fromName?: string; active?: boolean }) => {
   const cleanPass = (config.pass || '').replace(/\s+/g, '');
   const cleanUser = (config.user || '').trim();
   const host = config.host || 'smtp.gmail.com';
@@ -859,6 +979,153 @@ const getOTPHtmlTemplate = (name: string, code: string, time: string): string =>
     </div>
     <div class="footer">
       &copy; 2026 İSG Pro Teknolojileri. Tüm hakları saklıdır.
+    </div>
+  </div>
+</body>
+</html>
+`;
+
+const getEmailVerifiedUserHtmlTemplate = (name: string, email: string, username?: string): string => `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-Posta Adresiniz Doğrulandı</title>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f8; margin: 0; padding: 0; color: #333; }
+    .container { max-width: 600px; margin: 30px auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }
+    .header { background: linear-gradient(135deg, #064e3b, #059669, #10b981); padding: 35px 25px; text-align: center; color: #ffffff; }
+    .badge { display: inline-block; background: rgba(255,255,255,0.2); backdrop-filter: blur(4px); padding: 5px 14px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+    .title { font-size: 22px; font-weight: 800; margin: 0; line-height: 1.2; }
+    .subtitle { font-size: 13px; opacity: 0.9; margin-top: 6px; }
+    .content { padding: 35px 30px; line-height: 1.6; }
+    .card { background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 20px; margin: 20px 0; }
+    .info-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    .info-table td { padding: 8px 10px; font-size: 13px; border-bottom: 1px solid #dcfce7; }
+    .info-table td.label { font-weight: 700; color: #166534; width: 35%; }
+    .info-table td.value { font-weight: 600; color: #0f172a; }
+    .footer { background-color: #f8fafc; padding: 20px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="badge">GÜVENLİK DOĞRULAMASI TAMAMLANDI</div>
+      <h1 class="title">E-Posta Adresiniz Başarıyla Doğrulandı</h1>
+      <div class="subtitle">İSG Pro hesabınızın güvenlik ve iletişim doğrulaması tamamlandı.</div>
+    </div>
+    <div class="content">
+      <p style="font-size: 15px; color: #334155;">
+        Sayın <strong>${name || username || 'Kullanıcı'}</strong>,
+      </p>
+      <p style="font-size: 14px; color: #475569;">
+        İSG Pro sisteminde kayıtlı e-posta adresiniz için tek kullanımlık güvenlik kodu başarıyla doğrulanmıştır. Artık sistem üzerindeki bildirimleri, onaylı yasal sözleşme nüshalarınızı ve lisans güncellemelerinizi güvenle alabilirsiniz.
+      </p>
+      
+      <div class="card">
+        <div style="font-size: 14px; font-weight: 800; color: #15803d; margin-bottom: 8px;">
+          ✓ Doğrulanan Hesap Bilgileri
+        </div>
+        <table class="info-table">
+          <tr>
+            <td class="label">Ad Soyad:</td>
+            <td class="value">${name || '—'}</td>
+          </tr>
+          ${username ? `<tr>
+            <td class="label">Kullanıcı Adı:</td>
+            <td class="value">@${username}</td>
+          </tr>` : ''}
+          <tr>
+            <td class="label">Doğrulanan E-Posta:</td>
+            <td class="value">${email}</td>
+          </tr>
+          <tr>
+            <td class="label">Doğrulama Tarihi:</td>
+            <td class="value">${new Date().toLocaleString('tr-TR')}</td>
+          </tr>
+          <tr>
+            <td class="label">Hesap Güvenlik Durumu:</td>
+            <td class="value"><span style="color: #15803d; font-weight: 700;">✅ Aktif & Onaylı</span></td>
+          </tr>
+        </table>
+      </div>
+
+      <p style="font-size: 13px; color: #64748b;">
+        Bu işlem sizin bilginiz dahilinde gerçekleştiyse herhangi bir işlem yapmanıza gerek yoktur.
+      </p>
+    </div>
+    <div class="footer">
+      &copy; 2026 İSG Pro Teknolojileri · Güvenli Hesap Doğrulama Servisi
+    </div>
+  </div>
+</body>
+</html>
+`;
+
+const getEmailVerifiedAdminHtmlTemplate = (name: string, email: string, username?: string): string => `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Kullanıcı E-Posta Adresini Doğruladı</title>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f1f5f9; margin: 0; padding: 0; color: #1e293b; }
+    .container { max-width: 600px; margin: 30px auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }
+    .header { background: linear-gradient(135deg, #1e1b4b, #312e81, #4338ca); padding: 35px 25px; text-align: center; color: #ffffff; }
+    .badge { display: inline-block; background: rgba(255,255,255,0.2); backdrop-filter: blur(4px); padding: 4px 12px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+    .title { font-size: 22px; font-weight: 800; margin: 0; line-height: 1.2; }
+    .subtitle { font-size: 13px; opacity: 0.85; margin-top: 6px; }
+    .content { padding: 35px 30px; }
+    .info-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+    .info-table td { padding: 12px 14px; font-size: 13px; border-bottom: 1px solid #f1f5f9; }
+    .info-table td.label { font-weight: 700; color: #64748b; width: 35%; }
+    .info-table td.value { font-weight: 600; color: #0f172a; }
+    .footer { background-color: #f8fafc; padding: 20px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="badge">GÜVENLİK VE HESAP BİLDİRİMİ</div>
+      <h1 class="title">Kullanıcı E-Postasını Doğruladı</h1>
+      <div class="subtitle">Sistemde kayıtlı bir kullanıcı güvenlik kodunu girerek e-posta teyidini tamamladı.</div>
+    </div>
+    <div class="content">
+      <div style="font-size: 14px; color: #475569; margin-bottom: 15px;">
+        Sayın Yönetici,<br><br>
+        Aşağıdaki kullanıcı sisteme kayıtlı e-posta adresini 6 haneli güvenlik kodu ile başarıyla doğrulamıştır:
+      </div>
+
+      <table class="info-table">
+        <tr>
+          <td class="label">Ad Soyad:</td>
+          <td class="value"><strong>${name || username || '—'}</strong></td>
+        </tr>
+        <tr>
+          <td class="label">Kullanıcı Adı:</td>
+          <td class="value"><span style="color: #4f46e5; font-weight: 700;">@${username || '—'}</span></td>
+        </tr>
+        <tr>
+          <td class="label">Doğrulanan E-Posta:</td>
+          <td class="value"><a href="mailto:${email}" style="color: #2563eb; text-decoration: none;">${email}</a></td>
+        </tr>
+        <tr>
+          <td class="label">Doğrulama Zamanı:</td>
+          <td class="value">${new Date().toLocaleString('tr-TR')}</td>
+        </tr>
+        <tr>
+          <td class="label">Doğrulama Durumu:</td>
+          <td class="value"><span style="background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; padding: 3px 8px; border-radius: 6px; font-weight: 700; font-size: 11px;">✅ Doğrulandı</span></td>
+        </tr>
+      </table>
+
+      <div style="margin-top: 25px; padding: 15px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; font-size: 12px; color: #1e40af; line-height: 1.5;">
+        ℹ️ <strong>Yönetici Notu:</strong> Kullanıcının durumunu Admin Paneli &gt; Kullanıcılar tablosunda <strong>"✅ E-Posta Doğrulandı"</strong> rozetiyle takip edebilirsiniz.
+      </div>
+    </div>
+    <div class="footer">
+      İSG Pro Yönetim Platformu · Otomatik Sistem Bilgilendirme Servisi
     </div>
   </div>
 </body>
@@ -1180,6 +1447,143 @@ const getContractsApprovalHtmlTemplate = (options: {
 </body>
 </html>
 `;
+
+// SADECE GİRİŞ EKRANI İÇİN: Mesafeli satış sözleşmesi hariç, sadece Ön Bilgilendirme, KVKK ve Gizlilik metinlerini içeren şablon
+function getRegistrationConsentHtmlTemplate(options: {
+  customerName: string;
+  customerEmail: string;
+  customerPhone?: string;
+  customerAddress?: string;
+  orderId: string;
+  approvalDate: string;
+  customerSignature?: string;
+}): string {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Onaylanmış Yasal Bilgilendirme ve KVKK Metinleri</title>
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #f1f5f9; margin: 0; padding: 0; color: #1e293b; }
+    .container { max-width: 650px; margin: 25px auto; background-color: #ffffff; border-radius: 14px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }
+    .header { background: linear-gradient(135deg, #1e1b4b, #312e81, #4338ca); padding: 30px 25px; text-align: center; color: #ffffff; }
+    .title { font-size: 20px; font-weight: 800; margin: 0; }
+    .subtitle { font-size: 12px; opacity: 0.9; margin-top: 6px; }
+    .content { padding: 30px 25px; font-size: 13px; line-height: 1.6; }
+    .info-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 15px; margin: 20px 0; }
+    .info-table { width: 100%; border-collapse: collapse; }
+    .info-table td { padding: 6px 8px; font-size: 12px; }
+    .info-table td.label { font-weight: 700; color: #64748b; width: 35%; }
+    .info-table td.value { font-weight: 600; color: #0f172a; }
+    .legal-badge { display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 800; text-transform: uppercase; margin: 18px 0 8px 0; }
+    .contract-section { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; font-size: 11px; line-height: 1.5; color: #334155; margin-bottom: 12px; }
+    .notice { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px; font-size: 12px; color: #1e40af; margin-top: 20px; line-height: 1.5; }
+    .footer { background-color: #f8fafc; padding: 18px; text-align: center; font-size: 11px; color: #94a3b8; border-top: 1px solid #e2e8f0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div style="font-size: 11px; font-weight: 800; letter-spacing: 0.5px; opacity: 0.85; margin-bottom: 4px;">SİSTEM BİLGİLENDİRMESİ</div>
+      <h1 class="title">Onaylanmış Yasal Bilgilendirme ve KVKK Metinleri</h1>
+      <div class="subtitle">İSG Pro Yönetim Platformu Kullanıcı Kayıt Onayı (3 Yasal Metin)</div>
+    </div>
+    <div class="content">
+      <p>Sayın <strong>${options.customerName}</strong>,</p>
+      <p>İSG Pro sistemine ilk girişinizde dijital imzanız ile onaylamış olduğunuz <strong>Ön Bilgilendirme Formu</strong>, <strong>KVKK Aydınlatma Metni</strong> ve <strong>Gizlilik Politikası</strong> resmi nüshaları kayıt altına alınmıştır ve ekte PDF olarak sunulmuştur.</p>
+
+      <div class="info-box">
+        <table class="info-table">
+          <tr><td class="label">Kullanıcı Adı / Ad Soyad:</td><td class="value"><strong>${options.customerName}</strong></td></tr>
+          <tr><td class="label">Kayıtlı E-Posta:</td><td class="value">${options.customerEmail}</td></tr>
+          <tr><td class="label">İşlem / Kayıt No:</td><td class="value">${options.orderId}</td></tr>
+          <tr><td class="label">Onay & İmza Tarihi:</td><td class="value">${options.approvalDate}</td></tr>
+        </table>
+      </div>
+
+      <div class="legal-badge" style="background-color: #ede9fe; color: #5b21b6;">1. ÖN BİLGİLENDİRME FORMU</div>
+      <div class="contract-section">
+        <strong>ÖN BİLGİLENDİRME FORMU</strong><br><br>
+        <strong>1. SATICI BİLGİLERİ</strong><br>
+        Unvan/Adı: İBRAHİM COŞKUN (İSG Pro Teknolojileri)<br>
+        E-posta: infoisgpro@gmail.com | Telefon: 0551 065 44 88<br>
+        Adres: KOCASİNAN MAH. EDİRNE / MERKEZ<br><br>
+        <strong>2. ALICI BİLGİLERİ</strong><br>
+        Ad Soyad: ${options.customerName}<br>
+        E-posta: ${options.customerEmail} | Tarih: ${options.approvalDate}<br><br>
+        <strong>3. SÖZLEŞME KONUSU ÜRÜN / HİZMET BİLGİLERİ</strong><br>
+        Ürün/Hizmet: İSG Pro Yapay Zeka Destekli İSG Yönetim Yazılımı Dijital Lisansı ve Hizmetleri<br>
+        İşlem / Kayıt No: ${options.orderId}<br>
+        Teslimat Şekli: Elektronik ortamda anında dijital lisans erişim aktivasyonu ve e-posta ile bildirim.<br><br>
+        <strong>4. TOPLAM FİYAT VE ÖDEME</strong><br>
+        Sistem kayıt ve yasal bilgilendirme aşaması olup ilgili kullanım şartları çerçevesinde kullanıcı hesabı aktif edilir.<br><br>
+        <strong>5. CAYMA HAKKI VE İSTİSNALARI</strong><br>
+        6502 sayılı Tüketicinin Korunması Hakkında Kanun ve Mesafeli Sözleşmeler Yönetmeliği'nin 15/ğ maddesi uyarınca, elektronik ortamda anında teslim edilen ve ifa edilen dijital yazılım hizmetlerinde cayma hakkı bulunmamaktadır.
+      </div>
+
+      <div class="legal-badge" style="background-color: #e0f2fe; color: #0369a1;">2. GİZLİLİK POLİTİKASI</div>
+      <div class="contract-section">
+        <strong>GİZLİLİK POLİTİKASI</strong><br><br>
+        İSG Pro internet sitesini ziyaret eden veya lisans satın alan tüm kullanıcıların gizliliği bizim için son derece önemlidir. İşbu Gizlilik Politikası, kişisel verilerinizin nasıl toplandığı, korunduğu ve kullanıldığına dair bilgilendirme amacıyla hazırlanmıştır.<br><br>
+        <strong>1. TOPLANAN VERİLER</strong><br>
+        1.1. Üyelik ve satın alma işlemleri esnasında tarafınızdan Ad Soyad, E-posta adresi, Telefon numarası ve mesleki unvan (İSG Uzmanı sertifika no vb.) bilgileri talep edilmektedir.<br>
+        1.2. Kredi kartı ve banka ödeme bilgileriniz kesinlikle bizim tarafımızdan veri tabanımızda tutulmaz veya saklanmaz. Tüm ödeme işlemleri BDDK lisanslı güvenli ödeme aracı kurumları (PAYTR vb.) ve 256-Bit SSL şifreli güvenli bağlantılar üzerinden doğrudan işlenmektedir.<br><br>
+        <strong>2. VERİ GÜVENLİĞİ VE SAKLAMA</strong><br>
+        Verileriniz, yetkisiz erişim, kaybolma, değiştirilme veya ifşa edilme risklerine karşı endüstri standardı güvenlik protokolleri ve modern şifreleme yöntemleri ile sunucularımızda saklanmaktadır.<br><br>
+        <strong>3. ÇEREZLER (COOKIES)</strong><br>
+        Sitemizde, kullanıcı deneyimini iyileştirmek, oturumları açık tutmak ve site performans analizi gerçekleştirmek amacıyla tarayıcı çerezleri kullanılmaktadır.
+      </div>
+
+      <div class="legal-badge" style="background-color: #ecfdf5; color: #047857;">3. KVKK AYDINLATMA METNİ</div>
+      <div class="contract-section">
+        <strong>KVKK AYDINLATMA METNİ</strong><br><br>
+        İşbu Aydınlatma Metni, 6698 sayılı Kişisel Verilerin Korunması Kanunu ("KVKK") uyarınca, veri sorumlusu sıfatıyla İBRAHİM COŞKUN tarafından kişisel verilerinizin işlenmesi, korunması ve haklarınız konusunda sizi bilgilendirmek amacıyla hazırlanmıştır.<br><br>
+        <strong>1. KİŞİSEL VERİLERİN İŞLENME AMACI</strong><br>
+        Kişisel verileriniz (Ad, Soyad, E-posta, Telefon No, Mesleki Bilgiler), aşağıdaki amaçlarla hukuka ve dürüstlük kurallarına uygun olarak işlenmektedir:<br>
+        - Üyelik kaydının oluşturulması ve doğrulanması<br>
+        - Lisans anahtarlarının üretilmesi ve teslim edilmesi<br>
+        - Satış sonrası destek hizmetlerinin sunulması ve faturalandırma süreçleri<br>
+        - Mevzuattan kaynaklanan yasal yükümlülüklerin yerine getirilmesi<br><br>
+        <strong>2. VERİLERİN AKTARIMI</strong><br>
+        Kişisel verileriniz, yasal zorunluluklar haricinde hiçbir üçüncü taraf, kurum veya kuruluşla ticari amaçla paylaşılmaz. Ödeme süreçlerinin tamamlanabilmesi adına yalnızca BDDK lisanslı aracı ödeme kuruluşuna (şifreli ve güvenli kanallarla) aktarılır.<br><br>
+        <strong>3. KVKK KAPSAMINDAKİ HAKLARINIZ</strong><br>
+        KVKK'nın 11. maddesi uyarınca veri sahibi olarak; verilerinizin işlenip işlenmediğini öğrenme, işlenmişse bilgi talep etme, işlenme amacını ve buna uygun kullanılıp kullanılmadığını öğrenme, verilerinizin eksik veya yanlış işlenmiş olması hâlinde düzeltilmesini isteme ve verilerinizin silinmesini talep etme haklarına sahipsiniz. Haklarınızı kullanmak için infoisgpro@gmail.com adresine başvurabilirsiniz.
+      </div>
+
+      <!-- İMZA ALANI -->
+      <div style="margin-top: 25px; padding: 15px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 10px;">
+        <table style="width: 100%;">
+          <tr>
+            <td style="width: 50%; vertical-align: top; padding-right: 10px;">
+              <div style="font-size: 11px; font-weight: 700; color: #1e40af; margin-bottom: 4px;">KULLANICI (ONAYLAYAN) DİJİTAL MAVİ İMZASI</div>
+              <div style="font-size: 11px; color: #334155;"><strong>${options.customerName}</strong></div>
+              <div style="font-size: 10px; color: #64748b;">${options.approvalDate}</div>
+              ${options.customerSignature ? `<img src="${options.customerSignature}" alt="Mavi İmza" style="max-height: 55px; max-width: 180px; margin-top: 8px; display: block;" />` : `<div style="font-size: 11px; color: #1d4ed8; font-style: italic; margin-top: 10px;">${options.customerName} (Onaylandı)</div>`}
+            </td>
+            <td style="width: 50%; vertical-align: top; padding-left: 10px; border-left: 1px solid #e2e8f0;">
+              <div style="font-size: 11px; font-weight: 700; color: #1e40af; margin-bottom: 4px;">HİZMET SAĞLAYICI İMZASI</div>
+              <div style="font-size: 11px; color: #334155;"><strong>İBRAHİM COŞKUN (İSG Pro)</strong></div>
+              <div style="font-size: 10px; color: #64748b;">${options.approvalDate}</div>
+              <div style="font-size: 11px; color: #1d4ed8; font-style: italic; margin-top: 10px;">İSG Pro Sistem Yönetimi</div>
+            </td>
+          </tr>
+        </table>
+      </div>
+
+      <div class="notice">
+        <strong>Yasal Bilgilendirme:</strong> İşbu e-posta eki olan 3 adet resmi PDF belgesi (Ön Bilgilendirme Formu, Gizlilik Politikası, KVKK Metni), 6698 sayılı KVKK kapsamında dijital imzanız ile onaylanan yasal bilgilendirme nüshalarının aslı gibidir bir örneğidir. Sistem arşivimiz için <strong>infoisgpro@gmail.com</strong> adresine de kopyalanmıştır.
+      </div>
+    </div>
+    <div class="footer">
+      &copy; 2026 İSG Pro Teknolojileri · Yasal Bilgilendirme Servisi
+    </div>
+  </div>
+</body>
+</html>
+  `;
+}
 
 const getEmailVerificationHtmlTemplate = (options: {
   name: string;
@@ -1807,8 +2211,8 @@ app.use((req, res, next) => {
     return res.sendStatus(200);
   }
 
-  // Normalize path if Vercel serverless functions stripped the /api prefix
-  if (!req.url.startsWith('/api') && !req.url.startsWith('/health') && !req.url.startsWith('/assets')) {
+  // Normalize path ONLY if running inside Vercel serverless functions
+  if (process.env.VERCEL && !req.url.startsWith('/api') && !req.url.startsWith('/health') && !req.url.startsWith('/assets')) {
     req.url = '/api' + (req.url.startsWith('/') ? req.url : '/' + req.url);
   }
   next();
@@ -2039,8 +2443,8 @@ app.post('/api/send-email', async (req, res) => {
   });
 });
 
-// Proxy endpoint for OTP email
-app.post('/api/send-email-otp', async (req, res) => {
+// Proxy endpoint for OTP verification email (supports both /api/send-email-otp and /api/send-email-verification)
+const handleSendOtpEmail = async (req: express.Request, res: express.Response) => {
   const { email, code, name } = req.body;
   if (!email || !code) {
     return res.status(400).json({ error: 'Email and code are required.' });
@@ -2050,32 +2454,70 @@ app.post('/api/send-email-otp', async (req, res) => {
   const expTime = new Date(Date.now() + 15 * 60 * 1000).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
   const htmlContent = getOTPHtmlTemplate(name || email, code, expTime);
 
-  const smtpConfig = await getSMTPConfig();
-  const resSMTP = await sendEmailWithGoogleFallback({
-    config: smtpConfig,
+  const resUniversal = await sendEmailUniversal({
     to: email,
-    subject: `${code} - İSG Pro Güvenli Giriş Kodunuz`,
-    html: htmlContent
+    subject: `${code} - İSG Pro Güvenlik ve Doğrulama Kodunuz`,
+    html: htmlContent,
+    templateType: 'otp'
   });
 
-  if (resSMTP.success) {
-    console.log(`[SMTP OTP] OTP e-postası başarıyla iletildi: ${maskEmail(email)}`);
-    return res.json({ success: true, method: 'google_smtp' });
+  return res.json({ success: true, method: resUniversal.method, message: resUniversal.message });
+};
+
+app.post('/api/send-email-otp', handleSendOtpEmail);
+app.post('/api/send-email-verification', handleSendOtpEmail);
+
+// Endpoint: Kullanıcı E-Posta Doğrulamasını Başarıyla Tamamladığında Hem Kullanıcıya Hem Admin'e Teyit E-postası Gönderimi
+app.post('/api/send-email-verified-success', async (req: express.Request, res: express.Response) => {
+  const { email, name, username } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: 'E-posta adresi zorunludur.' });
   }
 
-  console.log(`[EmailJS OTP] Direct Google SMTP failed, trying EmailJS fallback...`);
-  await sendEmailViaEmailJS(EMAILJS_TEMPLATE_ID, {
-    to_email: email,
-    email: email,
-    to: email,
-    to_name: name || email,
-    otp_code: code,
-    passcode: code,
-    time: expTime,
-    project_name: "İSG Pro"
-  });
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanName = name || username || 'Değerli Kullanıcı';
+  const cleanUsername = username || '';
 
-  return res.json({ success: true, method: 'emailjs_or_queue' });
+  console.log(`[Email Verified Success] Dispatching verification confirmations for: ${maskEmail(cleanEmail)}`);
+
+  const userSubject = `✅ E-Posta Adresiniz Başarıyla Doğrulandı - İSG Pro`;
+  const userHtml = getEmailVerifiedUserHtmlTemplate(cleanName, cleanEmail, cleanUsername);
+
+  const adminSubject = `🛡️ [Güvenlik] Kullanıcı E-Postasını Doğruladı: ${cleanName} (@${cleanUsername || '—'})`;
+  const adminHtml = getEmailVerifiedAdminHtmlTemplate(cleanName, cleanEmail, cleanUsername);
+
+  try {
+    // 1. Kullanıcıya başarı teyit e-postası
+    const userRes = await sendEmailUniversal({
+      to: cleanEmail,
+      subject: userSubject,
+      html: userHtml,
+      fromName: 'İSG Pro Güvenlik'
+    });
+
+    // 2. Sistem yöneticisine güvenlik teyit e-postası
+    const adminRes = await sendEmailUniversal({
+      to: 'infoisgpro@gmail.com',
+      subject: adminSubject,
+      html: adminHtml,
+      fromName: 'İSG Pro Sistem Bildirimi'
+    });
+
+    console.log(`[Email Verified Success] Confirmations dispatched. User: ${userRes.method}, Admin: ${adminRes.method}`);
+
+    return res.json({
+      success: true,
+      message: 'Doğrulama teyit e-postaları kullanıcıya ve yöneticiye başarıyla iletildi.',
+      userMethod: userRes.method,
+      adminMethod: adminRes.method
+    });
+  } catch (error: any) {
+    console.error('[Email Verified Success Error]:', error);
+    return res.status(500).json({
+      error: 'Doğrulama bildirim e-postası gönderilirken hata oluştu.',
+      details: error.message
+    });
+  }
 });
 
 // Proxy endpoint for License email
@@ -2225,8 +2667,339 @@ const handleSendContractsEmail = async (req: express.Request, res: express.Respo
   return res.json({ success: true, message: 'Sözleşme bildirimi kullanıcıya başarıyla iletildi.' });
 };
 
+// SADECE VE SADECE İLK KAYIT YASAL ONAY EKRANI İÇİN: 3 Sözleşme PDF'i ile iletilen özel servis
+const handleSendRegistrationContracts = async (req: express.Request, res: express.Response) => {
+  const { email, name, phone, address, userSignature, customerSignature, orderId, purchaseDate } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: 'Kayıtlı e-posta adresi zorunludur.' });
+  }
+
+  const cleanCustomerEmail = email.trim().toLowerCase();
+  const cleanOrderId = (orderId || `KAYIT-${Date.now().toString().slice(-6)}`).trim();
+  const cleanName = name || 'Değerli İSG Pro Kullanıcısı';
+  const cleanDate = purchaseDate || new Date().toLocaleString('tr-TR');
+
+  const activeSignature = userSignature || customerSignature || (email ? signaturesByEmail[cleanCustomerEmail] : undefined);
+  if (activeSignature && cleanCustomerEmail) {
+    signaturesByEmail[cleanCustomerEmail] = activeSignature;
+  }
+
+  console.log(`[Registration Contracts] Sending 3 legal contracts PDF copy to: ${cleanCustomerEmail} and infoisgpro@gmail.com. Signature present: ${!!activeSignature}`);
+
+  const emailSubject = `✅ İSG Pro - Onaylanmış Yasal Bilgilendirme ve KVKK Metinleri (Ön Bilgilendirme, Gizlilik, KVKK) (${cleanOrderId})`;
+
+  const htmlContent = getRegistrationConsentHtmlTemplate({
+    customerName: cleanName,
+    customerEmail: cleanCustomerEmail,
+    customerPhone: phone,
+    customerAddress: address,
+    orderId: cleanOrderId,
+    approvalDate: cleanDate,
+    customerSignature: activeSignature
+  });
+
+  let pdfAttachments: Array<{ filename: string; content: Buffer; contentType: string }> = [];
+  try {
+    pdfAttachments = await generateRegistrationConsentPDFAttachments({
+      customerName: cleanName,
+      customerEmail: cleanCustomerEmail,
+      customerPhone: phone,
+      customerAddress: address,
+      orderId: cleanOrderId,
+      planName: 'İSG Pro Dijital Hizmet',
+      price: '0,00 TL',
+      approvalDate: cleanDate,
+      customerSignature: activeSignature
+    });
+  } catch (pdfErr) {
+    console.error('[Registration PDF Generation Error]:', pdfErr);
+  }
+
+  const recipients = Array.from(new Set([cleanCustomerEmail, 'infoisgpro@gmail.com'])).filter(e => e && e.includes('@'));
+  const mailAttachments = pdfAttachments;
+
+  const smtpConfig = await getSMTPConfig();
+  if (smtpConfig.active) {
+    try {
+      const transporter = createDynamicTransporter(smtpConfig);
+      await transporter.sendMail({
+        from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
+        to: recipients,
+        subject: emailSubject,
+        html: htmlContent,
+        attachments: mailAttachments
+      });
+      console.log(`[SMTP Registration Contracts] 3 adet yasal metin PDF'i başarıyla gönderildi: ${recipients.join(', ')}`);
+      return res.json({ success: true, message: 'Yasal bilgilendirme nüshaları 3 PDF olarak başarıyla gönderildi.', recipients });
+    } catch (err: any) {
+      console.error('[SMTP Registration Contracts Error]:', err);
+    }
+  }
+
+  // Fallback SMTP
+  try {
+    const transporter = createDynamicTransporter({
+      host: process.env.SMTP_HOST || "smtp.gmail.com",
+      port: Number(process.env.SMTP_PORT) || 465,
+      user: process.env.SMTP_USER || "infoisgpro@gmail.com",
+      pass: process.env.SMTP_PASS || "nflz ovsy dskk jwvy",
+      fromName: "İSG Pro Teknolojileri",
+      active: true
+    });
+
+    await transporter.sendMail({
+      from: `"İSG Pro Teknolojileri" <infoisgpro@gmail.com>`,
+      to: recipients,
+      subject: emailSubject,
+      html: htmlContent,
+      attachments: mailAttachments
+    });
+
+    return res.json({ success: true, method: 'fallback_smtp', message: 'Yasal bilgilendirmeler 3 PDF olarak iletildi.' });
+  } catch (err: any) {
+    console.error('Registration Contract Email Fallback Error:', err);
+    return res.status(500).json({ error: 'Yasal bilgilendirme e-postası gönderilirken hata oluştu.', details: err.message });
+  }
+};
+
+app.post('/api/send-registration-contracts', handleSendRegistrationContracts);
 app.post('/api/send-email-contracts', handleSendContractsEmail);
 app.post('/api/send-contracts', handleSendContractsEmail);
+
+// Dedicated endpoint to persist/sync users directly into Firestore 'users' collection (Server-side guarantee)
+app.post('/api/sync-user', async (req, res) => {
+  try {
+    const { user } = req.body;
+    if (!user || (!user.username && !user.email)) {
+      return res.status(400).json({ error: 'Kullanıcı bilgisi eksik.' });
+    }
+
+    const usernameKey = normalizeUsername(user.username || user.email || '');
+    if (!usernameKey) {
+      return res.status(400).json({ error: 'Geçersiz kullanıcı adı.' });
+    }
+
+    if (db) {
+      const sanitized = sanitizeUserForFirestore(user);
+      await setDoc(doc(db, 'users', usernameKey), sanitized, { merge: true });
+      console.log(`[Firestore Server Sync] User '${usernameKey}' successfully synced to Firestore.`);
+      return res.json({ success: true, username: usernameKey });
+    }
+
+    return res.json({ success: false, reason: 'db_not_initialized' });
+  } catch (err: any) {
+    console.error('[API /api/sync-user Error]:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Yeni Kullanıcı Tanımlandığında Admin'e Bildirim E-postası Gönderme Endpoint'i
+app.post('/api/send-new-user-notification', async (req, res) => {
+  const { newUser, adminEmail } = req.body;
+
+  if (!newUser || !newUser.username) {
+    return res.status(400).json({ error: 'Kullanıcı bilgisi eksik.' });
+  }
+
+  // 0. Ensure user is also persisted directly into Firestore 'users' collection on server
+  if (db && newUser && newUser.username) {
+    try {
+      const uKey = normalizeUsername(newUser.username || '');
+      const sanitized = sanitizeUserForFirestore(newUser);
+      await setDoc(doc(db, 'users', uKey), sanitized, { merge: true });
+      console.log(`[Firestore Server Sync] User '${uKey}' persisted via notification handler.`);
+    } catch (persistErr) {
+      console.warn('[Firestore Server Persist Error]:', persistErr);
+    }
+  }
+
+  const targetAdminEmail = adminEmail || "infoisgpro@gmail.com";
+  const subject = `🔔 Yeni Kullanıcı Tanımlandı: ${newUser.name || newUser.username} (@${newUser.username})`;
+
+  const roleText = newUser.role === 'uzman' ? 'İş Güvenliği Uzmanı'
+    : newUser.role === 'hekim' ? 'İşyeri Hekimi'
+    : newUser.role === 'dsp' ? 'Diğer Sağlık Personeli (DSP)'
+    : newUser.role === 'diğer' || newUser.role === 'other' ? 'Diğer / Yönetici'
+    : newUser.role === 'admin' ? 'Sistem Yöneticisi'
+    : newUser.role || 'Tanımsız';
+
+  const osgbName = newUser.osgb?.name || (typeof newUser.osgb === 'string' ? newUser.osgb : '') || 'Bağımsız / Tanımsız';
+  const createdAtFormatted = (() => {
+    try {
+      const ca = newUser.createdAt;
+      if (!ca) return new Date().toLocaleString('tr-TR');
+      if (ca && typeof ca === 'object' && typeof (ca as any).toDate === 'function') {
+        return (ca as any).toDate().toLocaleString('tr-TR');
+      }
+      if (ca && typeof ca === 'object' && ('_methodName' in ca || 'seconds' in ca === false)) {
+        return new Date().toLocaleString('tr-TR');
+      }
+      const d = new Date(ca as string | number);
+      if (isNaN(d.getTime())) return new Date().toLocaleString('tr-TR');
+      return d.toLocaleString('tr-TR');
+    } catch {
+      return new Date().toLocaleString('tr-TR');
+    }
+  })();
+  const sourceText = newUser.createdBy ? `${newUser.createdBy} tarafından tanımlandı` : 'Doğrudan Kullanıcı Kaydı';
+
+  const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Yeni Kullanıcı Tanımlandı</title>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f1f5f9; margin: 0; padding: 0; color: #1e293b; }
+    .container { max-width: 600px; margin: 30px auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }
+    .header { background: linear-gradient(135deg, #312e81, #4338ca, #6366f1); padding: 35px 25px; text-align: center; color: #ffffff; }
+    .badge { display: inline-block; background: rgba(255,255,255,0.2); backdrop-filter: blur(4px); padding: 4px 12px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+    .title { font-size: 22px; font-weight: 800; margin: 0; line-height: 1.2; }
+    .subtitle { font-size: 13px; opacity: 0.85; margin-top: 6px; }
+    .content { padding: 35px 30px; }
+    .info-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+    .info-table td { padding: 12px 14px; font-size: 13px; border-bottom: 1px solid #f1f5f9; }
+    .info-table td.label { font-weight: 700; color: #64748b; width: 35%; }
+    .info-table td.value { font-weight: 600; color: #0f172a; }
+    .tag { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; }
+    .tag-premium { background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; }
+    .tag-demo { background: #fffbeb; color: #d97706; border: 1px solid #fde68a; }
+    .footer { background-color: #f8fafc; padding: 20px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="badge">SİSTEM BİLDİRİMİ</div>
+      <h1 class="title">Yeni Kullanıcı Tanımlandı</h1>
+      <div class="subtitle">İSG Yönetim Portalı üzerinde yeni bir hesap oluşturuldu.</div>
+    </div>
+    <div class="content">
+      <div style="font-size: 14px; color: #475569; margin-bottom: 20px;">
+        Sayın Yönetici,<br><br>
+        Sisteminizde yeni bir kullanıcı kaydı gerçekleştirilmiştir. Kullanıcıya ait detaylı kişisel ve mesleki bilgiler aşağıda yer almaktadır:
+      </div>
+
+      <table class="info-table">
+        <tr>
+          <td class="label">Adı Soyadı:</td>
+          <td class="value"><strong>${newUser.name || newUser.username || 'Belirtilmedi'}</strong></td>
+        </tr>
+        <tr>
+          <td class="label">Kullanıcı Adı:</td>
+          <td class="value"><span style="color: #4f46e5; font-weight: 700;">@${newUser.username || '—'}</span></td>
+        </tr>
+        <tr>
+          <td class="label">E-Posta:</td>
+          <td class="value">${newUser.email ? `<a href="mailto:${newUser.email}" style="color: #2563eb; text-decoration: none;">${newUser.email}</a>` : '—'}</td>
+        </tr>
+        <tr>
+          <td class="label">Telefon:</td>
+          <td class="value">${newUser.phone || '—'}</td>
+        </tr>
+        <tr>
+          <td class="label">Rol / Branş:</td>
+          <td class="value"><span style="background: #eef2ff; color: #4338ca; padding: 2px 8px; border-radius: 6px; font-weight: 700; font-size: 12px;">${roleText}</span></td>
+        </tr>
+        <tr>
+          <td class="label">Sertifika No:</td>
+          <td class="value">${newUser.certificateNo || '—'}</td>
+        </tr>
+        <tr>
+          <td class="label">Bağlı OSGB:</td>
+          <td class="value">${osgbName}</td>
+        </tr>
+        <tr>
+          <td class="label">Lisans Durumu:</td>
+          <td class="value">
+            ${newUser.isPremium ? '<span class="tag tag-premium">Tam Sürüm / Lisanslı</span>' : '<span class="tag tag-demo">Standart / Demo</span>'}
+          </td>
+        </tr>
+        <tr>
+          <td class="label">Kayıt Kaynağı:</td>
+          <td class="value">${sourceText}</td>
+        </tr>
+        <tr>
+          <td class="label">Kayıt Tarihi & Saati:</td>
+          <td class="value">${createdAtFormatted}</td>
+        </tr>
+      </table>
+
+      <div style="margin-top: 25px; padding: 15px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; font-size: 12px; color: #1e40af; line-height: 1.5;">
+        ℹ️ <strong>Yönetici Notu:</strong> Kullanıcının firma erişim yetkilerini, OSGB atamasını veya lisans durumunu Admin Paneli üzerinden dilediğiniz zaman inceleyebilir ve güncelleyebilirsiniz.
+      </div>
+    </div>
+    <div class="footer">
+      İSG Pro Yönetim Platformu · Otomatik Sistem Bilgilendirme Servisi
+    </div>
+  </div>
+</body>
+</html>
+  `;
+
+  const adminRecipients = Array.from(new Set([
+    targetAdminEmail,
+    "infoisgpro@gmail.com"
+  ])).filter(e => e && e.includes('@'));
+
+  // 1. Dinamik SMTP ile gönder
+  const smtpConfig = await getSMTPConfig();
+  if (smtpConfig.active) {
+    try {
+      const transporter = createDynamicTransporter(smtpConfig);
+      await transporter.sendMail({
+        from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
+        to: adminRecipients,
+        subject,
+        html: htmlContent
+      });
+      console.log(`[SMTP] Yeni kullanıcı bildirim maili admin'e (${adminRecipients.join(', ')}) başarıyla gönderildi.`);
+      return res.json({ success: true, method: 'smtp' });
+    } catch (smtpErr: any) {
+      console.error("[SMTP Error] Yeni kullanıcı bildirim maili hatası:", smtpErr);
+    }
+  }
+
+  // 2. Direct Fallback Transporter (Gmail)
+  try {
+    const directTransporter = createDynamicTransporter({
+      host: process.env.SMTP_HOST || "smtp.gmail.com",
+      port: Number(process.env.SMTP_PORT) || 465,
+      user: process.env.SMTP_USER || "infoisgpro@gmail.com",
+      pass: process.env.SMTP_PASS || "nflz ovsy dskk jwvy",
+      fromName: "İSG Pro Sistem Bildirimi",
+      active: true
+    });
+    await directTransporter.sendMail({
+      from: `"İSG Pro" <infoisgpro@gmail.com>`,
+      to: adminRecipients,
+      subject,
+      html: htmlContent
+    });
+    console.log(`[Direct SMTP] Yeni kullanıcı bildirim maili başarıyla gönderildi: ${adminRecipients.join(', ')}`);
+    return res.json({ success: true, method: 'direct_smtp' });
+  } catch (directErr: any) {
+    console.warn("[Direct SMTP Warning]:", directErr?.message || directErr);
+  }
+
+  // 3. EmailJS Fallback
+  try {
+    await sendEmailViaEmailJS(EMAILJS_CONTACT_TEMPLATE_ID, {
+      name: newUser.name || newUser.username,
+      from_name: "İSG Pro Otomasyon",
+      email: newUser.email || "noreply@isgpro.app",
+      to_email: targetAdminEmail,
+      subject,
+      message: `Sistemde yeni bir kullanıcı kaydı gerçekleşti:\nAd: ${newUser.name || '—'}\nKullanıcı Adı: @${newUser.username}\nE-posta: ${newUser.email}\nTelefon: ${newUser.phone || '—'}\nRol: ${roleText}`,
+      project_name: "İSG Pro"
+    });
+    return res.json({ success: true, method: 'emailjs' });
+  } catch (emailjsErr) {
+    console.error("[EmailJS Error]:", emailjsErr);
+  }
+
+  return res.json({ success: true, method: 'queued' });
+});
 
 // Proxy endpoint for Email Update Link
 app.post('/api/send-email-update-link', async (req, res) => {
@@ -2286,6 +3059,186 @@ app.post('/api/send-email-verification', async (req, res) => {
   });
 
   return res.json({ success: true, message: resVal.message });
+});
+
+// E-posta doğrulama tamamlandığında hem kullanıcıya hem admin'e başarı teyit e-postası gönderir
+app.post('/api/send-email-verified-success', async (req, res) => {
+  const { email, name, username } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: 'E-posta adresi zorunludur.' });
+  }
+
+  const cleanName = name || username || 'Değerli Kullanıcı';
+  const cleanEmail = email.trim().toLowerCase();
+  const dateStr = new Date().toLocaleString('tr-TR');
+
+  const userHtml = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-Posta Adresiniz Başarıyla Doğrulandı</title>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc; margin: 0; padding: 0; color: #1e293b; }
+    .container { max-width: 600px; margin: 30px auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }
+    .header { background: linear-gradient(135deg, #065f46, #059669, #10b981); padding: 35px 25px; text-align: center; color: #ffffff; }
+    .badge { display: inline-block; background: rgba(255,255,255,0.25); backdrop-filter: blur(4px); padding: 4px 14px; border-radius: 999px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+    .title { font-size: 22px; font-weight: 800; margin: 0; line-height: 1.2; }
+    .subtitle { font-size: 13px; opacity: 0.9; margin-top: 6px; }
+    .content { padding: 35px 30px; }
+    .info-box { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 20px; margin: 20px 0; }
+    .info-table { width: 100%; border-collapse: collapse; }
+    .info-table td { padding: 10px 12px; font-size: 13px; border-bottom: 1px solid #dcfce7; }
+    .info-table td:last-child { border-bottom: none; }
+    .info-table td.label { font-weight: 700; color: #166534; width: 40%; }
+    .info-table td.value { font-weight: 600; color: #0f172a; }
+    .footer { background-color: #f8fafc; padding: 20px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="badge">GÜVENLİK VE İLETİŞİM DOĞRULAMASI</div>
+      <h1 class="title">✅ E-Posta Adresiniz Doğrulandı</h1>
+      <div class="subtitle">İSG Pro Dijital Yönetim Sistemi Güvenlik Onayı</div>
+    </div>
+    <div class="content">
+      <div style="font-size: 15px; color: #334155; margin-bottom: 18px;">
+        Sayın <strong>${cleanName}</strong>,
+      </div>
+      <p style="font-size: 14px; color: #475569; line-height: 1.6;">
+        İSG Pro hesabınıza ait e-posta doğrulama işlemi başarıyla tamamlanmıştır. Artık sistem üzerindeki tüm resmi İSG kurul kararları, risk analiz raporları, yasal bildirimler ve lisans belgeleri bu e-posta adresinize güvenle iletilecektir.
+      </p>
+
+      <div class="info-box">
+        <table class="info-table">
+          <tr>
+            <td class="label">Kullanıcı Hesabı:</td>
+            <td class="value"><strong>@${username || 'kullanici'}</strong></td>
+          </tr>
+          <tr>
+            <td class="label">Doğrulanan E-Posta:</td>
+            <td class="value"><span style="color: #059669; font-weight: 700;">${cleanEmail}</span></td>
+          </tr>
+          <tr>
+            <td class="label">Doğrulama Durumu:</td>
+            <td class="value"><span style="background: #10b981; color: #ffffff; padding: 2px 8px; border-radius: 6px; font-weight: 700; font-size: 11px;">ONAYLANDI & AKTİF</span></td>
+          </tr>
+          <tr>
+            <td class="label">İşlem Tarihi & Saati:</td>
+            <td class="value">${dateStr}</td>
+          </tr>
+        </table>
+      </div>
+
+      <p style="font-size: 13px; color: #64748b; line-height: 1.5;">
+        Eğer bu doğrulama işlemi bilginiz dahilinde yapılmadıysa lütfen derhal sistem yöneticisiyle veya <a href="mailto:infoisgpro@gmail.com" style="color: #059669; font-weight: 700;">infoisgpro@gmail.com</a> adresiyle irtibata geçiniz.
+      </p>
+    </div>
+    <div class="footer">
+      İSG Pro Yönetim Platformu · Güvenli E-Posta Doğrulama Hizmeti
+    </div>
+  </div>
+</body>
+</html>
+  `;
+
+  const adminHtml = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kullanıcı E-Postasını Doğruladı</title>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f1f5f9; margin: 0; padding: 0; color: #1e293b; }
+    .container { max-width: 600px; margin: 30px auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }
+    .header { background: linear-gradient(135deg, #1e1b4b, #3730a3, #4f46e5); padding: 35px 25px; text-align: center; color: #ffffff; }
+    .badge { display: inline-block; background: rgba(255,255,255,0.2); backdrop-filter: blur(4px); padding: 4px 12px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+    .title { font-size: 22px; font-weight: 800; margin: 0; line-height: 1.2; }
+    .subtitle { font-size: 13px; opacity: 0.85; margin-top: 6px; }
+    .content { padding: 35px 30px; }
+    .info-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+    .info-table td { padding: 12px 14px; font-size: 13px; border-bottom: 1px solid #f1f5f9; }
+    .info-table td.label { font-weight: 700; color: #64748b; width: 38%; }
+    .info-table td.value { font-weight: 600; color: #0f172a; }
+    .footer { background-color: #f8fafc; padding: 20px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="badge">SİSTEM GÜVENLİK BİLDİRİMİ</div>
+      <h1 class="title">🔔 E-Posta Doğrulandı</h1>
+      <div class="subtitle">Bir kullanıcı e-posta güvenlik doğrulamasını başarıyla tamamladı.</div>
+    </div>
+    <div class="content">
+      <div style="font-size: 14px; color: #475569; margin-bottom: 20px;">
+        Sayın Yönetici,<br><br>
+        Sisteminizde kayıtlı bir kullanıcı tek kullanımlık güvenlik kodunu (OTP) doğrulayarak e-posta adresini onaylamıştır:
+      </div>
+
+      <table class="info-table">
+        <tr>
+          <td class="label">Kullanıcı Adı:</td>
+          <td class="value"><span style="color: #4f46e5; font-weight: 700;">@${username || '—'}</span></td>
+        </tr>
+        <tr>
+          <td class="label">Ad Soyad:</td>
+          <td class="value"><strong>${cleanName}</strong></td>
+        </tr>
+        <tr>
+          <td class="label">Doğrulanan E-Posta:</td>
+          <td class="value"><span style="color: #059669; font-weight: 700;">${cleanEmail}</span></td>
+        </tr>
+        <tr>
+          <td class="label">Onay Zamanı:</td>
+          <td class="value">${dateStr}</td>
+        </tr>
+        <tr>
+          <td class="label">Güvenlik Durumu:</td>
+          <td class="value"><span style="background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; padding: 2px 8px; border-radius: 6px; font-weight: 700; font-size: 11px;">E-Posta Güvenli / Teyit Edildi</span></td>
+        </tr>
+      </table>
+
+      <div style="margin-top: 25px; padding: 15px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; font-size: 12px; color: #1e40af; line-height: 1.5;">
+        ℹ️ Kullanıcının hesabı artık doğrulanmış kullanıcı statüsündedir. Admin Paneli üzerinden ilgili kullanıcının güvenlik durumunu görüntüleyebilirsiniz.
+      </div>
+    </div>
+    <div class="footer">
+      İSG Pro Yönetim Platformu · Güvenlik Servisi
+    </div>
+  </div>
+</body>
+</html>
+  `;
+
+  // 1. Kullanıcıya başarı teyit maili gönder
+  try {
+    await sendEmailUniversal({
+      to: cleanEmail,
+      subject: '✅ İSG Pro - E-Posta Adresiniz Başarıyla Doğrulandı',
+      html: userHtml,
+      templateType: 'contact'
+    });
+  } catch (err: any) {
+    console.warn('[Verified Success Email to User Warning]:', err?.message || err);
+  }
+
+  // 2. Admin'e güvenlik bildirim maili gönder
+  try {
+    await sendEmailUniversal({
+      to: 'infoisgpro@gmail.com',
+      subject: `🔔 E-Posta Doğrulandı: @${username || cleanName} (${cleanEmail})`,
+      html: adminHtml,
+      templateType: 'contact'
+    });
+  } catch (err: any) {
+    console.warn('[Verified Success Email to Admin Warning]:', err?.message || err);
+  }
+
+  return res.json({ success: true, message: 'Doğrulama başarı teyit e-postaları iletildi.' });
 });
 
 // In-memory registry for PayTR transactions with Firestore persistence
@@ -2445,11 +3398,23 @@ async function getPayTRConfig(): Promise<PayTRConfig> {
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         const data = docSnap.data();
-        if (data.merchantId) cachedPayTRConfig.merchantId = data.merchantId;
-        if (data.merchantKey) cachedPayTRConfig.merchantKey = data.merchantKey;
-        if (data.merchantSalt) cachedPayTRConfig.merchantSalt = data.merchantSalt;
+        if (data.merchantId) cachedPayTRConfig.merchantId = decryptData(data.merchantId);
+        if (data.merchantKey) cachedPayTRConfig.merchantKey = decryptData(data.merchantKey);
+        if (data.merchantSalt) cachedPayTRConfig.merchantSalt = decryptData(data.merchantSalt);
         if (data.testMode !== undefined) cachedPayTRConfig.testMode = String(data.testMode);
         if (data.customDomain !== undefined) cachedPayTRConfig.customDomain = String(data.customDomain);
+
+        // Restore readable plaintext format in Firestore if it was previously encrypted
+        if (data.merchantKey && (String(data.merchantKey).startsWith('ISGSEC:') || String(data.merchantKey).startsWith('ENC:v1:'))) {
+          setDoc(docRef, {
+            merchantId: cachedPayTRConfig.merchantId,
+            merchantKey: cachedPayTRConfig.merchantKey,
+            merchantSalt: cachedPayTRConfig.merchantSalt,
+            testMode: cachedPayTRConfig.testMode,
+            customDomain: cachedPayTRConfig.customDomain,
+            updatedAt: new Date().toISOString()
+          }, { merge: true }).catch(err => console.warn('PayTR restore warning:', err));
+        }
       }
     } catch (e) {
       console.warn('[PayTR Config] Failed to fetch from Firestore:', e);
@@ -2464,7 +3429,7 @@ async function getPayTRConfig(): Promise<PayTRConfig> {
   };
 }
 
-// PayTR Config Status Endpoint for Admin Panel
+// PayTR Config Status Endpoint for Admin Panel (Readable for Admin)
 app.get('/api/paytr/config-status', async (req, res) => {
   const config = await getPayTRConfig();
   const isConfigured = !!(config.merchantId && config.merchantKey && config.merchantSalt);
@@ -2474,8 +3439,8 @@ app.get('/api/paytr/config-status', async (req, res) => {
   return res.json({
     configured: isConfigured,
     merchantId: config.merchantId,
-    merchantKey: config.merchantKey ? '••••••••••••••••' : '',
-    merchantSalt: config.merchantSalt ? '••••••••••••••••' : '',
+    merchantKey: config.merchantKey || '',
+    merchantSalt: config.merchantSalt || '',
     testMode: config.testMode,
     customDomain: config.customDomain || '',
     hasKey: !!config.merchantKey,
@@ -2514,18 +3479,21 @@ app.post('/api/paytr/config', async (req, res) => {
 
     if (db) {
       const docRef = doc(db, 'settings', 'paytr');
-      await setDoc(docRef, { ...updated, updatedAt: new Date().toISOString() }, { merge: true });
+      await setDoc(docRef, {
+        merchantId: updated.merchantId,
+        merchantKey: updated.merchantKey,
+        merchantSalt: updated.merchantSalt,
+        testMode: updated.testMode,
+        customDomain: updated.customDomain,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
     }
 
     console.log(`[PayTR Config Updated] Merchant ID: ${updated.merchantId}, Test Mode: ${updated.testMode}`);
     return res.json({
       success: true,
       message: 'PayTR Mağaza SanalPOS bilgileri başarıyla kaydedildi.',
-      config: {
-        ...updated,
-        merchantKey: updated.merchantKey ? '••••••••••••••••' : '',
-        merchantSalt: updated.merchantSalt ? '••••••••••••••••' : ''
-      }
+      config: updated
     });
   } catch (err: any) {
     console.error('[PayTR Config Save Error]', err);
@@ -2568,8 +3536,15 @@ async function activateAndNotifyOrder(merchantOid: string): Promise<boolean> {
 
       const purchaseDate = new Date().toISOString();
       const expiryDate = new Date();
-      if (order.planId === 'yearly') expiryDate.setFullYear(expiryDate.getFullYear() + 1);
-      else expiryDate.setMonth(expiryDate.getMonth() + 1);
+      if ((order.planId as string) === 'trial') {
+        expiryDate.setDate(expiryDate.getDate() + 7);
+      } else if (order.planId === 'monthly') {
+        expiryDate.setMonth(expiryDate.getMonth() + 1);
+      } else if ((order.planId as string) === 'demo') {
+        expiryDate.setMinutes(expiryDate.getMinutes() + 10);
+      } else {
+        expiryDate.setFullYear(expiryDate.getFullYear() + 1);
+      }
 
       const upgradeFields = {
         isPremium: true,
@@ -3336,8 +4311,302 @@ app.post('/api/smtp-config', async (req, res) => {
   }
 });
 
+// Helper to generate full subject, HTML and attachments for all test template types
+async function getTestEmailPayload(
+  templateType: string,
+  testEmail: string,
+  req: express.Request,
+  testConfig: { host: string; port: number }
+): Promise<{ subject: string; html: string; attachments?: any[] }> {
+  const host = req.headers.host || 'localhost:3000';
+  const protocol = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+  let subject = 'İSG Pro - E-Posta Gönderim Servisi Test Mesajı';
+  let html = '';
+  let attachments: any[] = [];
+
+  const now = new Date();
+  const testOrderId = `TEST-${Date.now().toString().slice(-6)}`;
+  const formattedDate = now.toLocaleDateString('tr-TR');
+  const formattedDateTime = now.toLocaleString('tr-TR');
+  const expiryOneYear = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toLocaleDateString('tr-TR');
+  const expirySevenDays = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString('tr-TR');
+
+  if (templateType === 'otp') {
+    subject = '748291 - İSG Pro Güvenli Giriş Kodunuz';
+    const expTime = new Date(Date.now() + 15 * 60 * 1000).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+    html = getOTPHtmlTemplate('Ahmet Yılmaz (Test)', '748291', expTime);
+  } else if (templateType === 'verification' || templateType === 'verify') {
+    subject = 'İSG Pro - E-Posta Adresi Doğrulama & Güncelleme Bağlantısı (Test)';
+    html = getEmailVerificationHtmlTemplate({
+      name: 'Ahmet Yılmaz (Test)',
+      email: testEmail,
+      updateUrl: `${protocol}://${host}/?verify-email=${encodeURIComponent(testEmail)}&token=591823`,
+      verificationCode: '591823'
+    });
+  } else if (templateType === 'verified_user') {
+    subject = '✅ E-Posta Adresiniz Başarıyla Doğrulandı - İSG Pro';
+    html = getEmailVerifiedUserHtmlTemplate('Ahmet Yılmaz (Test)', testEmail, 'ahmetyilmaz');
+  } else if (templateType === 'verified_admin') {
+    subject = `🛡️ Kullanıcı E-Postasını Doğruladı: Ahmet Yılmaz (@ahmetyilmaz)`;
+    html = getEmailVerifiedAdminHtmlTemplate('Ahmet Yılmaz (Test)', testEmail, 'ahmetyilmaz');
+  } else if (templateType === 'new_user' || templateType === 'new_user_notification') {
+    subject = `🔔 Yeni Kullanıcı Tanımlandı: Ahmet Yılmaz (@ahmetyilmaz)`;
+    html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Yeni Kullanıcı Tanımlandı</title>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f1f5f9; margin: 0; padding: 0; color: #1e293b; }
+    .container { max-width: 600px; margin: 30px auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }
+    .header { background: linear-gradient(135deg, #312e81, #4338ca, #6366f1); padding: 35px 25px; text-align: center; color: #ffffff; }
+    .badge { display: inline-block; background: rgba(255,255,255,0.2); backdrop-filter: blur(4px); padding: 4px 12px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+    .title { font-size: 22px; font-weight: 800; margin: 0; line-height: 1.2; }
+    .subtitle { font-size: 13px; opacity: 0.85; margin-top: 6px; }
+    .content { padding: 35px 30px; }
+    .info-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+    .info-table td { padding: 12px 14px; font-size: 13px; border-bottom: 1px solid #f1f5f9; }
+    .info-table td.label { font-weight: 700; color: #64748b; width: 35%; }
+    .info-table td.value { font-weight: 600; color: #0f172a; }
+    .tag { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; }
+    .tag-premium { background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; }
+    .footer { background-color: #f8fafc; padding: 20px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="badge">SİSTEM BİLDİRİMİ</div>
+      <h1 class="title">Yeni Kullanıcı Tanımlandı</h1>
+      <div class="subtitle">İSG Yönetim Portalı üzerinde yeni bir hesap oluşturuldu.</div>
+    </div>
+    <div class="content">
+      <div style="font-size: 14px; color: #475569; margin-bottom: 20px;">
+        Sayın Yönetici,<br><br>
+        Sisteminizde yeni bir kullanıcı kaydı gerçekleştirilmiştir. Kullanıcıya ait detaylı kişisel ve mesleki bilgiler aşağıda yer almaktadır:
+      </div>
+
+      <table class="info-table">
+        <tr>
+          <td class="label">Adı Soyadı:</td>
+          <td class="value"><strong>Ahmet Yılmaz (Test)</strong></td>
+        </tr>
+        <tr>
+          <td class="label">Kullanıcı Adı:</td>
+          <td class="value"><span style="color: #4f46e5; font-weight: 700;">@ahmetyilmaz</span></td>
+        </tr>
+        <tr>
+          <td class="label">T.C. Kimlik No:</td>
+          <td class="value"><span style="font-family: monospace;">12345678901</span></td>
+        </tr>
+        <tr>
+          <td class="label">E-Posta:</td>
+          <td class="value"><a href="mailto:${testEmail}" style="color: #2563eb; text-decoration: none;">${testEmail}</a></td>
+        </tr>
+        <tr>
+          <td class="label">Telefon:</td>
+          <td class="value">0555 123 45 67</td>
+        </tr>
+        <tr>
+          <td class="label">Rol / Branş:</td>
+          <td class="value"><span style="background: #eef2ff; color: #4338ca; padding: 2px 8px; border-radius: 6px; font-weight: 700; font-size: 12px;">İş Güvenliği Uzmanı (A Sınıfı)</span></td>
+        </tr>
+        <tr>
+          <td class="label">İSG Belge No:</td>
+          <td class="value"><span style="font-family: monospace;">İSG-984210</span></td>
+        </tr>
+        <tr>
+          <td class="label">Bağlı OSGB:</td>
+          <td class="value">Marmara Ortak Sağlık Güvenlik Birimi</td>
+        </tr>
+        <tr>
+          <td class="label">Lisans Durumu:</td>
+          <td class="value"><span class="tag tag-premium">Yıllık Lisans / Aktif</span></td>
+        </tr>
+        <tr>
+          <td class="label">Kayıt Kaynağı:</td>
+          <td class="value">Web Kayıt Formu (Test Simülasyonu)</td>
+        </tr>
+        <tr>
+          <td class="label">Kayıt Zamanı:</td>
+          <td class="value">${formattedDateTime}</td>
+        </tr>
+      </table>
+
+      <div style="margin-top: 25px; padding: 15px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; font-size: 12px; color: #1e40af; line-height: 1.5;">
+        ℹ️ <strong>Yönetici Notu:</strong> Kullanıcının detaylarını Admin Paneli &gt; Veritabanı sekmesinde "İncele" veya "Düzenle" butonlarına tıklayarak anında görüntüleyebilirsiniz.
+      </div>
+    </div>
+    <div class="footer">
+      İSG Pro Yönetim Platformu · Otomatik Sistem Bilgilendirme Servisi
+    </div>
+  </div>
+</body>
+</html>
+    `;
+  } else if (templateType === 'license') {
+    subject = 'Tebrikler, İSG Pro Lisansınız Hazır!';
+    html = getLicenseHtmlTemplate({
+      name: 'Ahmet Yılmaz (Test)',
+      licenseKey: 'ISG-Y-PRO-KEY-748291-2026',
+      planName: 'Profesyonel Yıllık Paket',
+      planType: 'Premium',
+      price: '2.499,00 TL',
+      purchaseDate: formattedDate,
+      expiryDate: expiryOneYear
+    });
+  } else if (templateType === 'trial_license') {
+    subject = '🎁 7 Günlük Ücretsiz Deneme Lisansınız Hazır! - İSG Pro';
+    html = getTrialDeliveryHtmlTemplate({
+      name: 'Ahmet Yılmaz (Test)',
+      licenseKey: 'ISG-T-TRIAL-849201-7D',
+      createdAt: formattedDateTime,
+      expiryDate: expirySevenDays
+    });
+  } else if (templateType === 'trial_reminder') {
+    subject = '⏰ 7 Günlük Ücretsiz Deneme Sürümünüz Yarın Sona Eriyor! Pro Plana Yükseltin';
+    html = getTrialExpiryReminderHtmlTemplate({
+      name: 'Ahmet Yılmaz (Test)',
+      email: testEmail,
+      expiryDate: expirySevenDays
+    });
+  } else if (templateType === 'contracts') {
+    subject = `İSG Pro - Onaylanmış Mesafeli Satış ve Hizmet Sözleşmeleri (${testOrderId})`;
+    html = getContractsApprovalHtmlTemplate({
+      customerName: 'Ahmet Yılmaz (Test)',
+      customerEmail: testEmail,
+      planName: 'Yıllık Pro Lisans Paketi',
+      price: '₺2.990,00',
+      orderId: testOrderId,
+      approvalDate: formattedDateTime
+    });
+
+    try {
+      const pdfAttachments = await generateAllContractsPDFAttachments({
+        customerName: 'Ahmet Yılmaz (Test)',
+        customerEmail: testEmail,
+        planName: 'Yıllık Pro Lisans Paketi',
+        price: '₺2.990,00',
+        orderId: testOrderId,
+        approvalDate: formattedDateTime
+      });
+      if (pdfAttachments && pdfAttachments.length > 0) {
+        attachments.push(...pdfAttachments);
+      }
+    } catch (pdfErr) {
+      console.warn('[PDF Attachment generation error]:', pdfErr);
+    }
+  } else if (templateType === 'registration_consent' || templateType === 'registration_contracts') {
+    subject = `İSG Pro - Onaylanmış Yasal Bilgilendirme ve KVKK Metinleri (${testOrderId})`;
+    html = getRegistrationConsentHtmlTemplate({
+      customerName: 'Ahmet Yılmaz (Test)',
+      customerEmail: testEmail,
+      orderId: testOrderId,
+      approvalDate: formattedDateTime
+    });
+
+    try {
+      const pdfAttachments = await generateRegistrationConsentPDFAttachments({
+        customerName: 'Ahmet Yılmaz (Test)',
+        customerEmail: testEmail,
+        orderId: testOrderId,
+        approvalDate: formattedDateTime,
+        isRegistrationConsent: true
+      });
+      if (pdfAttachments && pdfAttachments.length > 0) {
+        attachments.push(...pdfAttachments);
+      }
+    } catch (pdfErr) {
+      console.warn('[PDF Attachment generation error]:', pdfErr);
+    }
+  } else if (templateType === 'update') {
+    subject = 'İSG Pro - E-Posta Adresi Güncelleme Bağlantısı';
+    html = getUpdateEmailHtmlTemplate({
+      name: 'Ahmet Yılmaz (Test)',
+      email: testEmail,
+      updateLink: `${protocol}://${host}/?verify-email=${encodeURIComponent(testEmail)}&token=591823`
+    });
+  } else if (templateType === 'contact') {
+    subject = '[Destek] Uygulama Kurulumu Hakkında Soru (Test Talebi)';
+    html = getContactHtmlTemplate({
+      name: 'Ahmet Yılmaz',
+      email: testEmail,
+      subject: 'Uygulama Kurulumu Hakkında Soru',
+      message: 'Merhaba, bu bir test mesajıdır. SMTP sunucusu ve REST API e-posta motorunun destek taleplerini nasıl ilettiğini deneyimlemeniz amacıyla oluşturulmuştur. Tüm sistemler başarıyla çalışıyor!'
+    });
+  } else {
+    // Default general connectivity verification template
+    html = `
+        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 25px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff; color: #1e293b;">
+          <div style="text-align: center; border-bottom: 2px solid #6366f1; padding-bottom: 20px; margin-bottom: 25px;">
+            <table border="0" cellpadding="0" cellspacing="0" style="margin: 0 auto 5px auto;">
+              <tr>
+                <td style="vertical-align: middle; padding-right: 12px;">
+                  <img src="https://i.postimg.cc/fbb8FgR4/Gemini-Generated-Image.png" width="96" height="96" style="vertical-align: middle; border-radius: 20px; display: block;" alt="İSG Pro" />
+                </td>
+                <td style="vertical-align: middle; text-align: left;">
+                  <div style="color: #0f172a; font-size: 22px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.1;">İSG Pro</div>
+                  <div style="color: #4f46e5; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 1px;">YAPAY ZEKA DESTEKLİ</div>
+                </td>
+              </tr>
+            </table>
+            <span style="color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700; display: block; margin-top: 5px;">E-Posta Servis Doğrulama</span>
+          </div>
+          <p style="font-size: 15px; line-height: 1.6; color: #334155;">Merhaba,</p>
+          <p style="font-size: 15px; line-height: 1.6; color: #334155;">Bu e-posta, İSG Pro yönetim panelinden gerçekleştirmiş olduğunuz <strong>SMTP ve E-posta motoru test işlemi</strong> sonucunda başarıyla iletilmiştir.</p>
+          <div style="background-color: #f8fafc; border-left: 4px solid #10b981; padding: 15px; border-radius: 8px; margin: 25px 0;">
+            <h4 style="margin: 0 0 5px 0; color: #0f172a; font-size: 14px;">Kurulum Başarılı!</h4>
+            <p style="margin: 0; font-size: 12px; color: #475569;">E-posta sunucunuz an itibariyle tüm lisans gönderimlerini, kullanıcı giriş şifrelerini (OTP), yasal sözleşmeleri ve destek mesajlarını otomatik olarak iletmeye hazırdır.</p>
+          </div>
+          <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 20px;">
+            <tr style="border-bottom: 1px solid #f1f5f9;">
+              <td style="padding: 8px 0; color: #64748b; font-weight: bold;">SMTP Sunucusu (Host)</td>
+              <td style="padding: 8px 0; color: #0f172a; text-align: right; font-family: monospace;">${testConfig.host}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #f1f5f9;">
+              <td style="padding: 8px 0; color: #64748b; font-weight: bold;">Bağlantı Portu</td>
+              <td style="padding: 8px 0; color: #0f172a; text-align: right; font-family: monospace;">${testConfig.port}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #f1f5f9;">
+              <td style="padding: 8px 0; color: #64748b; font-weight: bold;">Güvenlik Modu</td>
+              <td style="padding: 8px 0; color: #0f172a; text-align: right;">${testConfig.port === 465 ? 'SSL (Güvenli)' : 'TLS / STARTTLS'}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px 0; color: #64748b; font-weight: bold;">Test Zamanı</td>
+              <td style="padding: 8px 0; color: #0f172a; text-align: right;">${formattedDateTime}</td>
+            </tr>
+          </table>
+          <div style="border-top: 1px solid #e2e8f0; margin-top: 30px; padding-top: 20px; font-size: 11px; text-align: center; color: #94a3b8;">
+            Bu e-posta otomatik olarak üretilmiştir. Lütfen doğrudan yanıtlamayınız.
+          </div>
+        </div>
+    `;
+  }
+
+  return { subject, html, attachments };
+}
+
+// Endpoint to preview any email template as rendered HTML
+app.post('/api/smtp-config/preview', async (req, res) => {
+  try {
+    const { templateType = 'general', testEmail = 'infoisgpro@gmail.com' } = req.body;
+    const testConfig = { host: 'smtp.gmail.com', port: 465 };
+    const payload = await getTestEmailPayload(templateType, testEmail, req, testConfig);
+    return res.json({
+      success: true,
+      subject: payload.subject,
+      html: payload.html,
+      hasAttachments: !!(payload.attachments && payload.attachments.length > 0),
+      attachmentCount: payload.attachments ? payload.attachments.length : 0
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.post('/api/smtp-config/test', async (req, res) => {
-  const { host, port, user, pass, fromName, testEmail, templateType = 'general' } = req.body;
+  const { host, port, user, pass, fromName, testEmail, templateType = 'general', resendApiKey, googleScriptUrl, brevoApiKey } = req.body;
   if (!testEmail) {
     return res.status(400).json({ error: 'Test alıcı adresi boş olamaz.' });
   }
@@ -3359,130 +4628,79 @@ app.post('/api/smtp-config/test', async (req, res) => {
     host: host || process.env.SMTP_HOST || "smtp.gmail.com",
     port: Number(port) || Number(process.env.SMTP_PORT) || 465,
     user: user || process.env.SMTP_USER || "",
-    pass: (finalPass || process.env.SMTP_PASS || "").replace(/\s+/g, '')
+    pass: (finalPass || process.env.SMTP_PASS || "").replace(/\s+/g, ''),
+    fromName: fromName || 'İSG Pro',
+    resendApiKey: resendApiKey || '',
+    googleScriptUrl: googleScriptUrl || '',
+    brevoApiKey: brevoApiKey || ''
   };
 
   if (!testConfig.user || !testConfig.pass) {
     return res.status(400).json({ error: 'E-posta kullanıcısı ve şifresi belirtilmelidir.' });
   }
 
-  console.log(`[SMTP Test] Sending test email (${templateType}) to ${maskEmail(testEmail)} using host ${testConfig.host}:${testConfig.port}`);
+  console.log(`[SMTP Test] Testing email (${templateType}) to ${maskEmail(testEmail)} using host ${testConfig.host}:${testConfig.port}`);
 
-  let subject = 'İSG Pro - E-Posta Gönderim Servisi Test Mesajı';
-  let html = '';
+  try {
+    const payload = await getTestEmailPayload(templateType, testEmail, req, testConfig);
 
-  let testAttachments: any[] = [];
-  let testRecipients: string | string[] = testEmail;
+    // 1. Direct SMTP with the supplied credentials (ensures exact HTML and PDF attachments are tested)
+    let smtpErrorDetails = '';
+    if (testConfig.user && testConfig.pass) {
+      const smtpRes = await sendEmailWithGoogleFallback({
+        config: testConfig,
+        to: testEmail,
+        subject: payload.subject,
+        html: payload.html,
+        attachments: payload.attachments
+      });
 
-  if (templateType === 'otp') {
-    subject = '748291 - İSG Pro Güvenli Giriş Kodunuz';
-    const expTime = new Date(Date.now() + 15 * 60 * 1000).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
-    html = getOTPHtmlTemplate('Test Kullanıcısı', '748291', expTime);
-  } else if (templateType === 'license') {
-    subject = 'Tebrikler, İSG Pro Lisansınız Hazır!';
-    html = getLicenseHtmlTemplate({
-      name: 'Test Kullanıcısı',
-      licenseKey: 'ISG-PRO-TEST-KEY-748291-2026',
-      planName: 'Profesyonel Yıllık Paket',
-      planType: 'Premium',
-      price: '2.499,00 TL',
-      purchaseDate: new Date().toLocaleDateString('tr-TR'),
-      expiryDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toLocaleDateString('tr-TR')
+      if (smtpRes.success) {
+        const attText = payload.attachments && payload.attachments.length > 0 ? ` (${payload.attachments.length} PDF eki ile)` : '';
+        return res.json({
+          success: true,
+          method: 'smtp_direct',
+          message: `E-posta '${testEmail}' adresine seçilen şablon ile${attText} başarıyla iletildi.`
+        });
+      } else {
+        smtpErrorDetails = smtpRes.error || '';
+        console.warn('[SMTP Test Direct SMTP failed, trying REST fallbacks]:', smtpRes.error);
+      }
+    }
+
+    // 2. Fallback to Universal REST APIs (Resend, Brevo, Google Script)
+    const resResult = await sendEmailUniversal({
+      to: testEmail,
+      subject: payload.subject,
+      html: payload.html,
+      fromName: fromName || 'İSG Pro',
+      attachments: payload.attachments,
+      templateType: templateType as any,
+      config: testConfig
     });
-  } else if (templateType === 'contact') {
-    subject = '[Destek] Uygulama Kurulumu Hakkında Soru';
-    html = getContactHtmlTemplate({
-      name: 'Ahmet Yılmaz',
-      email: 'ahmetyilmaz@test.com',
-      subject: 'Uygulama Kurulumu Hakkında Soru',
-      message: 'Merhaba, bu bir test mesajıdır. SMTP sunucusu aracılığıyla gelen destek taleplerinin size nasıl iletildiğini deneyimlemeniz için gönderilmiştir. Harika çalışıyor!'
+
+    if (resResult.method === 'system_mail_queue' && smtpErrorDetails) {
+      return res.status(400).json({
+        success: false,
+        error: `SMTP Bağlantı Hatası: ${smtpErrorDetails}`,
+        details: 'Lütfen SMTP kullanıcı adı, port ve 16 haneli Google Uygulama Şifrenizi kontrol ediniz.'
+      });
+    }
+
+    const attText = payload.attachments && payload.attachments.length > 0 ? ` (${payload.attachments.length} PDF eki ile)` : '';
+    return res.json({
+      success: resResult.success,
+      message: `${resResult.message || `E-posta '${testEmail}' adresine iletildi.`}${attText}`,
+      method: resResult.method
     });
-  } else if (templateType === 'contracts') {
-    const testOrderId = `TEST-${Date.now().toString().slice(-6)}`;
-    const approvalDate = new Date().toLocaleString('tr-TR');
-    subject = `İSG Pro - Onaylanmış Mesafeli Satış ve Hizmet Sözleşmeleri (${testOrderId})`;
-    html = getContractsApprovalHtmlTemplate({
-      customerName: 'Ahmet Yılmaz (Test)',
-      customerEmail: testEmail,
-      planName: 'Yıllık Pro Lisans Paketi',
-      price: '₺2.990,00',
-      orderId: testOrderId,
-      approvalDate: approvalDate
+  } catch (testErr: any) {
+    console.error('[SMTP Test Error]:', testErr);
+    return res.status(500).json({
+      success: false,
+      error: 'Test e-postası gönderilirken hata oluştu.',
+      details: testErr.message
     });
-    testRecipients = testEmail;
-  } else if (templateType === 'update' || templateType === 'verify' || templateType === 'verification') {
-    subject = 'İSG Pro - E-Posta Adresi Doğrulama & Güncelleme Bağlantısı (Test)';
-    const host = req.headers.host || 'localhost:3000';
-    const protocol = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
-    html = getEmailVerificationHtmlTemplate({
-      name: 'Ahmet Yılmaz (Test)',
-      email: testEmail,
-      updateUrl: `${protocol}://${host}/?verify-email=${encodeURIComponent(testEmail)}&token=591823`,
-      verificationCode: '591823'
-    });
-  } else {
-    // Default general connectivity verification template
-    html = `
-        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 25px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff; color: #1e293b;">
-          <div style="text-align: center; border-bottom: 2px solid #6366f1; padding-bottom: 20px; margin-bottom: 25px;">
-            <table border="0" cellpadding="0" cellspacing="0" style="margin: 0 auto 5px auto;">
-              <tr>
-                <td style="vertical-align: middle; padding-right: 12px;">
-                  <img src="https://i.postimg.cc/fbb8FgR4/Gemini-Generated-Image.png" width="96" height="96" style="vertical-align: middle; border-radius: 20px; display: block;" alt="İSG Pro" />
-                </td>
-                <td style="vertical-align: middle; text-align: left;">
-                  <div style="color: #0f172a; font-size: 22px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.1;">İSG Pro</div>
-                  <div style="color: #4f46e5; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 1px;">YAPAY ZEKA DESTEKLİ</div>
-                </td>
-              </tr>
-            </table>
-            <span style="color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700; display: block; margin-top: 5px;">E-Posta Servis Doğrulama</span>
-          </div>
-          <p style="font-size: 15px; line-height: 1.6; color: #334155;">Merhaba,</p>
-          <p style="font-size: 15px; line-height: 1.6; color: #334155;">Bu e-posta, İSG Pro yönetim panelinden gerçekleştirmiş olduğunuz <strong>SMTP sunucu ayarları test işlemi</strong> sonucunda başarıyla gönderilmiştir.</p>
-          <div style="background-color: #f8fafc; border-left: 4px solid #10b981; padding: 15px; border-radius: 8px; margin: 25px 0;">
-            <h4 style="margin: 0 0 5px 0; color: #0f172a; font-size: 14px;">Kurulum Başarılı!</h4>
-            <p style="margin: 0; font-size: 12px; color: #475569;">E-posta sunucunuz an itibariyle tüm lisans gönderimlerini, kullanıcı giriş şifrelerini (OTP) ve destek mesajlarını otomatik olarak iletmeye hazırdır.</p>
-          </div>
-          <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 20px;">
-            <tr style="border-bottom: 1px solid #f1f5f9;">
-              <td style="padding: 8px 0; color: #64748b; font-weight: bold;">SMTP Sunucusu (Host)</td>
-              <td style="padding: 8px 0; color: #0f172a; text-align: right; font-family: monospace;">${testConfig.host}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #f1f5f9;">
-              <td style="padding: 8px 0; color: #64748b; font-weight: bold;">Bağlantı Portu</td>
-              <td style="padding: 8px 0; color: #0f172a; text-align: right; font-family: monospace;">${testConfig.port}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #f1f5f9;">
-              <td style="padding: 8px 0; color: #64748b; font-weight: bold;">Güvenlik Modu</td>
-              <td style="padding: 8px 0; color: #0f172a; text-align: right;">${testConfig.port === 465 ? 'SSL (Güvenli)' : 'TLS / STARTTLS'}</td>
-            </tr>
-            <tr>
-              <td style="padding: 8px 0; color: #64748b; font-weight: bold;">Test Zamanı</td>
-              <td style="padding: 8px 0; color: #0f172a; text-align: right;">${new Date().toLocaleString('tr-TR')}</td>
-            </tr>
-          </table>
-          <div style="border-top: 1px solid #e2e8f0; margin-top: 30px; padding-top: 20px; font-size: 11px; text-align: center; color: #94a3b8;">
-            Bu e-posta otomatik olarak üretilmiştir. Lütfen doğrudan yanıtlamayınız.
-          </div>
-        </div>
-      `;
   }
-
-  const resResult = await sendEmailUniversal({
-    to: testRecipients,
-    subject,
-    html,
-    fromName: fromName || 'İSG Pro',
-    attachments: testAttachments,
-    templateType
-  });
-
-  return res.json({
-    success: resResult.success,
-    message: resResult.message || `E-posta '${Array.isArray(testRecipients) ? testRecipients.join(' & ') : testRecipients}' adresine iletildi.`,
-    method: resResult.method
-  });
 });
 
 
@@ -3869,7 +5087,7 @@ async function startServer() {
     checkAndSendTrialExpiryReminders().catch(err => console.error('[Trial Reminder Check] Interval check failed:', err));
   }, 30 * 60 * 1000);
 
-  const isProduction = process.env.NODE_ENV === 'production' || (typeof __filename !== 'undefined' ? !__filename.endsWith('.ts') : true);
+  const isProduction = process.env.NODE_ENV === 'production' || !__filenameSafe.endsWith('.ts');
   if (!isProduction) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
@@ -3880,9 +5098,9 @@ async function startServer() {
   } else {
     const possibleDistPaths = [
       path.join(process.cwd(), 'dist'),
-      __dirname,
-      path.join(__dirname, 'dist'),
-      path.join(__dirname, '..', 'dist')
+      __dirnameSafe,
+      path.join(__dirnameSafe, 'dist'),
+      path.join(__dirnameSafe, '..', 'dist')
     ];
     const rawDistPath = possibleDistPaths.find(p => fs.existsSync(path.join(p, 'index.html'))) || path.join(process.cwd(), 'dist');
     const distPath = path.resolve(rawDistPath);

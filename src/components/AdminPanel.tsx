@@ -10,15 +10,16 @@ import {
   Trash2, Plus, Edit2, Save, X, Check, CheckCircle, Mail, Phone, MapPin, 
   RefreshCcw, AlertCircle, Sparkles, FileText, FileEdit, Clock,
   Download, Database, Search, Upload, UserPlus, ShieldAlert, CheckSquare, Sparkle,
-  Link as LinkIcon, ExternalLink, PenTool, KeyRound, ShieldCheck, CreditCard, Lock, Copy
+  Link as LinkIcon, ExternalLink, PenTool, KeyRound, ShieldCheck, CreditCard, Lock, Copy,
+  AlertTriangle, CheckCircle2, Eye, EyeOff, Building2, Calendar, BadgeCheck
 } from 'lucide-react';
 import { FAQItem, Review, RiskPreset, SiteConfig, ContactMessage, AppRelease, User } from '../types';
 import { db } from '../lib/firebase';
 import { collection, getDocs, doc, setDoc, deleteDoc } from 'firebase/firestore';
-import { hashPassword, encryptSensitiveData, decryptSensitiveData } from '../lib/crypto';
+import { hashPassword, encryptSensitiveData, decryptSensitiveData, encryptUser, decryptUser } from '../lib/crypto';
 import { maskLicenseKey } from '../lib/privacy';
-import { deduplicateAndCleanUsers } from '../lib/userUtils';
-import { generateLicenseKey, registerGeneratedLicense, LicenseType } from '../lib/licenseUtils';
+import { deduplicateAndCleanUsers, sanitizeUserForFirestore, normalizeUsername, generateAvailableUsernameSuggestions } from '../lib/userUtils';
+import { generateLicenseKey, registerGeneratedLicense, LicenseType, getLicenseTypeFromKey } from '../lib/licenseUtils';
 import SignatureCanvas from './SignatureCanvas';
 
 interface AdminPanelProps {
@@ -162,7 +163,14 @@ export default function AdminPanel({
   const [smtpLoading, setSmtpLoading] = useState(false);
   const [smtpSaveSuccess, setSmtpSaveSuccess] = useState(false);
   const [testEmailAddress, setTestEmailAddress] = useState('');
-  const [testTemplateType, setTestTemplateType] = useState<'general' | 'otp' | 'license' | 'contact' | 'contracts' | 'verification'>('general');
+  const [testTemplateType, setTestTemplateType] = useState<
+    'general' | 'otp' | 'verification' | 'verified_user' | 'verified_admin' | 'new_user' |
+    'license' | 'trial_license' | 'trial_reminder' | 'contracts' | 'registration_consent' |
+    'update' | 'contact'
+  >('general');
+  const [templatePreviewOpen, setTemplatePreviewOpen] = useState(false);
+  const [templatePreviewLoading, setTemplatePreviewLoading] = useState(false);
+  const [templatePreviewData, setTemplatePreviewData] = useState<{ subject: string; html: string; hasAttachments?: boolean; attachmentCount?: number } | null>(null);
   const [smtpTesting, setSmtpTesting] = useState(false);
   const [smtpTestResult, setSmtpTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
@@ -202,17 +210,51 @@ export default function AdminPanel({
   const [releaseLoading, setReleaseLoading] = useState(false);
 
   // Local Database states
-  const [dbUsers, setDbUsers] = useState<User[]>([]);
+  const [dbUsers, setDbUsers] = useState<User[]>(() => {
+    try {
+      const stored = localStorage.getItem('isg_landing_users_v1') || localStorage.getItem('isg_users_db');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return deduplicateAndCleanUsers(parsed);
+        }
+      }
+    } catch (e) {}
+    return users && users.length > 0 ? deduplicateAndCleanUsers(users) : [];
+  });
   const [searchUserQuery, setSearchUserQuery] = useState('');
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [editUserName, setEditUserName] = useState('');
   const [editUserEmail, setEditUserEmail] = useState('');
   const [editUserPhone, setEditUserPhone] = useState('');
-  const [editUserRole, setEditUserRole] = useState<'uzman' | 'hekim' | 'other' | 'admin'>('uzman');
+  const [editUserRole, setEditUserRole] = useState<'uzman' | 'hekim' | 'dsp' | 'other' | 'admin'>('uzman');
   const [editUserIsPremium, setEditUserIsPremium] = useState(false);
   const [editUserLicenseKey, setEditUserLicenseKey] = useState('');
   const [editUserLicenseType, setEditUserLicenseType] = useState<LicenseType>('yearly');
   const [dbSuccessMessage, setDbSuccessMessage] = useState('');
+
+  // User Personal Details View Modal state
+  const [viewUserDetail, setViewUserDetail] = useState<User | null>(null);
+
+  // User Full Edit Modal with Password Change state
+  const [editUserModal, setEditUserModal] = useState<User | null>(null);
+  const [editModalName, setEditModalName] = useState('');
+  const [editModalUsername, setEditModalUsername] = useState('');
+  const [editModalEmail, setEditModalEmail] = useState('');
+  const [editModalPhone, setEditModalPhone] = useState('');
+  const [editModalPassword, setEditModalPassword] = useState('');
+  const [editModalShowPassword, setEditModalShowPassword] = useState(false);
+  const [editModalTcNo, setEditModalTcNo] = useState('');
+  const [editModalCertificateNo, setEditModalCertificateNo] = useState('');
+  const [editModalDiplomaNo, setEditModalDiplomaNo] = useState('');
+  const [editModalTescilNo, setEditModalTescilNo] = useState('');
+  const [editModalRole, setEditModalRole] = useState<'uzman' | 'hekim' | 'dsp' | 'other' | 'admin'>('uzman');
+  const [editModalOsgbName, setEditModalOsgbName] = useState('');
+  const [editModalIsEmailVerified, setEditModalIsEmailVerified] = useState(false);
+  const [editModalHasAcceptedLegalTerms, setEditModalHasAcceptedLegalTerms] = useState(false);
+  const [editModalIsPremium, setEditModalIsPremium] = useState(false);
+  const [editModalLicenseType, setEditModalLicenseType] = useState<LicenseType>('yearly');
+  const [editModalLicenseKey, setEditModalLicenseKey] = useState('');
 
   // Manual License Assignment Modal states
   const [assignLicenseUser, setAssignLicenseUser] = useState<User | null>(null);
@@ -249,9 +291,10 @@ export default function AdminPanel({
   const [newFullName, setNewFullName] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserPhone, setNewUserPhone] = useState('');
-  const [newUserRole, setNewUserRole] = useState<'uzman' | 'hekim' | 'other' | 'admin'>('uzman');
+  const [newUserRole, setNewUserRole] = useState<'uzman' | 'hekim' | 'dsp' | 'other' | 'admin'>('uzman');
   const [newUserIsPremium, setNewUserIsPremium] = useState(false);
   const [newUserLicenseType, setNewUserLicenseType] = useState<LicenseType>('yearly');
+  const [newUserIsEmailVerified, setNewUserIsEmailVerified] = useState(true);
 
   useEffect(() => {
     if (activeTab === 'releases') {
@@ -420,6 +463,36 @@ export default function AdminPanel({
     }
   };
 
+  const handlePreviewTemplate = async () => {
+    setTemplatePreviewLoading(true);
+    setTemplatePreviewOpen(true);
+    try {
+      const response = await fetch('/api/smtp-config/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          templateType: testTemplateType,
+          testEmail: testEmailAddress || 'infoisgpro@gmail.com'
+        })
+      });
+      const data = await response.json();
+      if (data.success) {
+        setTemplatePreviewData({
+          subject: data.subject,
+          html: data.html,
+          hasAttachments: data.hasAttachments,
+          attachmentCount: data.attachmentCount
+        });
+      } else {
+        alert(data.error || 'Şablon önizleme yüklenemedi.');
+      }
+    } catch (err: any) {
+      alert(`Önizleme hatası: ${err.message}`);
+    } finally {
+      setTemplatePreviewLoading(false);
+    }
+  };
+
   const fetchReleases = async () => {
     try {
       const res = await fetch('/api/releases');
@@ -464,10 +537,17 @@ export default function AdminPanel({
   }, [users]);
 
   const loadUsersFromStorage = async () => {
-    if (users && users.length > 0) {
-      const cleaned = deduplicateAndCleanUsers(users);
-      setDbUsers(cleaned);
-    }
+    try {
+      const stored = localStorage.getItem('isg_landing_users_v1') || localStorage.getItem('isg_users_db');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setDbUsers(deduplicateAndCleanUsers(parsed));
+        }
+      } else if (users && users.length > 0) {
+        setDbUsers(deduplicateAndCleanUsers(users));
+      }
+    } catch (e) {}
 
     if (db) {
       try {
@@ -480,19 +560,29 @@ export default function AdminPanel({
           }
         });
         if (cloudUsers.length > 0) {
-          const cleaned = deduplicateAndCleanUsers(cloudUsers);
-          setDbUsers(cleaned);
+          const currentLocal: User[] = (() => {
+            try {
+              const s = localStorage.getItem('isg_landing_users_v1') || localStorage.getItem('isg_users_db');
+              return s ? JSON.parse(s) : [];
+            } catch { return []; }
+          })();
+          const merged = deduplicateAndCleanUsers([...cloudUsers, ...currentLocal, ...(users || [])]);
+          setDbUsers(merged);
           if (onUpdateUsers) {
-            onUpdateUsers(cleaned);
+            onUpdateUsers(merged);
           }
-          localStorage.setItem('isg_landing_users_v1', JSON.stringify(cleaned));
-          localStorage.setItem('isg_users_db', JSON.stringify(cleaned));
+          localStorage.setItem('isg_landing_users_v1', JSON.stringify(merged));
+          localStorage.setItem('isg_users_db', JSON.stringify(merged));
         }
       } catch (err) {
         console.warn("Error fetching users from Firestore:", err);
       }
     }
   };
+
+  useEffect(() => {
+    loadUsersFromStorage();
+  }, [activeTab]);
 
   const saveUsersToStorage = async (updatedUsers: User[]) => {
     const cleaned = deduplicateAndCleanUsers(updatedUsers);
@@ -513,7 +603,7 @@ export default function AdminPanel({
         const querySnapshot = await getDocs(collection(db, 'users'));
         const currentFirestoreUsers: User[] = [];
         querySnapshot.forEach((docSnap) => {
-          const data = docSnap.data() as User;
+          const data = decryptUser(docSnap.data() as User);
           if (data) currentFirestoreUsers.push(data);
         });
 
@@ -536,8 +626,15 @@ export default function AdminPanel({
           if (pwd && !pwd.match(/^[a-f0-9]{64}$/i)) {
             pwd = await hashPassword(pwd);
           }
-          const userDoc = { ...u, password: pwd };
+          const userDoc = sanitizeUserForFirestore({ ...u, password: pwd });
           await setDoc(doc(db, 'users', usernameKey), userDoc, { merge: true });
+
+          // Dual-write to server sync endpoint
+          fetch('/api/sync-user', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user: userDoc })
+          }).catch(err => console.warn('Admin user sync call warning:', err));
         }
       } catch (err) {
         console.warn("Error syncing users to Firestore:", err);
@@ -562,6 +659,104 @@ export default function AdminPanel({
     );
   };
 
+  const openEditModalForUser = (user: User) => {
+    setEditUserModal(user);
+    setEditModalName(user.name || '');
+    setEditModalUsername(user.username || '');
+    setEditModalEmail(user.email || '');
+    setEditModalPhone(user.phone || '');
+    setEditModalPassword('');
+    setEditModalShowPassword(false);
+    setEditModalTcNo(user.tcNo || '');
+    setEditModalCertificateNo(user.certificateNo || '');
+    setEditModalDiplomaNo(user.diplomaNo || '');
+    setEditModalTescilNo(user.tescilNo || '');
+    setEditModalRole(user.role || 'uzman');
+    setEditModalOsgbName(user.osgb?.name || (typeof user.osgb === 'string' ? user.osgb : '') || '');
+    setEditModalIsEmailVerified(Boolean(user.isEmailVerified));
+    setEditModalHasAcceptedLegalTerms(Boolean(user.hasAcceptedLegalTerms));
+    setEditModalIsPremium(Boolean(user.isPremium));
+    const detectedType = user.licenseType || getLicenseTypeFromKey(user.licenseKey) || 'yearly';
+    setEditModalLicenseType(detectedType);
+    setEditModalLicenseKey(user.licenseKey || '');
+  };
+
+  const generateRandomPassword = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%';
+    let pass = '';
+    for (let i = 0; i < 10; i++) {
+      pass += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setEditModalPassword(pass);
+    setEditModalShowPassword(true);
+  };
+
+  const handleSaveEditModal = async () => {
+    if (!editUserModal) return;
+    if (!editModalName.trim() || !editModalEmail.trim()) {
+      alert('Ad Soyad ve E-Posta zorunludur.');
+      return;
+    }
+
+    let newHashedPassword: string | undefined = undefined;
+    if (editModalPassword.trim()) {
+      newHashedPassword = await hashPassword(editModalPassword.trim());
+    }
+
+    const purchaseDate = editUserModal.licensePurchasedAt || new Date().toISOString();
+    const expiryDate = new Date();
+    if (editModalLicenseType === 'trial') expiryDate.setDate(expiryDate.getDate() + 7);
+    else if (editModalLicenseType === 'monthly') expiryDate.setMonth(expiryDate.getMonth() + 1);
+    else expiryDate.setFullYear(expiryDate.getFullYear() + 1);
+
+    const finalKey = editModalIsPremium
+      ? (editModalLicenseKey.trim() || generateLicenseCode(editModalLicenseType))
+      : null;
+
+    if (editModalIsPremium && finalKey) {
+      registerGeneratedLicense(finalKey, editModalLicenseType, editModalEmail.trim(), purchaseDate, expiryDate.toISOString());
+    }
+
+    const cleanUName = (editModalUsername.trim() || editUserModal.username || editModalEmail.trim()).replace(/\s+/g, '');
+
+    const updatedUsers = dbUsers.map(u => {
+      const isTarget = (u.email && u.email.toLowerCase() === editUserModal.email.toLowerCase()) ||
+                       (u.username && u.username.toLowerCase() === editUserModal.username.toLowerCase());
+      if (!isTarget) return u;
+
+      return {
+        ...u,
+        name: editModalName.trim(),
+        username: cleanUName,
+        email: editModalEmail.trim(),
+        phone: editModalPhone.trim(),
+        password: newHashedPassword ? newHashedPassword : u.password,
+        role: editModalRole,
+        tcNo: editModalTcNo.trim(),
+        certificateNo: editModalCertificateNo.trim(),
+        diplomaNo: editModalDiplomaNo.trim(),
+        tescilNo: editModalTescilNo.trim(),
+        osgb: {
+          ...(typeof u.osgb === 'object' && u.osgb ? u.osgb : { name: '', logo: null, idNo: '', contact: '', staff: [] }),
+          name: editModalOsgbName.trim()
+        },
+        isEmailVerified: editModalIsEmailVerified,
+        emailVerifiedAt: editModalIsEmailVerified ? (u.emailVerifiedAt || new Date().toISOString()) : null,
+        hasAcceptedLegalTerms: editModalHasAcceptedLegalTerms,
+        legalAcceptedAt: editModalHasAcceptedLegalTerms ? (u.legalAcceptedAt || new Date().toISOString()) : null,
+        isPremium: editModalIsPremium,
+        licenseKey: finalKey,
+        licenseType: editModalIsPremium ? editModalLicenseType : null,
+        licensePurchasedAt: editModalIsPremium ? purchaseDate : null,
+        licenseExpiresAt: editModalIsPremium ? expiryDate.toISOString() : null
+      };
+    });
+
+    await saveUsersToStorage(updatedUsers);
+    setEditUserModal(null);
+    showDbSuccess(`"${editModalName}" kullanıcısının bilgileri${newHashedPassword ? ' ve şifresi' : ''} başarıyla güncellendi.`);
+  };
+
   const handleStartEditUser = (user: User) => {
     setEditingUserId(user.email);
     setEditUserName(user.name);
@@ -570,8 +765,8 @@ export default function AdminPanel({
     setEditUserRole(user.role);
     setEditUserIsPremium(user.isPremium);
     setEditUserLicenseKey(user.licenseKey || '');
-    const detectedType = user.licenseType || (user.licenseKey?.startsWith('ISG-M') || user.licenseKey?.includes('-M-') ? 'monthly' : 'yearly');
-    setEditUserLicenseType(detectedType as 'monthly' | 'yearly');
+    const detectedType = user.licenseType || getLicenseTypeFromKey(user.licenseKey);
+    setEditUserLicenseType(detectedType);
   };
 
   const handleSaveUserEdit = () => {
@@ -623,13 +818,18 @@ export default function AdminPanel({
 
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newUsername.trim() || !newFullName.trim() || !newUserEmail.trim()) {
+    const cleanUser = normalizeUsername(newUsername);
+    const cleanEmail = newUserEmail.trim().toLowerCase();
+    const cleanFullName = newFullName.trim();
+
+    if (!cleanUser || !cleanFullName || !cleanEmail) {
       alert('Kullanıcı adı, ad soyad ve e-posta zorunludur.');
       return;
     }
 
-    if (dbUsers.some(u => u.username.toLowerCase() === newUsername.toLowerCase() || u.email.toLowerCase() === newUserEmail.toLowerCase())) {
-      alert('Kullanıcı adı veya e-posta zaten mevcut!');
+    if (dbUsers.some(u => normalizeUsername(u.username) === cleanUser || (u.email && u.email.toLowerCase().trim() === cleanEmail))) {
+      const suggestions = generateAvailableUsernameSuggestions(cleanUser, cleanFullName, dbUsers);
+      alert(`⚠️ Bu kullanıcı adı ("@${cleanUser}") veya e-posta adresi zaten mevcut!\n\nÖnerilen müsait kullanıcı adları:\n${suggestions.map(s => '• @' + s).join('\n')}`);
       return;
     }
 
@@ -647,25 +847,43 @@ export default function AdminPanel({
 
     const createdKey = newUserIsPremium ? generateLicenseCode(newUserLicenseType) : null;
     if (newUserIsPremium && createdKey) {
-      registerGeneratedLicense(createdKey, newUserLicenseType, newUserEmail.trim(), purchaseDate, expiryDate.toISOString());
+      registerGeneratedLicense(createdKey, newUserLicenseType, cleanEmail, purchaseDate, expiryDate.toISOString());
     }
 
     const newUser: User = {
-      username: newUsername.trim(),
+      username: cleanUser,
       password: hashedPassword,
-      name: newFullName.trim(),
-      email: newUserEmail.trim(),
+      name: cleanFullName,
+      email: cleanEmail,
       phone: newUserPhone.trim(),
       role: newUserRole,
       isPremium: newUserIsPremium,
       licenseKey: createdKey,
       licenseType: newUserIsPremium ? newUserLicenseType : null,
       licensePurchasedAt: newUserIsPremium ? purchaseDate : null,
-      licenseExpiresAt: newUserIsPremium ? expiryDate.toISOString() : null
+      licenseExpiresAt: newUserIsPremium ? expiryDate.toISOString() : null,
+      isEmailVerified: newUserIsEmailVerified,
+      hasAcceptedLegalTerms: false,
+      createdBy: 'admin'
     };
 
     const updated = [...dbUsers, newUser];
     saveUsersToStorage(updated);
+
+    // Arka planda yöneticiye yeni kullanıcı bildirimi gönder
+    try {
+      fetch('/api/send-new-user-notification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          newUser: {
+            ...newUser,
+            createdAt: new Date().toISOString()
+          },
+          adminEmail: 'infoisgpro@gmail.com'
+        })
+      }).catch(err => console.warn('New user notification dispatch error:', err));
+    } catch (e) {}
     
     setNewUsername('');
     setNewPassword('');
@@ -674,9 +892,48 @@ export default function AdminPanel({
     setNewUserPhone('');
     setNewUserRole('uzman');
     setNewUserIsPremium(false);
+    setNewUserIsEmailVerified(true);
     setNewUserOpen(false);
 
     showDbSuccess('Yeni kullanıcı başarıyla eklendi.');
+  };
+
+  const handleToggleEmailVerification = async (targetUser: User) => {
+    const nextState = !targetUser.isEmailVerified;
+    const updated = dbUsers.map(u => 
+      u.username.toLowerCase() === targetUser.username.toLowerCase()
+        ? { ...u, isEmailVerified: nextState }
+        : u
+    );
+    await saveUsersToStorage(updated);
+    showDbSuccess(`@${targetUser.username} kullanıcısının e-posta doğrulama durumu: ${nextState ? 'DOĞRULANDI' : 'DOĞRULANMADI'} olarak güncellendi.`);
+  };
+
+  const handleSendVerificationEmail = async (targetUser: User) => {
+    if (!targetUser.email) {
+      alert('Kullanıcının geçerli bir e-posta adresi bulunmuyor!');
+      return;
+    }
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    try {
+      showDbSuccess(`@${targetUser.username} için doğrulama e-postası gönderiliyor...`);
+      const res = await fetch('/api/send-email-verification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: targetUser.email,
+          name: targetUser.name || targetUser.username,
+          code
+        })
+      });
+      if (res.ok) {
+        showDbSuccess(`Doğrulama kodu @${targetUser.username} (${targetUser.email}) adresine başarıyla iletildi.`);
+      } else {
+        alert('Doğrulama e-postası gönderilirken sunucu hatası oluştu.');
+      }
+    } catch (err) {
+      alert('Bağlantı hatası: Doğrulama e-postası gönderilemedi.');
+    }
   };
 
   const showDbSuccess = (msg: string) => {
@@ -2069,10 +2326,11 @@ export default function AdminPanel({
                       <input
                         type="text"
                         value={newUsername}
-                        onChange={(e) => setNewUsername(e.target.value)}
+                        onChange={(e) => setNewUsername(e.target.value.replace(/^\s+/, ''))}
+                        onBlur={() => setNewUsername(prev => normalizeUsername(prev))}
                         placeholder="Örn: ahmet12"
                         required
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-semibold focus:outline-indigo-600"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-semibold focus:outline-indigo-600 font-mono"
                       />
                     </div>
 
@@ -2131,6 +2389,7 @@ export default function AdminPanel({
                       >
                         <option value="uzman">A/B/C Sınıfı İSG Uzmanı</option>
                         <option value="hekim">İşyeri Hekimi</option>
+                        <option value="dsp">Diğer Sağlık Personeli (DSP)</option>
                         <option value="other">Diğer Personel / Destek</option>
                         <option value="admin">Sistem Yöneticisi (Admin)</option>
                       </select>
@@ -2151,10 +2410,35 @@ export default function AdminPanel({
                       </label>
                     </div>
 
+                    <div className="flex items-center gap-2 pt-2 border-t border-slate-200/60">
+                      <input
+                        type="checkbox"
+                        id="newUserIsEmailVerified"
+                        checked={newUserIsEmailVerified}
+                        onChange={(e) => setNewUserIsEmailVerified(e.target.checked)}
+                        className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <label htmlFor="newUserIsEmailVerified" className="text-xs text-slate-800 font-extrabold cursor-pointer flex items-center gap-1">
+                        <span>E-Posta Adresi Doğrulanmış Olarak Başlatılsın</span>
+                      </label>
+                    </div>
+
                     {newUserIsPremium && (
                       <div className="pl-6 pt-1 flex flex-col sm:flex-row gap-3 items-start sm:items-center">
                         <span className="text-xs font-bold text-slate-600">Lisans Paket Türü:</span>
-                        <div className="flex gap-3">
+                        <div className="flex flex-wrap gap-3">
+                          <label className="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-amber-700">
+                            <input
+                              type="radio"
+                              name="newUserLicenseType"
+                              value="trial"
+                              checked={newUserLicenseType === 'trial'}
+                              onChange={() => setNewUserLicenseType('trial')}
+                              className="text-amber-600"
+                            />
+                            <span>7 Günlük Deneme (Code: ISG-T-...)</span>
+                          </label>
+
                           <label className="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-slate-700">
                             <input
                               type="radio"
@@ -2218,17 +2502,22 @@ export default function AdminPanel({
                       {dbUsers.filter(u => {
                         const term = searchUserQuery.toLowerCase().trim();
                         if (!term) return true;
+                        const nameStr = (u.name || '').toLowerCase();
+                        const userStr = (u.username || '').toLowerCase();
+                        const emailStr = (u.email || '').toLowerCase();
+                        const phoneStr = (u.phone || '');
                         return (
-                          u.name.toLowerCase().includes(term) ||
-                          u.username.toLowerCase().includes(term) ||
-                          u.email.toLowerCase().includes(term) ||
-                          u.phone.includes(term)
+                          nameStr.includes(term) ||
+                          userStr.includes(term) ||
+                          emailStr.includes(term) ||
+                          phoneStr.includes(term)
                         );
-                      }).map(u => {
-                        const isEditing = editingUserId === u.email;
+                      }).map((u, idx) => {
+                        const rowKey = u.username || u.email || `usr-${idx}`;
+                        const isEditing = editingUserId === (u.email || u.username);
 
                         return (
-                          <tr key={u.email} className="hover:bg-slate-50/40 transition-colors">
+                          <tr key={rowKey} className="hover:bg-slate-50/40 transition-colors">
                             {/* Cell 1: Username & Real Name */}
                             <td className="p-4">
                               {isEditing ? (
@@ -2243,7 +2532,14 @@ export default function AdminPanel({
                                 </div>
                               ) : (
                                 <div className="space-y-0.5">
-                                  <h5 className="font-extrabold text-slate-900 text-sm">{u.name}</h5>
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <h5 className="font-extrabold text-slate-900 text-sm">{u.name}</h5>
+                                    {u.tcNo && (
+                                      <span className="text-[9px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200">
+                                        TC: {u.tcNo}
+                                      </span>
+                                    )}
+                                  </div>
                                   <p className="text-[10px] text-slate-400 font-mono">@{u.username}</p>
                                 </div>
                               )}
@@ -2263,16 +2559,30 @@ export default function AdminPanel({
                                   <option value="admin">Yönetici (Admin)</option>
                                 </select>
                               ) : (
-                                <span className={`inline-block text-[9px] font-black px-2.5 py-0.5 rounded-full ${
-                                  u.role === 'admin' ? 'bg-purple-100 text-purple-800 border border-purple-200' :
-                                  u.role === 'uzman' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
-                                  u.role === 'hekim' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' :
-                                  'bg-slate-100 text-slate-700 border border-slate-200'
-                                }`}>
-                                  {u.role === 'admin' ? 'YÖNETİCİ' :
-                                   u.role === 'uzman' ? 'İSG UZMANI' :
-                                   u.role === 'hekim' ? 'İŞYERİ HEKİMİ' : 'PERSONEL'}
-                                </span>
+                                <div className="space-y-1">
+                                  <div>
+                                    <span className={`inline-block text-[9px] font-black px-2.5 py-0.5 rounded-full ${
+                                      u.role === 'admin' ? 'bg-purple-100 text-purple-800 border border-purple-200' :
+                                      u.role === 'uzman' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
+                                      u.role === 'hekim' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' :
+                                      'bg-slate-100 text-slate-700 border border-slate-200'
+                                    }`}>
+                                      {u.role === 'admin' ? 'YÖNETİCİ' :
+                                       u.role === 'uzman' ? 'İSG UZMANI' :
+                                       u.role === 'hekim' ? 'İŞYERİ HEKİMİ' : 'PERSONEL'}
+                                    </span>
+                                  </div>
+                                  {u.certificateNo && (
+                                    <div className="text-[9px] font-mono text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200/60 inline-block">
+                                      Belge: {u.certificateNo}
+                                    </div>
+                                  )}
+                                  {u.osgb?.name && (
+                                    <div className="text-[9px] text-slate-600 font-bold bg-slate-100 px-1.5 py-0.5 rounded inline-block truncate max-w-[130px]" title={u.osgb.name}>
+                                      🏢 {u.osgb.name}
+                                    </div>
+                                  )}
+                                </div>
                               )}
                             </td>
 
@@ -2296,9 +2606,32 @@ export default function AdminPanel({
                                   />
                                 </div>
                               ) : (
-                                <div className="space-y-0.5 text-[11px]">
+                                <div className="space-y-1 text-[11px]">
                                   <div className="text-slate-800 font-bold">{u.email}</div>
                                   <div className="text-slate-400 font-semibold">{u.phone || 'Telefon Yok'}</div>
+                                  <div className="pt-0.5 flex flex-wrap items-center gap-1.5">
+                                    {u.isEmailVerified ? (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                        <CheckCircle2 size={10} className="text-emerald-600" />
+                                        <span>E-Posta Doğrulandı</span>
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-amber-100 text-amber-800 border border-amber-300">
+                                        <AlertTriangle size={10} className="text-amber-600" />
+                                        <span>Doğrulanmadı</span>
+                                      </span>
+                                    )}
+                                    {u.hasAcceptedLegalTerms ? (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-blue-50 text-blue-700 border border-blue-200" title={`Onay Tarihi: ${u.legalAcceptedAt ? new Date(u.legalAcceptedAt).toLocaleDateString('tr-TR') : '-'}`}>
+                                        <Check size={9} />
+                                        <span>Sözleşme Onaylı</span>
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-slate-100 text-slate-500 border border-slate-200">
+                                        <span>Sözleşme Bekliyor</span>
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
                               )}
                             </td>
@@ -2385,17 +2718,39 @@ export default function AdminPanel({
                                 <div className="space-y-1">
                                   {u.isPremium ? (
                                     <>
-                                      {u.licenseType === 'monthly' || u.licenseKey?.startsWith('ISG-M') || u.licenseKey?.includes('-M-') ? (
-                                        <div className="flex items-center gap-1 text-[10px] text-indigo-700 font-extrabold">
-                                          <CheckSquare size={12} className="text-indigo-600" />
-                                          <span>AKTİF (Aylık Lisans - 1 Ay)</span>
-                                        </div>
-                                      ) : (
-                                        <div className="flex items-center gap-1 text-[10px] text-emerald-700 font-extrabold">
-                                          <CheckSquare size={12} className="text-emerald-600" />
-                                          <span>AKTİF (Yıllık Lisans - 1 Yıl)</span>
-                                        </div>
-                                      )}
+                                      {(() => {
+                                        const t = u.licenseType || getLicenseTypeFromKey(u.licenseKey);
+                                        if (t === 'trial') {
+                                          return (
+                                            <div className="flex items-center gap-1 text-[10px] text-amber-700 font-extrabold">
+                                              <CheckSquare size={12} className="text-amber-600" />
+                                              <span>AKTİF (7 Günlük Deneme)</span>
+                                            </div>
+                                          );
+                                        }
+                                        if (t === 'monthly') {
+                                          return (
+                                            <div className="flex items-center gap-1 text-[10px] text-indigo-700 font-extrabold">
+                                              <CheckSquare size={12} className="text-indigo-600" />
+                                              <span>AKTİF (Aylık Lisans - 1 Ay)</span>
+                                            </div>
+                                          );
+                                        }
+                                        if (t === 'demo') {
+                                          return (
+                                            <div className="flex items-center gap-1 text-[10px] text-purple-700 font-extrabold">
+                                              <CheckSquare size={12} className="text-purple-600" />
+                                              <span>AKTİF (10 Dk Demo Test)</span>
+                                            </div>
+                                          );
+                                        }
+                                        return (
+                                          <div className="flex items-center gap-1 text-[10px] text-emerald-700 font-extrabold">
+                                            <CheckSquare size={12} className="text-emerald-600" />
+                                            <span>AKTİF (Yıllık Lisans - 1 Yıl)</span>
+                                          </div>
+                                        );
+                                      })()}
                                       <p className="text-[9px] font-mono text-slate-500 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200/80 inline-block max-w-[150px] truncate" title={u.licenseKey || 'SÜRESİZ-YAPAY-ZEKA'}>
                                         {maskLicenseKey(u.licenseKey || 'SÜRESİZ-YAPAY-ZEKA')}
                                       </p>
@@ -2430,6 +2785,16 @@ export default function AdminPanel({
                                   </>
                                 ) : (
                                   <>
+                                    {/* Tüm Kişisel Bilgileri İncele Butonu */}
+                                    <button
+                                      onClick={() => setViewUserDetail(u)}
+                                      title="Tüm Kişisel ve Mesleki Bilgileri İncele"
+                                      className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] font-bold px-2 py-1 rounded cursor-pointer transition border border-indigo-200 flex items-center gap-1"
+                                    >
+                                      <Eye size={12} />
+                                      <span>İncele</span>
+                                    </button>
+
                                     {/* Cancel License directly if active */}
                                     {u.isPremium ? (
                                       <button
@@ -2468,16 +2833,48 @@ export default function AdminPanel({
                                       </button>
                                     )}
 
+                                    {/* E-Posta Doğrulama Kontrolleri */}
+                                    {u.isEmailVerified ? (
+                                      <button
+                                        onClick={() => handleToggleEmailVerification(u)}
+                                        title="Doğrulama durumunu iptal et"
+                                        className="bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] font-bold px-2 py-1 rounded cursor-pointer transition border border-slate-200"
+                                      >
+                                        Doğrulamayı Al
+                                      </button>
+                                    ) : (
+                                      <>
+                                        <button
+                                          onClick={() => handleToggleEmailVerification(u)}
+                                          title="E-Postayı Manuel Olarak Doğrula"
+                                          className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-1 rounded cursor-pointer transition border border-emerald-200"
+                                        >
+                                          Doğrula
+                                        </button>
+                                        <button
+                                          onClick={() => handleSendVerificationEmail(u)}
+                                          title="Kullanıcıya Yeni Doğrulama Kodu Gönder"
+                                          className="bg-blue-50 hover:bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-1 rounded cursor-pointer transition border border-blue-200"
+                                        >
+                                          Kod Gönder
+                                        </button>
+                                      </>
+                                    )}
+
+                                    {/* Şifre ve Tüm Bilgileri Düzenleme Modalı Açıcı */}
                                     <button
-                                      onClick={() => handleStartEditUser(u)}
-                                      className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold px-2 py-1 rounded cursor-pointer"
+                                      onClick={() => openEditModalForUser(u)}
+                                      title="Kullanıcı Bilgilerini ve Şifresini Düzenle"
+                                      className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold px-2 py-1 rounded cursor-pointer transition border border-slate-200 flex items-center gap-1"
                                     >
-                                      Düzenle
+                                      <Edit2 size={11} />
+                                      <span>Düzenle</span>
                                     </button>
 
                                     <button
                                       onClick={() => handleDeleteUser(u.email)}
                                       className="bg-red-50 hover:bg-red-100 text-red-600 text-[10px] font-bold px-1.5 py-1 rounded cursor-pointer"
+                                      title="Kullanıcıyı Sil"
                                     >
                                       <Trash2 size={11} />
                                     </button>
@@ -2673,21 +3070,47 @@ export default function AdminPanel({
 
                     <div className="space-y-3">
                       <div>
-                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider block mb-1">E-Posta Şablon Tipi</label>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">E-Posta Şablon Tipi</label>
+                          <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded">12 Şablon Hazır</span>
+                        </div>
                         <select
                           value={testTemplateType}
                           onChange={(e) => setTestTemplateType(e.target.value as any)}
-                          className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-750 rounded-xl p-3 text-slate-950 dark:text-white text-xs sm:text-sm outline-none font-bold"
+                          className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-750 rounded-xl p-3 text-slate-950 dark:text-white text-xs sm:text-sm outline-none font-bold cursor-pointer"
                         >
-                          <option value="general">Genel Bağlantı Doğrulama Testi (Standart)</option>
-                          <option value="otp">Güvenli Giriş Kodu (OTP) Şablonu</option>
-                          <option value="license">Lisans Teslimat Bildirimi Şablonu</option>
-                          <option value="contracts">Sözleşmeler Onay Nüshası (Mesafeli Satış + KVKK + Ön Bilgilendirme)</option>
-                          <option value="update">E-Posta Güncelleme Bağlantısı Şablonu</option>
-                          <option value="verify">E-Posta Doğrulama Kodu & Linki Şablonu</option>
-                          <option value="contact">Yeni Destek Talebi Bildirim Şablonu</option>
+                          <optgroup label="Doğrulama, Güvenlik ve Hesap Şablonları">
+                            <option value="general">🌐 Genel Bağlantı Doğrulama Testi (Standart Servis)</option>
+                            <option value="otp">🔑 Güvenli Giriş Kodu (OTP) Şablonu</option>
+                            <option value="verification">✉️ E-Posta Doğrulama Kodu & Aktivasyon Linki</option>
+                            <option value="verified_user">✅ E-Posta Adresiniz Doğrulandı (Kullanıcı Güvenlik Teyidi)</option>
+                            <option value="verified_admin">🛡️ Kullanıcı E-Postasını Doğruladı (Yönetici Bildirimi)</option>
+                            <option value="new_user">👤 Yeni Kullanıcı Kaydı Bildirimi (Yönetici Hesap Kartı)</option>
+                            <option value="update">🔄 E-Posta Adresi Güncelleme Bağlantısı Şablonu</option>
+                          </optgroup>
+                          <optgroup label="Lisans & Deneme Sürümü Şablonları">
+                            <option value="license">🎁 Lisans Teslimat Bildirimi (Satın Alınan Lisans Anahtarı)</option>
+                            <option value="trial_license">⚡ 7 Günlük Ücretsiz Deneme Lisansı Bildirimi</option>
+                            <option value="trial_reminder">⏰ Deneme Süresi Bitiş Hatırlatması (Son 1 Gün / Pro'ya Geç)</option>
+                          </optgroup>
+                          <optgroup label="Resmi Sözleşmeler & Müşteri İletişimi">
+                            <option value="contracts">📜 Satın Alma Onaylı Sözleşmeler (6 Belge + PDF Ekli)</option>
+                            <option value="registration_consent">✍️ Kayıt Öncesi Yasal Metinler & Islak İmza (3 Belge + PDF)</option>
+                            <option value="contact">💬 Yeni Destek & İletişim Talebi Mesajı</option>
+                          </optgroup>
                         </select>
                       </div>
+
+                      {/* Canlı Önizleme Butonu */}
+                      <button
+                        type="button"
+                        onClick={handlePreviewTemplate}
+                        disabled={templatePreviewLoading}
+                        className="w-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold py-2.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 flex items-center justify-center gap-2 cursor-pointer transition active:scale-[0.99]"
+                      >
+                        <Eye size={14} className="text-indigo-600" />
+                        <span>{templatePreviewLoading ? 'Şablon Yükleniyor...' : 'Seçili Şablonu Canlı Önizle'}</span>
+                      </button>
 
                       <div>
                         <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Test Alıcı E-Postası</label>
@@ -2704,9 +3127,9 @@ export default function AdminPanel({
                         type="button"
                         onClick={handleTestSMTP}
                         disabled={smtpTesting || !testEmailAddress}
-                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl text-xs sm:text-sm transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl text-xs sm:text-sm transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 shadow-md shadow-indigo-600/20 active:scale-95"
                       >
-                        {smtpTesting ? 'Test Ediliyor...' : 'Seçili Şablonu Gönder'}
+                        {smtpTesting ? 'Test E-Postası Gönderiliyor...' : 'Test E-Postasını Gönder'}
                       </button>
                     </div>
 
@@ -3491,6 +3914,744 @@ PAYTR_MERCHANT_SALT="MAĞAZA_SALT_BURAYA"`}
                   <ShieldCheck size={16} />
                   <span>Lisansı Etkinleştir ve Kaydet</span>
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ========================================================================= */}
+      {/* 1. TÜM KİŞİSEL BİLGİLERİ GÖRÜNTÜLEME MODALI (USER DETAIL MODAL)           */}
+      {/* ========================================================================= */}
+      <AnimatePresence>
+        {viewUserDetail && (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="relative w-full max-w-2xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 my-8 overflow-hidden"
+            >
+              {/* Modal Başlık Çubuğu */}
+              <div className="p-6 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-600/30 border border-indigo-400/40 flex items-center justify-center text-indigo-300 font-black text-lg shadow-inner">
+                    {viewUserDetail.name?.charAt(0)?.toUpperCase() || 'U'}
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-white flex items-center gap-2">
+                      <span>{viewUserDetail.name}</span>
+                      <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full ${
+                        viewUserDetail.role === 'admin' ? 'bg-purple-500/20 text-purple-300 border border-purple-400/30' :
+                        viewUserDetail.role === 'uzman' ? 'bg-blue-500/20 text-blue-300 border border-blue-400/30' :
+                        viewUserDetail.role === 'hekim' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/30' :
+                        'bg-slate-500/20 text-slate-300 border border-slate-400/30'
+                      }`}>
+                        {viewUserDetail.role === 'admin' ? 'YÖNETİCİ' :
+                         viewUserDetail.role === 'uzman' ? 'İSG UZMANI' :
+                         viewUserDetail.role === 'hekim' ? 'İŞYERİ HEKİMİ' : 'PERSONEL'}
+                      </span>
+                    </h3>
+                    <p className="text-xs text-indigo-200/70 font-mono">@{viewUserDetail.username || 'kullanici'}</p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setViewUserDetail(null)}
+                  className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Modal İçerik Gövdesi */}
+              <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
+
+                {/* 1. Kimlik ve İletişim Bilgileri */}
+                <div className="bg-slate-50 dark:bg-slate-800/60 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-700/80">
+                  <h4 className="text-xs font-black text-slate-700 dark:text-slate-200 uppercase tracking-wider mb-3 flex items-center gap-2">
+                    <BadgeCheck size={16} className="text-indigo-600" />
+                    <span>Kimlik ve Temel Bilgiler</span>
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <span className="text-slate-400 font-bold block text-[11px]">T.C. Kimlik No:</span>
+                      <span className="font-mono font-extrabold text-slate-800 dark:text-slate-100 text-sm">
+                        {viewUserDetail.tcNo || 'Belirtilmemiş'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 font-bold block text-[11px]">Kullanıcı Adı:</span>
+                      <span className="font-mono font-bold text-slate-800 dark:text-slate-100">
+                        @{viewUserDetail.username}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 font-bold block text-[11px]">E-Posta Adresi:</span>
+                      <span className="font-bold text-slate-800 dark:text-slate-100 break-all">
+                        {viewUserDetail.email}
+                      </span>
+                      <div className="mt-1">
+                        {viewUserDetail.isEmailVerified ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-extrabold text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-300">
+                            <CheckCircle2 size={11} />
+                            <span>E-Posta Doğrulandı {viewUserDetail.emailVerifiedAt ? `(${new Date(viewUserDetail.emailVerifiedAt).toLocaleDateString('tr-TR')})` : ''}</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-extrabold text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/60 px-2 py-0.5 rounded-md border border-amber-300">
+                            <AlertTriangle size={11} />
+                            <span>Doğrulanmamış Hesap</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 font-bold block text-[11px]">Telefon Numarası:</span>
+                      <span className="font-bold text-slate-800 dark:text-slate-100">
+                        {viewUserDetail.phone || 'Belirtilmemiş'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 font-bold block text-[11px]">Kayıt Tarihi:</span>
+                      <span className="font-semibold text-slate-700 dark:text-slate-300">
+                        {viewUserDetail.createdAt ? new Date(viewUserDetail.createdAt).toLocaleString('tr-TR') : 'Sistem Kurulumu'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 font-bold block text-[11px]">Kayıt Kaynağı:</span>
+                      <span className="font-semibold text-slate-700 dark:text-slate-300">
+                        {viewUserDetail.createdBy || 'Web Kayıt Formu'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Mesleki Profil ve Kurum Bilgileri */}
+                <div className="bg-slate-50 dark:bg-slate-800/60 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-700/80">
+                  <h4 className="text-xs font-black text-slate-700 dark:text-slate-200 uppercase tracking-wider mb-3 flex items-center gap-2">
+                    <Building2 size={16} className="text-blue-600" />
+                    <span>Mesleki ve Kurumsal Bilgiler</span>
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <span className="text-slate-400 font-bold block text-[11px]">Mesleki Rol:</span>
+                      <span className="font-bold text-slate-800 dark:text-slate-100">
+                        {viewUserDetail.role === 'admin' ? 'Yönetici (Admin)' :
+                         viewUserDetail.role === 'uzman' ? 'İş Güvenliği Uzmanı' :
+                         viewUserDetail.role === 'hekim' ? 'İşyeri Hekimi' : 'Diğer Personel'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 font-bold block text-[11px]">İSG Katip / Belge No:</span>
+                      <span className="font-mono font-bold text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded border border-indigo-200 dark:border-indigo-800 inline-block">
+                        {viewUserDetail.certificateNo || 'Belirtilmemiş'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 font-bold block text-[11px]">Diploma No:</span>
+                      <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                        {viewUserDetail.diplomaNo || 'Belirtilmemiş'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 font-bold block text-[11px]">Oda / Sicil / Tescil No:</span>
+                      <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                        {viewUserDetail.tescilNo || 'Belirtilmemiş'}
+                      </span>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <span className="text-slate-400 font-bold block text-[11px]">Bağlı Olduğu OSGB / Firma:</span>
+                      <span className="font-extrabold text-slate-800 dark:text-slate-100">
+                        {viewUserDetail.osgb?.name || (typeof viewUserDetail.osgb === 'string' ? viewUserDetail.osgb : '') || 'Bağımsız / Bireysel Çalışan'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Hukuki Sözleşmeler ve Dijital Islak İmza */}
+                <div className="bg-slate-50 dark:bg-slate-800/60 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-700/80">
+                  <h4 className="text-xs font-black text-slate-700 dark:text-slate-200 uppercase tracking-wider mb-3 flex items-center gap-2">
+                    <PenTool size={16} className="text-emerald-600" />
+                    <span>Hukuki Sözleşmeler ve Dijital İmza</span>
+                  </h4>
+                  
+                  <div className="space-y-3 text-xs">
+                    <div className="flex items-center justify-between bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200/70 dark:border-slate-700/70">
+                      <div>
+                        <span className="font-extrabold text-slate-800 dark:text-slate-200 block">Sözleşme Onay Durumu:</span>
+                        <span className="text-[11px] text-slate-400">Kullanıcı Sözleşmesi, KVKK ve Mesafeli Satış Sözleşmesi</span>
+                      </div>
+                      <div>
+                        {viewUserDetail.hasAcceptedLegalTerms ? (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
+                            <Check size={13} />
+                            <span>ONAYLANDI</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-slate-200 text-slate-600">
+                            <span>ONAYLANMADI</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {viewUserDetail.legalAcceptedAt && (
+                      <div className="text-[11px] text-slate-500 font-semibold pl-1">
+                        Sözleşme Onay Tarihi: <span className="font-mono text-slate-700 dark:text-slate-300">{new Date(viewUserDetail.legalAcceptedAt).toLocaleString('tr-TR')}</span>
+                      </div>
+                    )}
+
+                    {/* Dijital İmza Önizleme */}
+                    <div>
+                      <span className="text-slate-500 font-bold block text-[11px] mb-1.5">Kullanıcı Dijital İmzası:</span>
+                      {viewUserDetail.userSignature ? (
+                        <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 inline-block">
+                          <img
+                            src={viewUserDetail.userSignature}
+                            alt="Kullanıcı Dijital İmzası"
+                            className="h-20 max-w-full object-contain bg-white rounded p-1 border border-slate-100"
+                          />
+                          <p className="text-[9px] text-emerald-600 font-bold mt-1">✓ Yasal kayıtlı dijital imza</p>
+                        </div>
+                      ) : (
+                        <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-slate-400 text-xs italic">
+                          Kullanıcı henüz sisteme dijital imza kaydetmemiştir.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 4. Lisans Durumu */}
+                <div className="bg-slate-50 dark:bg-slate-800/60 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-700/80">
+                  <h4 className="text-xs font-black text-slate-700 dark:text-slate-200 uppercase tracking-wider mb-3 flex items-center gap-2">
+                    <ShieldCheck size={16} className="text-amber-600" />
+                    <span>Lisans ve Yetki Durumu</span>
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <span className="text-slate-400 font-bold block text-[11px]">Durum:</span>
+                      {viewUserDetail.isPremium ? (
+                        <span className="font-black text-emerald-600">✓ Premium Lisans Aktif</span>
+                      ) : (
+                        <span className="font-bold text-slate-500">Deneme Sürümü / Pasif</span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-slate-400 font-bold block text-[11px]">Lisans Türü:</span>
+                      <span className="font-extrabold text-slate-800 dark:text-slate-200">
+                        {viewUserDetail.licenseType === 'trial' ? '7 Günlük Deneme' :
+                         viewUserDetail.licenseType === 'monthly' ? 'Aylık Lisans (1 Ay)' :
+                         viewUserDetail.licenseType === 'demo' ? '10 Dk Demo' :
+                         viewUserDetail.licenseType === 'yearly' ? 'Yıllık Lisans (1 Yıl)' : 'Standart'}
+                      </span>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <span className="text-slate-400 font-bold block text-[11px]">Lisans Anahtarı:</span>
+                      <span className="font-mono font-extrabold text-xs text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 inline-block">
+                        {viewUserDetail.licenseKey || 'Tanımlanmamış'}
+                      </span>
+                    </div>
+                    {viewUserDetail.licenseExpiresAt && (
+                      <div>
+                        <span className="text-slate-400 font-bold block text-[11px]">Bitiş Tarihi:</span>
+                        <span className="font-semibold text-slate-700 dark:text-slate-300">
+                          {new Date(viewUserDetail.licenseExpiresAt).toLocaleDateString('tr-TR')}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Modal Alt Butonlar */}
+              <div className="p-4 bg-slate-100 dark:bg-slate-800/80 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const u = viewUserDetail;
+                    setViewUserDetail(null);
+                    openEditModalForUser(u);
+                  }}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-extrabold transition cursor-pointer flex items-center gap-1.5 shadow-sm shadow-indigo-600/30"
+                >
+                  <KeyRound size={14} />
+                  <span>Şifreyi Değiştir & Düzenle</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setViewUserDetail(null)}
+                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 dark:text-slate-200 rounded-xl text-xs font-bold transition cursor-pointer"
+                >
+                  Kapat
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ========================================================================= */}
+      {/* 2. KULLANICI DÜZENLEME VE ŞİFRE DEĞİŞTİRME MODALI (EDIT USER MODAL)       */}
+      {/* ========================================================================= */}
+      <AnimatePresence>
+        {editUserModal && (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="relative w-full max-w-2xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 my-8 overflow-hidden"
+            >
+              {/* Modal Başlık Çubuğu */}
+              <div className="p-5 bg-gradient-to-r from-indigo-900 via-indigo-800 to-indigo-950 text-white flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-500/30 border border-indigo-300/40 flex items-center justify-center text-white">
+                    <KeyRound size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-white">Kullanıcı Bilgilerini Düzenle & Şifre Değiştir</h3>
+                    <p className="text-xs text-indigo-200 font-mono">@{editUserModal.username} ({editUserModal.email})</p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setEditUserModal(null)}
+                  className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Form Gövdesi */}
+              <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
+
+                {/* ŞİFRE DEĞİŞTİRME YETKİ KUTUSU (ÖZEL VURGULU) */}
+                <div className="bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-indigo-500/10 dark:from-amber-950/30 dark:to-indigo-950/30 p-4 rounded-2xl border-2 border-amber-400/50 dark:border-amber-500/30 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Lock size={16} className="text-amber-600 dark:text-amber-400" />
+                      <span className="text-xs font-black text-slate-800 dark:text-slate-100 uppercase tracking-wider">
+                        Şifre Değiştirme Yetkisi (Yönetici)
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/60 px-2 py-0.5 rounded-full border border-amber-300">
+                      Opsiyonel
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-slate-600 dark:text-slate-300">
+                    Kullanıcının şifresini değiştirmek veya sıfırlamak istiyorsanız yeni şifreyi giriniz.
+                    <span className="font-bold text-slate-700 dark:text-slate-200"> Boş bırakırsanız kullanıcının mevcut şifresi korunur.</span>
+                  </p>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <div className="relative flex-1">
+                        <input
+                          type={editModalShowPassword ? 'text' : 'password'}
+                          value={editModalPassword}
+                          onChange={(e) => setEditModalPassword(e.target.value)}
+                          placeholder="Yeni şifre belirleyin (değiştirmek istemiyorsanız boş bırakın)"
+                          className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500 pr-10"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setEditModalShowPassword(!editModalShowPassword)}
+                          className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                          title={editModalShowPassword ? 'Gizle' : 'Göster'}
+                        >
+                          {editModalShowPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                        </button>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={generateRandomPassword}
+                        className="bg-amber-100 hover:bg-amber-200 dark:bg-amber-900/60 dark:hover:bg-amber-900 text-amber-900 dark:text-amber-200 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1 border border-amber-300 shrink-0"
+                        title="Rastgele Güçlü Şifre Oluştur"
+                      >
+                        <Sparkles size={13} />
+                        <span>Rastgele Üret</span>
+                      </button>
+                    </div>
+
+                    {editModalPassword.trim() && (
+                      <div className="text-[10px] text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 p-2 rounded-lg border border-emerald-200 dark:border-emerald-800 flex items-center gap-1.5 font-bold">
+                        <CheckCircle2 size={12} />
+                        <span>Yeni şifre SHA-256 ile güvenli biçimde şifrelenecek ve veritabanı ile sunucuya kaydedilecektir.</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* TEMEL BİLGİLER */}
+                <div className="space-y-3">
+                  <h4 className="text-xs font-black text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                    <BadgeCheck size={14} className="text-indigo-600" />
+                    <span>Temel Bilgiler</span>
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">Ad Soyad *</label>
+                      <input
+                        type="text"
+                        value={editModalName}
+                        onChange={(e) => setEditModalName(e.target.value)}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">Kullanıcı Adı</label>
+                      <input
+                        type="text"
+                        value={editModalUsername}
+                        onChange={(e) => setEditModalUsername(e.target.value)}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">E-Posta Adresi *</label>
+                      <input
+                        type="email"
+                        value={editModalEmail}
+                        onChange={(e) => setEditModalEmail(e.target.value)}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">Telefon Numarası</label>
+                      <input
+                        type="tel"
+                        value={editModalPhone}
+                        onChange={(e) => setEditModalPhone(e.target.value)}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">T.C. Kimlik No</label>
+                      <input
+                        type="text"
+                        maxLength={11}
+                        value={editModalTcNo}
+                        onChange={(e) => setEditModalTcNo(e.target.value.replace(/\D/g, ''))}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        placeholder="11 haneli T.C. No"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">Mesleki Rol</label>
+                      <select
+                        value={editModalRole}
+                        onChange={(e) => setEditModalRole(e.target.value as any)}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value="uzman">İş Güvenliği Uzmanı</option>
+                        <option value="hekim">İşyeri Hekimi</option>
+                        <option value="dsp">Diğer Sağlık Personeli (DSP)</option>
+                        <option value="other">Diğer Personel</option>
+                        <option value="admin">Yönetici (Admin)</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {/* MESLEKİ BİLGİLER */}
+                <div className="space-y-3">
+                  <h4 className="text-xs font-black text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                    <Building2 size={14} className="text-blue-600" />
+                    <span>Mesleki ve Kurum Bilgileri</span>
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">İSG Katip / Belge No</label>
+                      <input
+                        type="text"
+                        value={editModalCertificateNo}
+                        onChange={(e) => setEditModalCertificateNo(e.target.value)}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        placeholder="Örn: 123456"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">Diploma No</label>
+                      <input
+                        type="text"
+                        value={editModalDiplomaNo}
+                        onChange={(e) => setEditModalDiplomaNo(e.target.value)}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        placeholder="Diploma No"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">Oda / Sicil / Tescil No</label>
+                      <input
+                        type="text"
+                        value={editModalTescilNo}
+                        onChange={(e) => setEditModalTescilNo(e.target.value)}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        placeholder="Tescil No"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">Bağlı Olduğu OSGB / Firma</label>
+                      <input
+                        type="text"
+                        value={editModalOsgbName}
+                        onChange={(e) => setEditModalOsgbName(e.target.value)}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        placeholder="OSGB Adı"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* DOĞRULAMA VE HUKUKİ İZİNLER */}
+                <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-3">
+                  <h4 className="text-xs font-black text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                    Yetki ve Sözleşme Durumu
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editModalIsEmailVerified}
+                        onChange={(e) => setEditModalIsEmailVerified(e.target.checked)}
+                        className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4"
+                      />
+                      <span className="text-xs font-bold text-slate-800 dark:text-slate-200">E-Posta Doğrulandı Olarak İşaretle</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editModalHasAcceptedLegalTerms}
+                        onChange={(e) => setEditModalHasAcceptedLegalTerms(e.target.checked)}
+                        className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4"
+                      />
+                      <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Hukuki Sözleşmeleri Onayladı</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* LİSANS AYARLARI */}
+                <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-3">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={editModalIsPremium}
+                      onChange={(e) => setEditModalIsPremium(e.target.checked)}
+                      className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4"
+                    />
+                    <span className="text-xs font-black text-slate-900 dark:text-slate-100">Premium Lisans Yetkisi Tanımla</span>
+                  </label>
+
+                  {editModalIsPremium && (
+                    <div className="space-y-3 pt-2 border-t border-slate-200 dark:border-slate-700">
+                      <div className="flex flex-wrap gap-3 text-xs">
+                        <label className="flex items-center gap-1.5 cursor-pointer font-bold text-amber-700">
+                          <input
+                            type="radio"
+                            name="editModalLicenseTypeRadio"
+                            value="trial"
+                            checked={editModalLicenseType === 'trial'}
+                            onChange={() => {
+                              setEditModalLicenseType('trial');
+                              setEditModalLicenseKey(generateLicenseCode('trial'));
+                            }}
+                          />
+                          <span>7 Günlük Deneme</span>
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer font-bold text-slate-700 dark:text-slate-300">
+                          <input
+                            type="radio"
+                            name="editModalLicenseTypeRadio"
+                            value="monthly"
+                            checked={editModalLicenseType === 'monthly'}
+                            onChange={() => {
+                              setEditModalLicenseType('monthly');
+                              setEditModalLicenseKey(generateLicenseCode('monthly'));
+                            }}
+                          />
+                          <span>Aylık (1 Ay)</span>
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer font-bold text-slate-700 dark:text-slate-300">
+                          <input
+                            type="radio"
+                            name="editModalLicenseTypeRadio"
+                            value="yearly"
+                            checked={editModalLicenseType === 'yearly'}
+                            onChange={() => {
+                              setEditModalLicenseType('yearly');
+                              setEditModalLicenseKey(generateLicenseCode('yearly'));
+                            }}
+                          />
+                          <span>Yıllık (1 Yıl)</span>
+                        </label>
+                      </div>
+
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={editModalLicenseKey}
+                          onChange={(e) => setEditModalLicenseKey(e.target.value.toUpperCase())}
+                          placeholder="Lisans Anahtarı"
+                          className="flex-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-mono uppercase font-bold text-slate-900 dark:text-slate-100"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setEditModalLicenseKey(generateLicenseCode(editModalLicenseType))}
+                          className="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold transition cursor-pointer"
+                        >
+                          Kod Üret
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+              </div>
+
+              {/* Modal Alt Butonları */}
+              <div className="p-4 bg-slate-100 dark:bg-slate-800/80 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setEditUserModal(null)}
+                  className="px-4 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 dark:text-slate-200 rounded-xl text-xs font-bold transition cursor-pointer"
+                >
+                  Vazgeç
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveEditModal}
+                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-extrabold transition cursor-pointer shadow-md shadow-emerald-600/20 active:scale-95 flex items-center gap-1.5"
+                >
+                  <Save size={15} />
+                  <span>Değişiklikleri ve Şifreyi Kaydet</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ========================================================================= */}
+      {/* 3. E-POSTA ŞABLONU CANLI ÖNİZLEME MODALI (EMAIL TEMPLATE PREVIEW MODAL)   */}
+      {/* ========================================================================= */}
+      <AnimatePresence>
+        {templatePreviewOpen && (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="relative w-full max-w-4xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 my-8 overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              {/* Header */}
+              <div className="p-5 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-500/30 border border-indigo-400/40 flex items-center justify-center text-indigo-300">
+                    <Eye size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-white flex items-center gap-2">
+                      <span>E-Posta Şablonu Canlı Önizleme</span>
+                      <span className="text-[10px] font-mono bg-indigo-500/30 text-indigo-200 px-2 py-0.5 rounded border border-indigo-400/40 uppercase">
+                        {testTemplateType}
+                      </span>
+                    </h3>
+                    <p className="text-xs text-indigo-200/70">
+                      {templatePreviewData?.subject || 'E-Posta Konusu Yükleniyor...'}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setTemplatePreviewOpen(false)}
+                  className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Subject bar & Attachment badge */}
+              <div className="px-6 py-3 bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-3 text-xs shrink-0">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-slate-500">Konu:</span>
+                  <span className="font-extrabold text-slate-800 dark:text-slate-100">
+                    {templatePreviewData?.subject || '—'}
+                  </span>
+                </div>
+
+                {templatePreviewData?.hasAttachments && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-extrabold border border-emerald-300">
+                    <FileText size={13} />
+                    <span>Resmi PDF Sözleşme Eki İçerir ({templatePreviewData.attachmentCount || 1} Dosya)</span>
+                  </span>
+                )}
+              </div>
+
+              {/* Iframe Body */}
+              <div className="flex-1 p-4 bg-slate-100 dark:bg-slate-950 overflow-hidden">
+                {templatePreviewLoading ? (
+                  <div className="h-[500px] flex items-center justify-center text-slate-400 text-sm font-semibold">
+                    Şablon render ediliyor...
+                  </div>
+                ) : templatePreviewData?.html ? (
+                  <iframe
+                    title="Şablon Önizleme"
+                    srcDoc={templatePreviewData.html}
+                    className="w-full h-[520px] rounded-2xl border border-slate-200 dark:border-slate-800 bg-white shadow-inner"
+                    sandbox="allow-same-origin"
+                  />
+                ) : (
+                  <div className="h-[500px] flex items-center justify-center text-slate-400 text-sm font-semibold">
+                    Önizleme bulunamadı.
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 bg-slate-50 dark:bg-slate-800/80 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center shrink-0">
+                <span className="text-[11px] text-slate-500 font-semibold">
+                  Bu şablon mobil ve masaüstü tüm e-posta istemcileriyle %100 uyumludur.
+                </span>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTemplatePreviewOpen(false)}
+                    className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 dark:text-slate-200 rounded-xl text-xs font-bold transition cursor-pointer"
+                  >
+                    Kapat
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTemplatePreviewOpen(false);
+                      handleTestSMTP();
+                    }}
+                    disabled={!testEmailAddress}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-sm shadow-indigo-600/30 disabled:opacity-50"
+                  >
+                    <Mail size={14} />
+                    <span>Bu Şablonu Test Maili Olarak Gönder</span>
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>

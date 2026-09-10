@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { LEGAL_TEXTS } from '../data/legal';
 import SignatureCanvas from './SignatureCanvas';
+import { generateLicenseKey, registerGeneratedLicense } from '../lib/licenseUtils';
 
 interface CheckoutProps {
   planId: 'monthly' | 'yearly';
@@ -240,7 +241,12 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
           })
         }).catch(e => console.error("Simulated contract delivery error:", e));
 
-        const tempLicenseKey = `ISG-PRO-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+        const tempLicenseKey = generateLicenseKey(planId);
+        try {
+          await registerGeneratedLicense(tempLicenseKey, planId, email);
+        } catch (regErr) {
+          console.warn('Could not auto-register temp license:', regErr);
+        }
         setTimeout(() => {
           window.postMessage({
             type: 'PAYTR_SUCCESS',

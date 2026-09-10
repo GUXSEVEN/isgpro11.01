@@ -14,9 +14,8 @@ import { User as UserType, FAQItem, Review, RiskPreset, SiteConfig } from './typ
 // Firebase imports
 import { db } from './lib/firebase';
 import { collection, getDocs, doc, setDoc, getDoc, onSnapshot, deleteDoc } from 'firebase/firestore';
-import { hashPassword } from './lib/crypto';
+import { hashPassword, encryptUser, decryptUser, getObfuscatedSecret } from './lib/crypto';
 import { logActivity } from './lib/activity';
-import { deduplicateAndCleanUsers } from './lib/userUtils';
 
 // Component imports
 import Navbar from './components/Navbar';
@@ -33,6 +32,10 @@ import Reviews from './components/Reviews';
 import AdminPanel from './components/AdminPanel';
 import DownloadsPage from './components/DownloadsPage';
 import TrialModal from './components/TrialModal';
+import InitialLegalConsentModal from './components/InitialLegalConsentModal';
+import EmailVerificationModal from './components/EmailVerificationModal';
+import { getLicenseTypeFromKey, getLicenseDurationDays, isLicenseActive, getLicensePlanName } from './lib/licenseUtils';
+import { deduplicateAndCleanUsers, sanitizeUserForFirestore, normalizeUsername, generateAvailableUsernameSuggestions } from './lib/userUtils';
 import { getGenericLegalText } from './data/legal';
 
 const STORAGE_KEYS = {
@@ -44,12 +47,12 @@ const INITIAL_USERS: UserType[] = [
   { 
     username: "admin", 
     password: "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8", // SHA-256 hash of "password"
-    name: "Sistem Yöneticisi", 
-    email: "admin@isg.com", 
-    phone: "5551112233", 
+    name: getObfuscatedSecret("U2lzdGVtIFnDtm5ldGljaXNp"), 
+    email: getObfuscatedSecret("YWRtaW5AaXNnLmNvbQ=="), 
+    phone: getObfuscatedSecret("NTU1MTExMjIzMw=="), 
     role: 'admin', 
     isPremium: true,
-    licenseKey: 'ISG-9MHW-PVQB-4KZN-DNM6',
+    licenseKey: getObfuscatedSecret("SVNHLTlNTVctUFZRQi00S1pOLUROTTY="),
     licenseType: 'yearly',
     licensePurchasedAt: '2026-07-06T20:02:45.433Z',
     licenseExpiresAt: '2027-07-06T20:02:45.433Z'
@@ -57,12 +60,12 @@ const INITIAL_USERS: UserType[] = [
   { 
     username: "ibrahim", 
     password: "bc1583dbd69cf369314be86b8579f367cd17e441986f9131c240015829f044cf", // SHA-256 hash of "147369"
-    name: "ibrahim", 
-    email: "ibrahimcoskun.gs.1905@gmail.com", 
+    name: getObfuscatedSecret("aWJyYWhpbQ=="), 
+    email: getObfuscatedSecret("aWJyYWhpbWNvc2t1bi5ncy4xOTA1QGdtYWlsLmNvbQ=="), 
     phone: "", 
     role: 'uzman', 
     isPremium: true,
-    licenseKey: 'ISG-TXYN-N2SB-6PGY-R3XO',
+    licenseKey: getObfuscatedSecret("SVNHLVRYWU4tTjJTQi02UEdZLVJMWE8="),
     licenseType: 'yearly',
     licensePurchasedAt: '2026-07-06T14:06:35.291Z',
     licenseExpiresAt: '2027-07-06T14:06:35.291Z'
@@ -70,7 +73,7 @@ const INITIAL_USERS: UserType[] = [
   { 
     username: "aytul", 
     password: "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0", // SHA-256 hash of "0000"
-    name: "Aytül İnceoğlu", 
+    name: getObfuscatedSecret("QXl0w7xsIMSwbmNlb8SfbHU="), 
     email: "", 
     phone: "", 
     role: 'other', 
@@ -79,7 +82,7 @@ const INITIAL_USERS: UserType[] = [
   { 
     username: "fatma", 
     password: "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0", // SHA-256 hash of "0000"
-    name: "Fatma Arkun", 
+    name: getObfuscatedSecret("RmF0bWEgQXJrdW4="), 
     email: "", 
     phone: "", 
     role: 'other', 
@@ -88,11 +91,11 @@ const INITIAL_USERS: UserType[] = [
   { 
     username: "ali", 
     password: "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3", // SHA-256 hash of "123"
-    name: "Ali Yılmaz (İGU)", 
-    email: "ali@isg.com", 
-    phone: "5554445566", 
+    name: getObfuscatedSecret("QWxpIFnEsWxtYXogKMSwR1Up"), 
+    email: getObfuscatedSecret("YWxpQGlzZy5jb20="), 
+    phone: getObfuscatedSecret("NTU1NDQ0NTU2Ng=="), 
     role: 'uzman', 
-    certificateNo: '12345-A',
+    certificateNo: getObfuscatedSecret("MTIzNDUtQQ=="), 
     isPremium: false 
   }
 ];
@@ -102,7 +105,7 @@ export default function App() {
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.USERS);
       if (stored) {
-        const parsed = JSON.parse(stored) as UserType[];
+        const parsed = (JSON.parse(stored) as UserType[]).map(u => decryptUser(u));
         const hasIbrahim = parsed.some(u => u.username.toLowerCase() === 'ibrahim');
         if (!hasIbrahim) {
           return INITIAL_USERS;
@@ -113,7 +116,7 @@ export default function App() {
           const expectedHash = "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8";
           if (parsed[adminIndex].password !== expectedHash) {
             parsed[adminIndex].password = expectedHash;
-            localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(parsed));
+            localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(parsed.map(u => encryptUser(u))));
           }
         }
         return parsed;
@@ -128,11 +131,28 @@ export default function App() {
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
       if (stored) {
-        const parsed = JSON.parse(stored) as UserType;
+        const parsed = decryptUser(JSON.parse(stored) as UserType);
         if (parsed.password) {
           delete parsed.password;
-          localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(parsed));
         }
+
+        // Eğer kullanıcı henüz sözleşmeleri imzalamadıysa veya e-postasını doğrulamadıysa (onboarding yarım kaldıysa),
+        // tarayıcı kapatılıp açıldığında veya sayfa yenilendiğinde bu ekranda kilitli kalmaması için
+        // oturumu temizle ve ana sayfadan temiz bir şekilde başlat:
+        if (parsed.role !== 'admin' && parsed.username !== 'admin') {
+          if (!parsed.hasAcceptedLegalTerms || !parsed.isEmailVerified) {
+            localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+            return null;
+          }
+        }
+
+        // Auto-check expiration for non-admin accounts
+        if (parsed.isPremium && parsed.licenseExpiresAt && parsed.role !== 'admin') {
+          if (!isLicenseActive(parsed)) {
+            parsed.isPremium = false;
+          }
+        }
+        localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(parsed));
         return parsed;
       }
       return null;
@@ -166,9 +186,8 @@ export default function App() {
     localStorage.setItem('isg_dark_mode', String(darkMode));
   }, [darkMode]);
 
-  // Helper to save user to Firestore with password security
+  // Helper to save user to Firestore with password security and full schema compatibility
   const saveUserToFirestore = async (user: UserType) => {
-    if (!db) return;
     try {
       const usernameKey = (user.username || user.email || '').toLowerCase().trim();
       if (!usernameKey) return;
@@ -178,26 +197,35 @@ export default function App() {
         pwd = await hashPassword(pwd);
       }
       
-      const userToSave: any = { ...user };
-      if (pwd === undefined) {
-        delete userToSave.password;
-      } else {
+      const userToSave = sanitizeUserForFirestore(user);
+      if (pwd) {
         userToSave.password = pwd;
       }
 
-      const userDocRef = doc(db, 'users', usernameKey);
-      await setDoc(userDocRef, userToSave, { merge: true });
+      // 1. Direct Client-side Firestore write
+      if (db) {
+        const userDocRef = doc(db, 'users', usernameKey);
+        await setDoc(userDocRef, userToSave, { merge: true });
 
-      // If user has email registered as separate doc ID in Firestore, clean up duplicate doc
-      if (user.email && user.email.toLowerCase().trim() !== usernameKey) {
-        const altDocRef = doc(db, 'users', user.email.toLowerCase().trim());
-        const altSnap = await getDoc(altDocRef);
-        if (altSnap.exists()) {
-          await deleteDoc(altDocRef);
+        // If user has email registered as separate doc ID in Firestore, clean up duplicate doc
+        if (user.email && user.email.toLowerCase().trim() !== usernameKey) {
+          const altDocRef = doc(db, 'users', user.email.toLowerCase().trim());
+          const altSnap = await getDoc(altDocRef);
+          if (altSnap.exists()) {
+            await deleteDoc(altDocRef);
+          }
         }
       }
+
+      // 2. Server-side dual write guarantee (survives client adblockers / connection drops)
+      fetch('/api/sync-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user: userToSave })
+      }).catch(err => console.warn('Server sync user call warning:', err));
+
     } catch (err) {
-      console.warn("Error saving user to Firestore:", err);
+      console.error("Error saving user to Firestore:", err);
     }
   };
 
@@ -223,8 +251,28 @@ export default function App() {
           for (const u of INITIAL_USERS) {
             const userDocRef = doc(db, 'users', u.username.toLowerCase());
             const hashedPassword = await hashPassword(u.password || '');
-            await setDoc(userDocRef, { ...u, password: hashedPassword });
+            await setDoc(userDocRef, sanitizeUserForFirestore({ ...u, password: hashedPassword }));
           }
+        }
+
+        // Ensure all user documents in Firestore are in readable format for admin inspection
+        try {
+          const allDocsSnap = await getDocs(collection(db, 'users'));
+          for (const d of allDocsSnap.docs) {
+            const rawData = d.data();
+            const isEncryptedRecord = (rawData.name && (String(rawData.name).startsWith('ISGSEC:') || String(rawData.name).startsWith('ENC:v1:'))) ||
+                                      (rawData.email && (String(rawData.email).startsWith('ISGSEC:') || String(rawData.email).startsWith('ENC:v1:'))) ||
+                                      (rawData.tcNo && (String(rawData.tcNo).startsWith('ISGSEC:') || String(rawData.tcNo).startsWith('ENC:v1:'))) ||
+                                      (rawData.phone && (String(rawData.phone).startsWith('ISGSEC:') || String(rawData.phone).startsWith('ENC:v1:'))) ||
+                                      (rawData.licenseKey && (String(rawData.licenseKey).startsWith('ISGSEC:') || String(rawData.licenseKey).startsWith('ENC:v1:')));
+            if (isEncryptedRecord) {
+              const readableData = sanitizeUserForFirestore(decryptUser(rawData));
+              await setDoc(doc(db, 'users', d.id), readableData, { merge: true });
+              console.log(`[Admin Data Restore] User doc '${d.id}' converted to readable format in database.`);
+            }
+          }
+        } catch (migErr) {
+          console.warn('[Admin Data Restore Error]:', migErr);
         }
       } catch (e) {
         console.warn("Firestore init error:", e);
@@ -237,14 +285,20 @@ export default function App() {
       if (!isSubscribed) return;
       const rawUsers: UserType[] = [];
       snapshot.forEach((docSnap) => {
-        const data = docSnap.data() as UserType;
+        const data = docSnap.data();
         if (data && (data.username || data.email)) {
-          rawUsers.push(data);
+          rawUsers.push(decryptUser(data as UserType));
         }
       });
 
       if (rawUsers.length > 0) {
-        const cleaned = deduplicateAndCleanUsers(rawUsers);
+        const localList: UserType[] = (() => {
+          try {
+            const s = localStorage.getItem(STORAGE_KEYS.USERS) || localStorage.getItem('isg_users_db');
+            return s ? (JSON.parse(s) as UserType[]).map(u => decryptUser(u)) : [];
+          } catch { return []; }
+        })();
+        const cleaned = deduplicateAndCleanUsers([...rawUsers, ...localList]);
         setUsers(cleaned);
 
         try {
@@ -296,12 +350,15 @@ export default function App() {
     const license = params.get('license');
     if (paytrSuccess) {
       if (currentUser) {
-        const planType = license?.toLowerCase().includes('year') || license?.toLowerCase().includes('yıl') ? 'yearly' : 'monthly';
+        const planType = getLicenseTypeFromKey(license);
+        const durationDays = getLicenseDurationDays(planType);
+        const now = new Date();
+        const expiresAt = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
         handleUpdateProfile({
           isPremium: true,
           licenseKey: license || 'ISG-PRO-SUCCESS-LICENSE',
-          licensePurchasedAt: new Date().toISOString(),
-          licenseExpiresAt: new Date(Date.now() + (planType === 'yearly' ? 365 : 30) * 24 * 60 * 60 * 1000).toISOString(),
+          licensePurchasedAt: now.toISOString(),
+          licenseExpiresAt: expiresAt.toISOString(),
           licenseType: planType
         });
       }
@@ -540,12 +597,12 @@ export default function App() {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // Sync users with localStorage
+  // Sync users with localStorage (readable for admin)
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
   }, [users]);
 
-  // Sync currentUser with localStorage
+  // Sync currentUser with localStorage (readable for admin)
   useEffect(() => {
     if (currentUser) {
       localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(currentUser));
@@ -559,23 +616,51 @@ export default function App() {
   // ==========================================
 
   const handleLogin = async (usernameInput: string, passwordInput: string): Promise<boolean> => {
-    const usernameKey = usernameInput.toLowerCase().trim();
-    const hashedInput = await hashPassword(passwordInput);
+    const usernameKey = normalizeUsername(usernameInput);
+    const cleanPass = (passwordInput || '').trim();
+    const hashedInput = await hashPassword(cleanPass);
 
-    // Try Firestore first
+    // 1. Try Firestore first
     if (db) {
       try {
+        let userData: UserType | null = null;
         const userDocRef = doc(db, 'users', usernameKey);
         const docSnap = await getDoc(userDocRef);
         if (docSnap.exists()) {
-          const userData = docSnap.data() as UserType;
-          // Match hashed password or support legacy plaintext passwords
-          if (userData.password === hashedInput || userData.password === passwordInput) {
+          userData = decryptUser(docSnap.data() as UserType);
+        } else {
+          // Check query in case doc was saved under original case or email
+          const q = query(collection(db, 'users'));
+          const snap = await getDocs(q);
+          const foundDoc = snap.docs.find(d => {
+            const data = decryptUser(d.data() as UserType);
+            return normalizeUsername(data.username) === usernameKey || 
+                   normalizeUsername(d.id) === usernameKey ||
+                   (data.email && data.email.toLowerCase().trim() === usernameInput.toLowerCase().trim());
+          });
+          if (foundDoc) {
+            userData = decryptUser(foundDoc.data() as UserType);
+          }
+        }
+
+        if (userData) {
+          // Match hashed password or support encrypted/legacy plaintext passwords
+          const decPass = decryptData(userData.password);
+          if (
+            userData.password === hashedInput || 
+            decPass === hashedInput || 
+            userData.password === cleanPass || 
+            decPass === cleanPass || 
+            userData.password === passwordInput
+          ) {
             const loggedInUser = { ...userData };
-            if (loggedInUser.username.toLowerCase() === 'admin') {
+            if (normalizeUsername(loggedInUser.username) === 'admin') {
               loggedInUser.role = 'admin';
             }
             setCurrentUser(loggedInUser);
+            try {
+              localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(encryptUser(loggedInUser)));
+            } catch (e) {}
             // Log successful login
             logActivity(usernameKey, 'login', { role: loggedInUser.role || 'user', email: loggedInUser.email || '' })
               .catch(e => console.error("Error logging login activity:", e));
@@ -587,16 +672,32 @@ export default function App() {
       }
     }
 
-    // Fallback to local state if Firestore is not accessible or offline
-    const found = users.find(
-      u => u.username.toLowerCase() === usernameKey && (u.password === hashedInput || u.password === passwordInput)
+    // 2. Fallback to local storage & state
+    const localUsers: UserType[] = (() => {
+      try {
+        const s = localStorage.getItem(STORAGE_KEYS.USERS) || localStorage.getItem('isg_users_db');
+        return s ? (JSON.parse(s) as UserType[]).map(u => decryptUser(u)) : users;
+      } catch {
+        return users;
+      }
+    })();
+
+    const found = localUsers.find(
+      u => {
+        const decLocalPass = decryptData(u.password);
+        return (normalizeUsername(u.username) === usernameKey || (u.email && u.email.toLowerCase().trim() === usernameInput.toLowerCase().trim())) &&
+               (u.password === hashedInput || decLocalPass === hashedInput || u.password === cleanPass || decLocalPass === cleanPass || u.password === passwordInput);
+      }
     );
     if (found) {
       const loggedInUser = { ...found };
-      if (loggedInUser.username.toLowerCase() === 'admin') {
+      if (normalizeUsername(loggedInUser.username) === 'admin') {
         loggedInUser.role = 'admin';
       }
       setCurrentUser(loggedInUser);
+      try {
+        localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(encryptUser(loggedInUser)));
+      } catch (e) {}
       // Log successful login fallback
       logActivity(usernameKey, 'login', { role: loggedInUser.role || 'user', email: loggedInUser.email || '' })
         .catch(e => console.error("Error logging login activity:", e));
@@ -605,56 +706,126 @@ export default function App() {
     return false;
   };
 
-  const handleRegister = async (newUser: UserType): Promise<boolean> => {
-    const usernameKey = newUser.username.toLowerCase().trim();
+  const handleRegister = async (newUser: UserType): Promise<{ success: boolean; reason?: string; suggestions?: string[]; message?: string } | boolean> => {
+    const usernameKey = normalizeUsername(newUser.username);
+    if (!usernameKey || usernameKey.length < 3) {
+      return { success: false, reason: 'invalid_username', message: 'Kullanıcı adı en az 3 karakter olmalıdır.' };
+    }
     
-    // Check Firestore first
-    if (db) {
+    // 1. Check local state
+    let isTaken = users.some(u => normalizeUsername(u.username) === usernameKey);
+
+    // 2. Check Firestore
+    if (!isTaken && db) {
       try {
         const userDocRef = doc(db, 'users', usernameKey);
         const docSnap = await getDoc(userDocRef);
         if (docSnap.exists()) {
-          return false; // Username already exists
+          isTaken = true;
+        } else {
+          const q = query(collection(db, 'users'));
+          const snap = await getDocs(q);
+          if (snap.docs.some(d => normalizeUsername(d.data()?.username) === usernameKey || normalizeUsername(d.id) === usernameKey)) {
+            isTaken = true;
+          }
         }
       } catch (err) {
         console.warn("Firestore check during registration failed:", err);
       }
     }
 
-    // Check local state fallback
-    if (users.some(u => u.username.toLowerCase() === usernameKey)) {
-      return false;
+    if (isTaken) {
+      // Gather all known usernames for suggestion filtering
+      const existingList = [...users];
+      if (db) {
+        try {
+          const snap = await getDocs(query(collection(db, 'users')));
+          snap.docs.forEach(d => {
+            const u = d.data()?.username || d.id;
+            if (u) existingList.push({ username: u } as any);
+          });
+        } catch (_) {}
+      }
+
+      const suggestions = generateAvailableUsernameSuggestions(usernameKey, newUser.name, existingList);
+      return {
+        success: false,
+        reason: 'username_taken',
+        suggestions,
+        message: `⚠️ "@${usernameKey}" kullanıcı adı sistemde zaten kayıtlı!`
+      };
     }
 
     // Hash password and save
     const hashedPassword = await hashPassword(newUser.password || '');
-    const securedUser = { ...newUser, password: hashedPassword, username: usernameKey };
+    const securedUser: UserType = { 
+      ...newUser, 
+      password: hashedPassword, 
+      username: usernameKey,
+      hasAcceptedLegalTerms: false,
+      isEmailVerified: false,
+      createdBy: 'web_register',
+      createdAt: new Date().toISOString()
+    };
 
-    const updated = [...users, securedUser];
+    const updated = deduplicateAndCleanUsers([...users, securedUser]);
     setUsers(updated);
     setCurrentUser(securedUser);
-    saveUserToFirestore(securedUser);
-    return true;
+    
+    try {
+      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updated));
+      localStorage.setItem('isg_users_db', JSON.stringify(updated));
+      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+    } catch (e) {}
+
+    await saveUserToFirestore(securedUser);
+
+    // Arka planda yöneticiye anlık bildirim e-postası gönder
+    try {
+      fetch('/api/send-new-user-notification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          newUser: {
+            ...securedUser,
+            createdAt: new Date().toISOString()
+          },
+          adminEmail: 'infoisgpro@gmail.com'
+        })
+      }).catch(err => console.warn('New user notification dispatch error:', err));
+    } catch (e) {}
+
+    return { success: true };
   };
 
   const checkUserExists = async (usernameInput: string): Promise<UserType | undefined> => {
-    const usernameKey = usernameInput.toLowerCase().trim();
+    const usernameKey = normalizeUsername(usernameInput);
     if (db) {
       try {
         const userDocRef = doc(db, 'users', usernameKey);
         const docSnap = await getDoc(userDocRef);
         if (docSnap.exists()) {
-          return docSnap.data() as UserType;
+          return decryptUser(docSnap.data() as UserType);
         }
+        const q = query(collection(db, 'users'));
+        const snap = await getDocs(q);
+        const match = snap.docs.find(d => {
+          const dec = decryptUser(d.data() as UserType);
+          return normalizeUsername(dec.username) === usernameKey || 
+                 normalizeUsername(d.id) === usernameKey ||
+                 (dec.email && dec.email.toLowerCase().trim() === usernameInput.toLowerCase().trim());
+        });
+        if (match) return decryptUser(match.data() as UserType);
       } catch (err) {
-        console.warn("Firestore check user exists failed:", err);
+        console.warn("Firestore user lookup failed:", err);
       }
     }
-    return users.find(u => u.username.toLowerCase() === usernameKey);
+    return users.find(u => normalizeUsername(u.username) === usernameKey || (u.email && u.email.toLowerCase().trim() === usernameInput.toLowerCase().trim()));
   };
 
-  const handleResetPassword = async (usernameInput: string, newPass: string): Promise<boolean> => {
-    const usernameKey = usernameInput.toLowerCase().trim();
+  // Password Reset / Account Recovery
+  const handleResetPassword = async (usernameOrEmail: string, newPass: string): Promise<boolean> => {
+    const usernameKey = normalizeUsername(usernameOrEmail);
     const hashedPassword = await hashPassword(newPass);
 
     if (db) {
@@ -667,7 +838,7 @@ export default function App() {
     }
 
     const updated = users.map(u => {
-      if (u.username.toLowerCase() === usernameKey) {
+      if (normalizeUsername(u.username) === usernameKey || (u.email && u.email.toLowerCase().trim() === usernameOrEmail.toLowerCase().trim())) {
         return { ...u, password: hashedPassword };
       }
       return u;
@@ -679,6 +850,9 @@ export default function App() {
   const handleLogout = () => {
     setCurrentUser(null);
     setActiveSection('home');
+    try {
+      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+    } catch (e) {}
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -705,7 +879,13 @@ export default function App() {
     );
     setUsers(updatedUsers);
 
-    saveUserToFirestore(updatedUser);
+    try {
+      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+      localStorage.setItem('isg_users_db', JSON.stringify(updatedUsers));
+      localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(updatedUser));
+    } catch (e) {}
+
+    await saveUserToFirestore(updatedUser);
 
     // Log standard profile update (exclude license upgrades which are logged by handleCheckoutSuccess)
     const isLicenseUpgrade = 'isPremium' in fields;
@@ -1173,12 +1353,42 @@ export default function App() {
               isPremium: true,
               licenseKey: key,
               licenseType: licenseType,
+              licensePurchasedAt: new Date().toISOString(),
               licenseExpiresAt: expiresAt
             });
           }
         }}
         onOpenAuthModal={() => setAuthModalOpen(true)}
       />
+
+      {/* 1. ADIM: 1 DEFAYA MAHSUS YASAL BİLGİLENDİRME VE DİJİTAL SÖZLEŞME ONAY MODALI (Kayıttan Hemen Sonra) */}
+      {currentUser && (currentUser.role !== 'admin' && currentUser.username !== 'admin') && currentUser.hasAcceptedLegalTerms !== true && (
+        <InitialLegalConsentModal
+          currentUser={currentUser}
+          onClose={handleLogout}
+          onComplete={async (signature) => {
+            const updatedFields: Partial<UserType> = {
+              hasAcceptedLegalTerms: true,
+              legalAcceptedAt: new Date().toISOString(),
+              userSignature: signature
+            };
+            await handleUpdateProfile(updatedFields);
+          }}
+        />
+      )}
+
+      {/* 2. ADIM: ZORUNLU E-POSTA DOĞRULAMA MODALI (Sözleşmeler onaylandıktan sonra) */}
+      {currentUser && (currentUser.role !== 'admin' && currentUser.username !== 'admin') && currentUser.hasAcceptedLegalTerms === true && currentUser.isEmailVerified !== true && (
+        <EmailVerificationModal
+          isOpen={true}
+          currentUser={currentUser}
+          onClose={handleLogout}
+          onLogout={handleLogout}
+          onVerified={async () => {
+            await handleUpdateProfile({ isEmailVerified: true, emailVerifiedAt: new Date().toISOString() });
+          }}
+        />
+      )}
 
     </div>
   );

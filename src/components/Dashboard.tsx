@@ -13,7 +13,7 @@ import {
   Loader2, CheckCircle2, ShieldAlert, Send, Eye, EyeOff
 } from 'lucide-react';
 import { maskLicenseKey } from '../lib/privacy';
-import { validateLicenseAgainstDb } from '../lib/licenseUtils';
+import { validateLicenseAgainstDb, getLicensePlanName, getRemainingLicenseTime, isLicenseActive, getLicenseTypeFromKey } from '../lib/licenseUtils';
 
 interface DashboardProps {
   currentUser: UserType;
@@ -32,6 +32,11 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
   const [editing, setEditing] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [showFullLicense, setShowFullLicense] = useState(false);
+
+  const isCurrentlyActive = isLicenseActive(currentUser);
+  const remaining = getRemainingLicenseTime(currentUser.licenseExpiresAt);
+  const detectedPlanType = currentUser.licenseType || getLicenseTypeFromKey(currentUser.licenseKey);
+  const currentPlanName = getLicensePlanName(detectedPlanType);
 
   // Password update states
   const [oldPassword, setOldPassword] = useState('');
@@ -246,14 +251,14 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
   };
 
   // Simulated purchase history list
-  const receipts = currentUser.isPremium ? [
+  const receipts = (currentUser.isPremium || currentUser.licenseKey) ? [
     {
       id: `RCP-${(currentUser.licenseKey || '1111').slice(4, 8)}`,
       date: currentUser.licensePurchasedAt || new Date().toISOString(),
-      amount: currentUser.licenseType === 'yearly' ? '₺2.990,00' : '₺299,00',
-      plan: currentUser.licenseType === 'yearly' ? 'Yıllık Pro Lisans' : 'Aylık Pro Lisans',
-      method: 'Kredi Kartı',
-      status: 'Ödendi'
+      amount: detectedPlanType === 'yearly' ? '₺2.990,00' : (detectedPlanType === 'trial' || detectedPlanType === 'demo') ? '₺0,00 (Ücretsiz Deneme)' : '₺299,00',
+      plan: `${currentPlanName} Lisansı`,
+      method: (detectedPlanType === 'trial' || detectedPlanType === 'demo') ? 'Ücretsiz Kayıt' : 'Kredi Kartı / PayTR',
+      status: isCurrentlyActive ? 'Ödendi / Aktif' : 'Süresi Doldu'
     }
   ] : [];
 
@@ -292,13 +297,17 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
                   </div>
                 </div>
 
-                {currentUser.isPremium ? (
+                {currentUser.isPremium && isCurrentlyActive ? (
                   <span className="bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 shadow-sm border border-emerald-200/50 dark:border-emerald-900/30">
-                    <Sparkles size={11} className="animate-pulse text-emerald-500 dark:text-emerald-400" /> PREMIUM AKTİF
+                    <Sparkles size={11} className="animate-pulse text-emerald-500 dark:text-emerald-400" /> {currentPlanName.toUpperCase()} (AKTİF)
+                  </span>
+                ) : currentUser.licenseKey && remaining.isExpired ? (
+                  <span className="bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-300 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 shadow-sm border border-red-200/50 dark:border-red-900/30">
+                    <ShieldAlert size={11} /> SÜRESİ DOLDU
                   </span>
                 ) : (
                   <span className="bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest shadow-sm border border-amber-200/50 dark:border-amber-900/30">
-                    KAPSAM: DENEME (DEMO)
+                    KAPSAM: DENEME / DEMO
                   </span>
                 )}
               </div>
@@ -333,9 +342,9 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-xs font-semibold text-slate-600 dark:text-slate-300 pt-2">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs font-semibold text-slate-600 dark:text-slate-300 pt-2">
                     <div>
-                      <span className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide block">Satın Alma</span>
+                      <span className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide block">Başlangıç / Kayıt</span>
                       <span className="text-slate-800 dark:text-slate-200 font-bold">{formatDate(currentUser.licensePurchasedAt)}</span>
                     </div>
                     <div>
@@ -345,7 +354,13 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
                     <div>
                       <span className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide block">Plan Tipi</span>
                       <span className="capitalize text-slate-800 dark:text-slate-200 font-bold">
-                        {currentUser.licenseType === 'yearly' ? 'Yıllık Pro Plan' : currentUser.licenseType === 'demo' ? '10 Dakikalık Demo Test Lisansı' : 'Aylık Pro Plan'}
+                        {currentPlanName}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide block">Kalan Süre</span>
+                      <span className={`font-bold ${remaining.isExpired ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                        {remaining.label}
                       </span>
                     </div>
                   </div>

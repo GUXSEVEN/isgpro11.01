@@ -22,16 +22,24 @@ export interface User {
   name: string;
   email: string;
   phone: string;
-  role: 'uzman' | 'hekim' | 'other' | 'admin';
+  role: 'uzman' | 'hekim' | 'dsp' | 'other' | 'admin';
   certificateNo?: string;
+  tcNo?: string;
+  diplomaNo?: string;
+  tescilNo?: string;
   osgb?: OSGB;
   isPremium: boolean;
   licenseKey?: string | null;
   licensePurchasedAt?: string | null;
   licenseExpiresAt?: string | null;
   licenseType?: 'monthly' | 'yearly' | 'trial' | 'demo' | null;
-  hasMultipleOsgbLicense?: boolean;
   isEmailVerified?: boolean;
+  emailVerifiedAt?: string | null;
+  hasAcceptedLegalTerms?: boolean;
+  legalAcceptedAt?: string | null;
+  userSignature?: string | null;
+  createdAt?: string;
+  createdBy?: string;
 }
 
 export interface FAQItem {
