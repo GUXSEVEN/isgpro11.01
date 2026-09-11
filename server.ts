@@ -2178,7 +2178,7 @@ async function sendEmailDirect(toEmail: string, subject: string, htmlContent: st
 }
 
 // Initialize Gemini SDK with server-side environment key
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || 'AIzaSyBEBqsA7OXzyO9msz0fguhGIFWwI91FoEk' });
 
 // Privacy helpers to prevent logging sensitive user records to terminal
 const maskEmail = (email: string): string => {
