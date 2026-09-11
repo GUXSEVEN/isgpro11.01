@@ -2561,9 +2561,9 @@ Not: L (Olasılık) ve S (Şiddet) değerleri 1 ile 5 arasında tam sayılar olm
   }
 });
 
-// AI Photo / Image Risk Analysis API (Proxied server-side with multimodal Gemini and expert OHS fallback)
+// AI Photo / Image Risk Analysis API (Proxied server-side with multimodal Gemini and dynamic models)
 app.post('/api/analyze-image', async (req, res) => {
-  const { image, prompt: userPrompt } = req.body;
+  const { image, prompt: userPrompt, apiKey: clientApiKey } = req.body;
 
   if (!image) {
     return res.status(400).json({ error: 'Görsel verisi zorunludur.' });
@@ -2574,111 +2574,210 @@ app.post('/api/analyze-image', async (req, res) => {
     cleanBase64 = cleanBase64.split(',')[1];
   }
 
-  const prompt = userPrompt || `Sen deneyimli bir İş Sağlığı ve Güvenliği (İSG) uzmanısın. Sana verilen fotoğrafı dikkatle incele ve fotoğrafta gerçekten NE GÖRDÜĞÜNÜ anlat.
-Fotoğraftaki ortamı, nesneleri, ekipmanları, çalışma koşullarını ve açıkça görülen tehlikeleri baz alarak analiz yap.
-Lütfen SADECE fotoğrafta gerçekten görülebilen veya fotoğrafın ortamından çıkarılabilecek spesifik bir tehlikeyi tanımla.
-Genel veya muğlak ifadeler kullanma; "güvensiz durum" gibi belirsiz tanımlar yerine neyin tehlikeli olduğunu açıkça belirt.
+  const activeApiKey = (clientApiKey && typeof clientApiKey === 'string' && clientApiKey.trim().length > 10)
+    ? clientApiKey.trim()
+    : (process.env.GEMINI_API_KEY || '');
 
-Yanıtı SADECE aşağıdaki JSON formatında döndür, başka metin ekleme:
+  if (!activeApiKey || activeApiKey.includes('AIzaSyBEBqs')) {
+    return res.status(401).json({
+      error: 'AI_KEY_REQUIRED',
+      message: 'Fotoğrafı detaylı ve gerçekçi analiz etmek için geçerli bir Gemini API anahtarı tanımlanmalıdır. Lütfen Google AI Studio üzerinden ücretsiz anahtarınızı girin.'
+    });
+  }
+
+  const prompt = userPrompt || `Sen Türkiye İş Sağlığı ve Güvenliği mevzuatına (6331 sayılı İSG Kanunu) ve uluslararası standartlara (ISO 45001) son derece hakim, kıdemli bir A Sınıfı İSG Baş Denetçisi ve Saha Güvenlik Uzmanısın.
+Sana verilen fotoğrafı dikkatle incele. Fotoğraftaki fiziksel ortamı, çalışma koşullarını, yapıları, zemin durumunu, makineleri, ekipmanları, el aletlerini, kabloları/elektrik unsurlarını, kimyasal kapları, yükseklik durumunu ve personelin çalışma şeklini/duruşunu tara.
+
+ÖNEMLİ FORMAT VE UZUNLUK KURALLARI (RAPORA VE TABLO HÜCRELERİNE UYGUN DENGELİ ÖZET):
+- Kapsamlı ve teknik derinliği koru, ancak aşırı uzun veya destansı paragraflar yazma. Metinler resmi İSG raporlarına ve tablo hücrelerine tam sığacak şekilde ortalama uzunlukta, sade, net ve maddeli olmalıdır (ne çok kısa ne çok uzun).
+- ASLA "genel güvensiz durum", "tertip düzen eksikliği", "saha uygunsuzluğu" gibi genelleyici yuvarlak klişeler KULLANMA.
+
+ALANLARIN YAPISI:
+1. "topic" (İlgili Konu / Kategori): Kısa, vurucu ve net mevzuat başlığı (ortalama 2-5 kelime).
+   Örnek: "Dış Cephe İskelelerinde Düşme Güvenliği", "Seyyar Elektrik Tesisatı ve Kaçak Akım", "Makine Döner Aksam Koruyucuları".
+
+2. "hazard" (Spesifik Tehlike Kaynağı): Fotoğrafta görülen somut kusuru ve tehlike kaynağını doğrudan belirten 1-2 cümlelik net tanım.
+   Örnek: "İskele çalışma platformunda zorunlu ana korkuluk, ara korkuluk ve tekmeleğin takılmamış olması."
+
+3. "risk" (Olası Kaza ve Sonuç): Tehlikenin yol açabileceği kazayı ve fiziksel hasarı belirten 1-2 cümlelik net etki.
+   Örnek: "Yüksekten sert zemine düşme sonucu kafa travması, uzuv kırığı veya ölümcül yaralanma riski."
+
+4. "precaution" (Alınması Gereken Önlemler): Rapora sığacak şekilde 2 veya 3 kısa, net ve numaralandırılmış teknik/idari madde yaz.
+   Örnek: "1. TS EN 12811 standardına uygun 1m ana ve 50cm ara korkuluk takılmalıdır.\\n2. Tam vücut tipi emniyet kemeri şok emicili lanyard ile yaşam hattına bağlanmalıdır.\\n3. İskele yeşil etiket denetimi tamamlanmadan çalışma başlatılmamalıdır."
+
+5. Risk Skorları (L, S, Kinney, FMEA):
+   Fotoğraftaki tehlikenin ciddiyetine ve frekansına göre dinamik ve gerçekçi puanlar ver:
+   - L (Olasılık 1-5): 1: Çok Düşük, 2: Düşük, 3: Orta, 4: Yüksek, 5: Çok Yüksek
+   - S (Şiddet 1-5): 1: Hafif ilk yardım, 2: Tıbbi müdahale, 3: Uzuv kırığı/iş görmezlik, 4: Kalıcı sakatlık, 5: Can kaybı
+   - Fine-Kinney: P (0.2-10), F (0.5-10), S_KINNEY (1-100)
+   - FMEA: O (1-10), S_FMEA (1-10), D (1-10)
+
+Lütfen SADECE aşağıdaki JSON formatında yanıt ver, markdown tırnağı (\`\`\`json) veya başka metin ekleme:
 {
-  "topic": "Spesifik İSG kategori adı (örn: Elektrik Güvenliği, Yüksekte Çalışma, Makine Koruyucuları)",
-  "hazard": "Fotoğrafta görülen spesifik tehlike kaynağı (örn: Koruyucusu açık döner testere bıçağı, Korkuluksuz iskele platformu)",
-  "risk": "Bu tehlikenin yol açabileceği spesifik kaza veya yaralanma (örn: Testere bıçağına el kaptırma sonucu uzuv kaybı)",
-  "precaution": "Spesifik teknik ve idari önlem",
-  "L": 3, "S": 4, "P": 3, "F": 6, "S_KINNEY": 15, "O": 4, "S_FMEA": 7, "D": 3
+  "topic": "Spesifik İSG Konusu",
+  "hazard": "Somut tehlike kaynağı (1-2 net cümle)",
+  "risk": "Olası kaza ve fiziksel zarar (1-2 net cümle)",
+  "precaution": "1. Birinci somut önlem\\n2. İkinci somut önlem\\n3. Üçüncü somut önlem",
+  "L": 4,
+  "S": 5,
+  "P": 6,
+  "F": 6,
+  "S_KINNEY": 15,
+  "O": 6,
+  "S_FMEA": 8,
+  "D": 4
 }`;
 
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            { text: prompt },
-            { inlineData: { mimeType: 'image/jpeg', data: cleanBase64 } }
-          ]
-        }
-      ]
-    });
+  const candidateModels = [
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
+    'gemini-3.6-flash',
+    'gemini-3.1-flash-lite',
+    'gemini-flash-latest'
+  ];
 
-    const responseText = response.text || '';
-    const cleanJsonText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-    const parsedData = JSON.parse(cleanJsonText);
-    return res.json({
-      topic: parsedData.topic || parsedData.category || 'Saha Güvenliği',
-      hazard: parsedData.hazard || 'Tespit edilen tehlike kaynağı',
-      risk: parsedData.risk || 'Olası kaza ve yaralanma riski',
-      precaution: parsedData.precaution || 'Alınması gereken teknik ve idari önlem',
-      L: Number(parsedData.L) || 3,
-      S: Number(parsedData.S) || 4,
-      P: Number(parsedData.P) || 3,
-      F: Number(parsedData.F) || 6,
-      S_KINNEY: Number(parsedData.S_KINNEY) || 15,
-      O: Number(parsedData.O) || 4,
-      S_FMEA: Number(parsedData.S_FMEA) || 7,
-      D: Number(parsedData.D) || 3
-    });
-  } catch (error: any) {
-    console.warn('[AI Image Analysis] Gemini call failed or key revoked, using expert OHS image engine fallback:', error.message);
-    const fallback = analyzeExpertOHSImageFallback(userPrompt);
-    return res.json(fallback);
+  let lastError: any = null;
+
+  for (const model of candidateModels) {
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${activeApiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                { text: prompt },
+                { inline_data: { mime_type: 'image/jpeg', data: cleanBase64 } }
+              ]
+            }
+          ]
+        })
+      });
+
+      const resData = await response.json();
+
+      if (resData.error) {
+        console.warn(`[AI Image Analysis] Model ${model} error:`, resData.error.message);
+        lastError = new Error(resData.error.message);
+        if (resData.error.message?.includes('leaked') || resData.error.code === 403) {
+          return res.status(403).json({
+            error: 'AI_KEY_INVALID',
+            message: 'Kullanılan Gemini API anahtarı geçersiz veya iptal edilmiş. Lütfen yeni bir API anahtarı tanımlayın.'
+          });
+        }
+        continue;
+      }
+
+      const responseText = resData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      if (!responseText) {
+        continue;
+      }
+
+      const cleanJsonText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+      const parsedData = JSON.parse(cleanJsonText);
+
+      return res.json({
+        topic: parsedData.topic || parsedData.category || 'Saha Güvenliği',
+        hazard: parsedData.hazard || 'Fotoğrafta tespit edilen somut tehlike kaynağı',
+        risk: parsedData.risk || 'Olası kaza ve yaralanma riski',
+        precaution: parsedData.precaution || 'Alınması gereken teknik ve idari önlemler',
+        L: Number(parsedData.L) || 3,
+        S: Number(parsedData.S) || 4,
+        P: Number(parsedData.P) || 3,
+        F: Number(parsedData.F) || 6,
+        S_KINNEY: Number(parsedData.S_KINNEY) || 15,
+        O: Number(parsedData.O) || 4,
+        S_FMEA: Number(parsedData.S_FMEA) || 7,
+        D: Number(parsedData.D) || 3
+      });
+    } catch (err: any) {
+      console.warn(`[AI Image Analysis] Model ${model} attempt failed:`, err.message);
+      lastError = err;
+    }
   }
+
+  return res.status(500).json({
+    error: 'AI_ANALYSIS_FAILED',
+    message: lastError?.message || 'Görsel yapay zeka analizi tamamlanamadı. Lütfen API anahtarınızı ve internet bağlantınızı kontrol edin.'
+  });
 });
 
 // Universal Gemini Proxy API (Handles precautions, toolbox talks, audits with intelligent fallback)
 app.post('/api/gemini-proxy', async (req, res) => {
-  const { prompt, base64Image } = req.body;
+  const { prompt, base64Image, apiKey: clientApiKey } = req.body;
 
   if (!prompt) {
     return res.status(400).json({ error: 'Prompt zorunludur.' });
   }
 
-  try {
-    let parts: any[] = [{ text: prompt }];
-    if (base64Image) {
-      let clean = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
-      parts.push({ inlineData: { mimeType: 'image/jpeg', data: clean } });
-    }
+  const activeApiKey = (clientApiKey && typeof clientApiKey === 'string' && clientApiKey.trim().length > 10)
+    ? clientApiKey.trim()
+    : (process.env.GEMINI_API_KEY || '');
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: [{ role: 'user', parts }]
-    });
+  const candidateModels = [
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
+    'gemini-flash-latest'
+  ];
 
-    return res.json({ text: response.text || '' });
-  } catch (error: any) {
-    console.warn('[Gemini Proxy] Key issue or error, using intelligent OHS fallback:', error.message);
-    const p = prompt.toLowerCase();
-    if (p.includes('toolbox') || p.includes('konuşma')) {
-      return res.json({
-        text: `Değerli çalışma arkadaşlarım, günaydın. Bugün sahaya çıkmadan önce hepimizin sağlığı ve güvenliği için kısa bir değerlendirme yapmak istiyorum. Sahada yapacağımız çalışmalarda kişisel koruyucu donanımlarımızı eksiksiz kullanmak, çalışma alanımızdaki tertip ve düzene özen göstermek hayati önem taşımaktadır. Unutmayalım ki hiçbir iş, bizim can güvenliğimizden daha acil veya önemli değildir. Güvenli, kazasız ve verimli bir çalışma günü diliyorum.`
-      });
+  if (activeApiKey && !activeApiKey.includes('AIzaSyBEBqs')) {
+    for (const model of candidateModels) {
+      try {
+        let parts: any[] = [{ text: prompt }];
+        if (base64Image) {
+          let clean = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
+          parts.push({ inline_data: { mime_type: 'image/jpeg', data: clean } });
+        }
+
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${activeApiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts }] })
+        });
+
+        const resData = await response.json();
+        const text = resData.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          return res.json({ text });
+        }
+      } catch (err: any) {
+        console.warn(`[Gemini Proxy] Model ${model} failed:`, err.message);
+      }
     }
-    if (p.includes('önlem') || p.includes('precaution') || p.includes('iyileştir')) {
-      return res.json({
-        text: `İlgili çalışma alanında risk kaynağı izole edilmeli; TS EN standartlarına uygun Kişisel Koruyucu Donanım (KKD) kullanımı sağlanmalı, çalışma talimatları güncellenerek personele uygulamalı İSG eğitimi verilmeli ve saha periyodik denetimleri kayıt altına alınmalıdır.`
-      });
-    }
-    if (p.includes('audit') || p.includes('denet') || p.includes('score')) {
-      return res.json({
-        text: JSON.stringify({
-          score: 88,
-          strengths: ["Yasal mevzuata uygunluk genel olarak sağlanmıştır.", "Risk derecelendirmesi ve önlem tanımları tutarlıdır."],
-          weaknesses: ["Bazı maddelerde termin ve sorumlular daha net tanımlanabilir."],
-          recommendations: ["Periyodik kontrollerin ve eğitim belgelerinin kayıtları periyodik olarak güncellenmelidir."]
-        })
-      });
-    }
-    if (p.includes('prosedür') || p.includes('acil durum')) {
-      return res.json({
-        text: `1. Olayın Tanımı ve Bildirimi: Acil durum tespit edildiğinde derhal acil durum koordinatörüne ve ilgili birimlere haber verilir.\n2. Önleyici Tedbirler: Çalışma sahasında acil çıkış güzergahları ve ekipmanlar sürekli açık tutulur.\n3. Tahliye ve Güvenlik: Çalışanlar panik yapmadan toplanma alanına intikal eder, toplanma alanında yoklama alınır.`
-      });
-    }
+  }
+
+  console.warn('[Gemini Proxy] Key issue or error, using intelligent OHS fallback');
+  const p = prompt.toLowerCase();
+  if (p.includes('toolbox') || p.includes('konuşma')) {
     return res.json({
-      text: `Saha güvenliği kurallarına riayet edilmeli, standartlara uygun koruyucu donanım kullanılmalı ve periyodik denetimler aksatılmamalıdır.`
+      text: `Değerli çalışma arkadaşlarım, günaydın. Bugün sahaya çıkmadan önce hepimizin sağlığı ve güvenliği için kısa bir değerlendirme yapmak istiyorum. Sahada yapacağımız çalışmalarda kişisel koruyucu donanımlarımızı eksiksiz kullanmak, çalışma alanımızdaki tertip ve düzene özen göstermek hayati önem taşımaktadır. Unutmayalım ki hiçbir iş, bizim can güvenliğimizden daha acil veya önemli değildir. Güvenli, kazasız ve verimli bir çalışma günü diliyorum.`
     });
   }
+  if (p.includes('önlem') || p.includes('precaution') || p.includes('iyileştir')) {
+    return res.json({
+      text: `İlgili çalışma alanında risk kaynağı izole edilmeli; TS EN standartlarına uygun Kişisel Koruyucu Donanım (KKD) kullanımı sağlanmalı, çalışma talimatları güncellenerek personele uygulamalı İSG eğitimi verilmeli ve saha periyodik denetimleri kayıt altına alınmalıdır.`
+    });
+  }
+  if (p.includes('audit') || p.includes('denet') || p.includes('score')) {
+    return res.json({
+      text: JSON.stringify({
+        score: 88,
+        strengths: ["Yasal mevzuata uygunluk genel olarak sağlanmıştır.", "Risk derecelendirmesi ve önlem tanımları tutarlıdır."],
+        weaknesses: ["Bazı maddelerde termin ve sorumlular daha net tanımlanabilir."],
+        recommendations: ["Periyodik kontrollerin ve eğitim belgelerinin kayıtları periyodik olarak güncellenmelidir."]
+      })
+    });
+  }
+  if (p.includes('prosedür') || p.includes('acil durum')) {
+    return res.json({
+      text: `1. Olayın Tanımı ve Bildirimi: Acil durum tespit edildiğinde derhal acil durum koordinatörüne ve ilgili birimlere haber verilir.\n2. Önleyici Tedbirler: Çalışma sahasında acil çıkış güzergahları ve ekipmanlar sürekli açık tutulur.\n3. Tahliye ve Güvenlik: Çalışanlar panik yapmadan toplanma alanına intikal eder, toplanma alanında yoklama alınır.`
+    });
+  }
+  return res.json({
+    text: `Saha güvenliği kurallarına riayet edilmeli, standartlara uygun koruyucu donanım kullanılmalı ve periyodik denetimler aksatılmamalıdır.`
+  });
 });
 
 // Contact Support / Mail Sending API (Integrated with real SMTP/Nodemailer and EmailJS fallback)
