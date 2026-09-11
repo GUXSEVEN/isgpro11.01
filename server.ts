@@ -2181,12 +2181,12 @@ async function sendEmailDirect(toEmail: string, subject: string, htmlContent: st
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
 function generateExpertOHSAnalysis(description: string, method?: string) {
-  const text = (description || '').toLowerCase();
+  const text = toLatin(description || '').toLowerCase();
   
   let category = 'Genel İş Güvenliği';
   let hazard = 'Uygun olmayan çalışma koşulları ve tehlikeli durum';
   let risk = 'İş kazası, yaralanma veya meslek hastalığı riski';
-  let precaution = 'İlgili çalışma talimatlarına uyulmalı, KKD kullanımı sağlanmalı ve periyodik kontroller yapılmalıdır.';
+  let precaution = '1. İlgili çalışma talimatlarına uyulmalıdır.\n2. Standartlara uygun KKD kullanımı sağlanmalıdır.\n3. Periyodik kontroller ve denetimler yapılmalıdır.';
   let L = 3;
   let S = 3;
 
@@ -2194,58 +2194,59 @@ function generateExpertOHSAnalysis(description: string, method?: string) {
     category = 'Elektrik Güvenliği';
     hazard = 'Açıkta duran veya izolasyonu bozulmuş elektrik kabloları ve kaçak akım riski';
     risk = 'Elektrik çarpması, elektrik yanıkları ve yangın tehlikesi';
-    precaution = 'Kaçak akım rölesi (30mA) montajı yapılmalı, kablolar kanala alınmalı, topraklama ölçümleri ve periyodik kontroller tamamlanmalıdır.';
+    precaution = '1. Kaçak akım rölesi (30mA) montajı yapılmalı ve test edilmelidir.\n2. Kablolar koruyucu kanala veya havai hatta alınmalıdır.\n3. Topraklama ölçümleri ve periyodik kontroller tamamlanmalıdır.';
     L = 3; S = 4;
-  } else if (text.includes('yüksek') || text.includes('merdiven') || text.includes('iskele') || text.includes('çatı') || text.includes('düşme')) {
+  } else if (text.includes('yuksek') || text.includes('merdiven') || text.includes('iskele') || text.includes('cati') || text.includes('dusme') || text.includes('korkuluk')) {
     category = 'Yüksekte Çalışma';
-    hazard = 'Korkuluksuz veya güvensiz platform/merdiven üzerinde çalışma yapılması';
+    hazard = 'Korkuluksuz veya güvensiz iskele/platform üzerinde çalışma yapılması';
     risk = 'Yüksekten düşme sonucu ağır yaralanma veya can kaybı';
-    precaution = 'Standartlara uygun korkuluk takılmalı, yaşam hattı kurulmalı, çalışanlara tam vücut tipi emniyet kemeri kullandırılmalı ve yüksekte çalışma eğitimi verilmelidir.';
+    precaution = '1. TS EN 12811 standardına uygun ana ve ara korkuluk monte edilmelidir.\n2. Tam vücut tipi emniyet kemeri şok emiciyle yaşam hattına bağlanmalıdır.\n3. Yüksekte çalışma eğitimi ve yeşil etiket kontrolü sağlanmalıdır.';
     L = 3; S = 5;
-  } else if (text.includes('kaynak') || text.includes('taşlama') || text.includes('kıvılcım') || text.includes('sıcak')) {
+  } else if (text.includes('kaynak') || text.includes('taslama') || text.includes('kivilcim') || text.includes('sicak')) {
     category = 'Sıcak İşler ve Kaynak Güvenliği';
     hazard = 'Kaynak/kesme işlemi sırasında oluşan kıvılcım, çapak ve UV/IR ışınlar';
     risk = 'Göz yaralanması, yanık, duman solunması ve parlama/yangın riski';
-    precaution = 'Otomatik kararan kaynak maskesi ve deri önlük kullanılmalı, seyyar kaynak paravanı çekilmeli, yerel emiş havalandırması ve yangın tüpü hazır bulundurulmalıdır.';
+    precaution = '1. Otomatik kararan kaynak maskesi ve deri önlük kullanılmalıdır.\n2. Seyyar kaynak paravanı çekilerek çevre izole edilmelidir.\n3. Yerel emiş havalandırması ve yangın tüpü hazır bulundurulmalıdır.';
     L = 4; S = 3;
   } else if (text.includes('kimyasal') || text.includes('boya') || text.includes('tiner') || text.includes('asit') || text.includes('gaz') || text.includes('toz')) {
     category = 'Kimyasal Maddelerle Çalışma';
     hazard = 'Uçucu kimyasalların, solvent veya asitlerin kontrolsüz kullanımı ve solunması';
     risk = 'Zehirlenme, kimyasal yanık, solunum yolu tahribatı ve yangın';
-    precaution = 'MGBF (Malzeme Güvenlik Bilgi Formu) çalışma alanında bulundurulmalı, A2P3 tipi gaz maskesi ve nitril eldiven kullanılmalı, kimyasal dolaplarında havalandırma sağlanmalıdır.';
+    precaution = '1. Malzeme Güvenlik Bilgi Formu (MGBF) sahada bulundurulmalıdır.\n2. A2P3 tipi gaz maskesi ve kimyasala dayanıklı eldiven kullanılmalıdır.\n3. Kimyasal dolaplarında havalandırma ve döküntü kiti sağlanmalıdır.';
     L = 3; S = 4;
-  } else if (text.includes('forklift') || text.includes('vinç') || text.includes('istif') || text.includes('taşıma') || text.includes('yük')) {
+  } else if (text.includes('forklift') || text.includes('vinc') || text.includes('istif') || text.includes('tasima') || text.includes('yuk')) {
     category = 'Kaldırma ve Taşıma Ekipmanları';
     hazard = 'Kaldırma aracı veya iş makinesinin kontrolsüz hareketi ve yük düşmesi';
     risk = 'Ezilme, çarpma, devrilme ve malzeme hasarı';
-    precaution = 'Ekipmanın periyodik kontrolü güncel olmalı, yetkili operatör belgesi kontrol edilmeli, yaya yolları ayrılmalı ve yük altında kimse bulundurulmamalıdır.';
+    precaution = '1. Ekipmanın periyodik kontrolü güncel tutulmalıdır.\n2. Yetkili operatör belgesi kontrol edilmelidir.\n3. Yaya yolları ayrılmalı ve yük altında kimse bulundurulmamalıdır.';
     L = 3; S = 4;
-  } else if (text.includes('yangın') || text.includes('yanıcı') || text.includes('patlayıcı') || text.includes('tüp')) {
+  } else if (text.includes('yangin') || text.includes('yanici') || text.includes('patlayici') || text.includes('tup')) {
     category = 'Yangın Güvenliği';
     hazard = 'Yanıcı maddelerin depolanma kurallarına uyulmaması veya ateş kaynakları';
     risk = 'Yangın, patlama, dumandan zehirlenme ve can/mal kaybı';
-    precaution = 'Yangın söndürme cihazları bakımlı olmalı, acil çıkış kapıları açık tutulmalı, duman dedektörleri aktif olmalı ve personele yangın eğitimi verilmelidir.';
+    precaution = '1. Yangın söndürme cihazları bakımlı ve erişilebilir olmalıdır.\n2. Acil çıkış kapıları açık ve işaretli tutulmalıdır.\n3. Duman dedektörleri aktif olmalı ve personele yangın eğitimi verilmelidir.';
     L = 2; S = 5;
-  } else if (text.includes('ergonomi') || text.includes('kaldır') || text.includes('bel') || text.includes('ağır') || text.includes('duruş')) {
+  } else if (text.includes('ergonomi') || text.includes('kaldir') || text.includes('bel') || text.includes('agir') || text.includes('durus')) {
     category = 'Ergonomi ve Manuel Taşıma';
     hazard = 'Ağır yüklerin elle kaldırılması ve uygunsuz ergonomik çalışma duruşları';
     risk = 'Kas-iskelet sistemi hastalıkları, bel fıtığı ve disk kayması';
-    precaution = 'Yük taşıma sınırlarına (maks 25kg) uyulmalı, mekanik taşıma araçları (transpalet) tercih edilmeli ve çalışanlara doğru kaldırma teknikleri eğitimi verilmelidir.';
+    precaution = '1. Yük taşıma sınırlarına (maks 25kg) uyulmalıdır.\n2. Mekanik taşıma araçları (transpalet) tercih edilmelidir.\n3. Çalışanlara doğru kaldırma teknikleri eğitimi verilmelidir.';
     L = 4; S = 2;
-  } else if (text.includes('makine') || text.includes('pres') || text.includes('testere') || text.includes('dönen') || text.includes('bıçak')) {
+  } else if (text.includes('makine') || text.includes('pres') || text.includes('testere') || text.includes('donen') || text.includes('bicak')) {
     category = 'Makine ve Ekipman Güvenliği';
     hazard = 'Dönen aksamların veya pres mekanizmalarının muhafazasız olması';
     risk = 'Uzuv kaptırma, ezilme, kopma ve ağır yaralanma';
-    precaution = 'Sabit veya kilitli hareketli koruyucular takılmalı, çift el kumanda/fotosel devrede olmalı, acil durdurma butonları çalışır durumda olmalıdır.';
+    precaution = '1. Sabit veya kilitli hareketli koruyucular takılmalıdır.\n2. Çift el kumanda / fotosel devrede olmalıdır.\n3. Acil durdurma butonları çalışır durumda tutulmalıdır.';
     L = 3; S = 5;
   } else {
     hazard = `${description.trim()} kaynaklı tehlike ve risk unsurları`;
     risk = 'Çalışanların zarar görmesi, iş kazası ve güvensiz durum oluşumu';
-    precaution = 'Tehlike kaynağı izole edilmeli, standartlara uygun KKD kullanımı denetlenmeli ve iş başı İSG bilgilendirmesi yapılmalıdır.';
+    precaution = '1. Tehlike kaynağı izole edilmeli ve çalışma alanı kontrol altına alınmalıdır.\n2. Standartlara uygun teknik ve idari önlemler alınmalıdır.\n3. İş başı İSG bilgilendirmesi ve denetimi yapılmalıdır.';
     L = 3; S = 3;
   }
 
   return {
+    topic: category,
     category,
     hazard,
     risk,
@@ -2509,56 +2510,88 @@ async function initReleasesFromFirestore() {
 // 1. FULL-STACK API ENDPOINTS
 // ==========================================
 
-// AI Risk Generation API (Proxied server-side to hide API key)
+// AI Risk Generation API (Proxied server-side with dynamic models and fallback)
 app.post('/api/generate-risk', async (req, res) => {
-  const { description, method } = req.body;
+  const { description, method, apiKey: clientApiKey } = req.body;
 
   if (!description) {
     return res.status(400).json({ error: 'Açıklama alanı zorunludur.' });
   }
 
-  try {
-    const prompt = `Sen uzman bir İş Sağlığı ve Güvenliği (İSG / OHS) danışmanısın.
-Aşağıda belirtilen çalışma senaryosu veya iş faaliyeti için detaylı bir risk değerlendirmesi yap.
-Senaryo: "${description}"
+  const activeApiKey = (clientApiKey && typeof clientApiKey === 'string' && clientApiKey.trim().length > 10)
+    ? clientApiKey.trim()
+    : (process.env.GEMINI_API_KEY || '');
 
-Yanıtı sadece geçerli bir JSON olarak döndür. Markdown etiketleri (örn. \`\`\`json) veya başka açıklama metni ekleme. Sadece saf JSON string döndür.
-Yöntem: ${method || 'MATRIX_L'} (L Tipi 5x5 Matris)
+  const candidateModels = [
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
+    'gemini-3.6-flash',
+    'gemini-3.1-flash-lite',
+    'gemini-flash-latest'
+  ];
 
-JSON şeması:
+  const prompt = `Sen Türkiye İş Sağlığı ve Güvenliği mevzuatına (6331 sayılı Kanun) ve uluslararası standartlara hakim, uzman bir İSG Baş Denetçisisin.
+Aşağıda belirtilen çalışma faaliyeti / ortamı için resmi İSG raporlarına ve tablo hücrelerine tam sığacak şekilde, ortalama uzunlukta ve maddeli bir risk analizi yap.
+İş Tanımı / Senaryo: "${description}"
+
+Lütfen SADECE aşağıdaki JSON formatında yanıt ver, markdown tırnağı ve başka açıklama ekleme:
 {
-  "category": "Kısa ve öz kategori adı (Örn: Yüksekte Çalışma, Elektrik Güvenliği, Kişisel Koruyucu Donanım)",
-  "hazard": "Tehlike kaynağı (kısa ve teknik, örn: Korkuluksuz iskele platformu)",
-  "risk": "Olası kaza / sonuç (örn: Yüksekten düşme sonucu ağır yaralanma veya can kaybı)",
-  "precaution": "Alınması gereken teknik ve idari İSG önlemleri (örneğin: Korkuluk montajı, yaşam hatları, dikey yaşam hattına paraşüt tipi emniyet kemeriyle bağlanma, eğitim ve gözetim)",
+  "topic": "Spesifik İSG Konusu (2-4 kelime)",
+  "hazard": "Somut tehlike kaynağı (1-2 net cümle)",
+  "risk": "Olası kaza ve sonuç (1-2 net cümle)",
+  "precaution": "1. Birinci teknik önlem\\n2. İkinci teknik önlem\\n3. Üçüncü idari/KKD önlemi",
   "L": 4, 
-  "S": 5
-}
+  "S": 4,
+  "P": 6,
+  "F": 6,
+  "S_KINNEY": 15,
+  "O": 6,
+  "S_FMEA": 8,
+  "D": 4
+}`;
 
-Not: L (Olasılık) ve S (Şiddet) değerleri 1 ile 5 arasında tam sayılar olmalıdır.`;
+  if (activeApiKey && !activeApiKey.includes('AIzaSyBEBqs')) {
+    for (const model of candidateModels) {
+      try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${activeApiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+        });
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-    });
-
-    const responseText = response.text || '';
-    // Clean potential markdown wrappers
-    const cleanJsonText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-    
-    try {
-      const parsedData = JSON.parse(cleanJsonText);
-      return res.json(parsedData);
-    } catch (parseError) {
-      console.warn('AI returned invalid JSON, falling back to expert OHS engine:', cleanJsonText);
-      const fallbackData = generateExpertOHSAnalysis(description, method);
-      return res.json(fallbackData);
+        const resData = await response.json();
+        const text = resData.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          const cleanJsonText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+          const parsed = JSON.parse(cleanJsonText);
+          return res.json({
+            topic: parsed.topic || parsed.category || 'Genel İSG',
+            category: parsed.topic || parsed.category || 'Genel İSG',
+            hazard: parsed.hazard || 'Fotoğrafta/sitede tespit edilen somut tehlike',
+            risk: parsed.risk || 'Olası kaza ve yaralanma riski',
+            precaution: parsed.precaution || 'Standartlara uygun teknik ve idari önlemler',
+            L: Number(parsed.L) || 3,
+            S: Number(parsed.S) || 3,
+            P: Number(parsed.P) || 3,
+            F: Number(parsed.F) || 6,
+            S_KINNEY: Number(parsed.S_KINNEY) || 15,
+            O: Number(parsed.O) || 4,
+            S_FMEA: Number(parsed.S_FMEA) || 7,
+            D: Number(parsed.D) || 3
+          });
+        }
+      } catch (err: any) {
+        console.warn(`[Generate Risk] Model ${model} failed:`, err.message);
+      }
     }
-  } catch (error: any) {
-    console.warn('Gemini API Error or key issue, using expert OHS analysis engine fallback:', error.message);
-    const fallbackData = generateExpertOHSAnalysis(description, method);
-    return res.json(fallbackData);
   }
+
+  // Fallback: Yerel uzman İSG motoru
+  const fallbackData = generateExpertOHSAnalysis(description, method);
+  return res.json({
+    ...fallbackData,
+    topic: fallbackData.category || 'Genel İSG'
+  });
 });
 
 // AI Photo / Image Risk Analysis API (Proxied server-side with multimodal Gemini and dynamic models)
