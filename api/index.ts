@@ -1,3 +1,4 @@
+// @ts-ignore
 import * as serverModule from '../dist/server.cjs';
 
 function resolveApp(mod: any) {

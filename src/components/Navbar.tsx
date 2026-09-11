@@ -5,7 +5,7 @@
 
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ShieldCheck, User, LogOut, Menu, X, LayoutDashboard, CreditCard, Sparkles, Settings, Sun, Moon } from 'lucide-react';
+import { ShieldCheck, User, LogOut, Menu, X, LayoutDashboard, CreditCard, Sparkles, Settings, Sun, Moon, ArrowUpRight } from 'lucide-react';
 import { User as UserType } from '../types';
 
 interface NavbarProps {
@@ -93,6 +93,25 @@ export default function Navbar({
                 )}
               </button>
             ))}
+
+            {/* Direct Link to ISG Application Sub-Site in New Tab */}
+            <a
+              href="/panel"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => {
+                if (!currentUser) {
+                  e.preventDefault();
+                  onOpenAuthModal();
+                }
+              }}
+              className="ml-2 flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-lg text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 border border-emerald-200 dark:border-emerald-800/50 transition-all hover:shadow-sm group select-none cursor-pointer"
+              title={currentUser ? "İSG Yönetim Uygulamasını Yeni Sekmede Başlat" : "Panele erişmek için lütfen önce giriş yapın"}
+            >
+              <LayoutDashboard size={14} className="text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
+              <span>İSG Uygulama Paneli</span>
+              <ArrowUpRight size={13} className="text-emerald-500 opacity-75 group-hover:opacity-100 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
+            </a>
           </div>
 
           {/* Desktop User Panel */}
@@ -215,6 +234,27 @@ export default function Navbar({
                   {item.label}
                 </button>
               ))}
+
+              {/* Mobile Direct Link to ISG Panel */}
+              <a
+                href="/panel"
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => {
+                  setMobileMenuOpen(false);
+                  if (!currentUser) {
+                    e.preventDefault();
+                    onOpenAuthModal();
+                  }
+                }}
+                className="w-full flex items-center justify-between px-4 py-3 rounded-xl text-sm font-bold bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md hover:from-emerald-700 hover:to-teal-700 transition-all cursor-pointer"
+              >
+                <div className="flex items-center gap-2.5">
+                  <LayoutDashboard size={17} />
+                  <span>İSG Uygulama Paneli</span>
+                </div>
+                <ArrowUpRight size={17} />
+              </a>
 
               <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-col gap-2">
                 {/* Mobile Dark Mode Toggle inside Menu */}

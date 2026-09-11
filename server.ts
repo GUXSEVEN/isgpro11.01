@@ -4,9 +4,12 @@
  */
 
 import express from 'express';
+import http from 'http';
+import compression from 'compression';
 import path from 'path';
 import fs from 'fs';
 import dns from 'dns';
+import os from 'os';
 import { fileURLToPath } from 'url';
 
 const __filenameSafe = typeof __filename !== 'undefined' ? __filename : (typeof import.meta !== 'undefined' && import.meta.url ? fileURLToPath(import.meta.url) : '');
@@ -56,8 +59,8 @@ interface ContractPDFOptions {
   customerPhone?: string;
   customerAddress?: string;
   orderId: string;
-  planName: string;
-  price: string;
+  planName?: string;
+  price?: string;
   approvalDate: string;
   customerSignature?: string; // base64 PNG data URL
   sellerSignature?: string;   // base64 PNG data URL
@@ -2194,6 +2197,16 @@ const maskLicenseKey = (key: string): string => {
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
+// Response compression (gzip/deflate) - drastically speeds up LAN/Wi-Fi asset downloads
+app.use(compression({
+  threshold: 1024,
+  level: 6,
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) return false;
+    return compression.filter(req, res);
+  }
+}));
+
 // Health check endpoints for Render and uptime monitoring (bypasses HTTPS redirects)
 app.get('/health', (req, res) => {
   res.status(200).send('OK');
@@ -2225,7 +2238,8 @@ app.use((req, res, next) => {
   }
   if (process.env.NODE_ENV === 'production' && !process.env.VERCEL && req.headers['x-forwarded-proto'] === 'http') {
     const host = req.headers.host || '';
-    if (!host.includes('localhost') && !host.includes('127.0.0.1')) {
+    const isPrivateIp = /^192\.168\./.test(host) || /^10\./.test(host) || /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host);
+    if (!host.includes('localhost') && !host.includes('127.0.0.1') && !isPrivateIp) {
       return res.redirect(308, `https://${host}${req.url}`);
     }
   }
@@ -2238,12 +2252,15 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // In-memory array for simulated email/contact requests
 interface Message {
   id: string;
-  name: string;
+  name?: string;
   email: string;
   subject: string;
-  message: string;
-  sentAt: string;
-  status: 'Beklemede' | 'Okundu' | 'Yanıtlandı';
+  message?: string;
+  sentAt?: string;
+  status?: 'Beklemede' | 'Okundu' | 'Yanıtlandı';
+  html?: string;
+  timestamp?: string;
+  attachments?: string[];
 }
 
 const messageQueue: Message[] = [];
@@ -3259,6 +3276,8 @@ interface PaytrOrder {
   paymentType?: string;
   currency?: string;
   paymentAmount?: number;
+  username?: string;
+  isFromPanel?: boolean;
 }
 const paytrOrders: Record<string, PaytrOrder> = {};
 
@@ -3358,7 +3377,14 @@ function resolvePublicAppUrl(req: express.Request, customDomain?: string): strin
   const rawHost = (req.headers.host || '').trim();
   let host = rawForwardedHost || rawHost;
 
-  if (!host || host.includes('localhost') || host.includes('127.0.0.1')) {
+  const isLocalOrLan = !host || 
+    host.includes('localhost') || 
+    host.includes('127.0.0.1') || 
+    host.startsWith('192.168.') || 
+    host.startsWith('10.') || 
+    /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host);
+
+  if (isLocalOrLan) {
     const referer = (req.headers.referer as string) || (req.headers.origin as string) || '';
     if (referer) {
       try {
@@ -3369,7 +3395,7 @@ function resolvePublicAppUrl(req: express.Request, customDomain?: string): strin
     return host ? `http://${host}` : 'http://localhost:3000';
   }
 
-  const protocol = req.headers['x-forwarded-proto'] === 'http' ? 'http' : 'https';
+  const protocol = req.headers['x-forwarded-proto'] === 'http' ? 'http' : (req.secure ? 'https' : 'http');
   return `${protocol}://${host}`;
 }
 
@@ -3528,11 +3554,10 @@ async function activateAndNotifyOrder(merchantOid: string): Promise<boolean> {
   }
 
   // Activate license in DB/Firestore if db exists
-  if (db && order.email) {
+  if (db && (order.email || (order as any).username)) {
     try {
-      const usernameKey = order.email.toLowerCase().trim();
-      const userDocRef = doc(db, 'users', usernameKey);
-      const userSnap = await getDoc(userDocRef);
+      const orderUsername = (order as any).username;
+      const usernameKey = order.email ? order.email.toLowerCase().trim() : '';
 
       const purchaseDate = new Date().toISOString();
       const expiryDate = new Date();
@@ -3554,23 +3579,47 @@ async function activateAndNotifyOrder(merchantOid: string): Promise<boolean> {
         licenseType: order.planId
       };
 
-      if (userSnap.exists()) {
-        await setDoc(userDocRef, upgradeFields, { merge: true });
-        console.log(`[Firestore] Activated license for user ${usernameKey}`);
-      } else {
-        // Search through all docs if user is saved under custom username instead of email
+      let activated = false;
+
+      // 1. Direct match by username doc
+      if (orderUsername) {
+        const uDocRef = doc(db, 'users', orderUsername.toLowerCase().trim());
+        const uSnap = await getDoc(uDocRef);
+        if (uSnap.exists()) {
+          await setDoc(uDocRef, upgradeFields, { merge: true });
+          console.log(`[Firestore] Activated license for username: ${orderUsername}`);
+          activated = true;
+        }
+      }
+
+      // 2. Direct match by email doc
+      if (!activated && usernameKey) {
+        const userDocRef = doc(db, 'users', usernameKey);
+        const userSnap = await getDoc(userDocRef);
+        if (userSnap.exists()) {
+          await setDoc(userDocRef, upgradeFields, { merge: true });
+          console.log(`[Firestore] Activated license for email: ${usernameKey}`);
+          activated = true;
+        }
+      }
+
+      // 3. Collection search
+      if (!activated) {
         const usersRef = collection(db, 'users');
         const usersSnap = await getDocs(usersRef);
-        let foundUsername = '';
+        let foundDocId = '';
         usersSnap.forEach(d => {
           const u = d.data();
-          if (u.email && u.email.toLowerCase().trim() === usernameKey) {
-            foundUsername = d.id;
+          if (
+            (orderUsername && (d.id.toLowerCase() === orderUsername.toLowerCase() || u.username?.toLowerCase() === orderUsername.toLowerCase())) ||
+            (usernameKey && u.email?.toLowerCase().trim() === usernameKey)
+          ) {
+            foundDocId = d.id;
           }
         });
-        if (foundUsername) {
-          await setDoc(doc(db, 'users', foundUsername), upgradeFields, { merge: true });
-          console.log(`[Firestore] Activated license for user ${foundUsername} via search`);
+        if (foundDocId) {
+          await setDoc(doc(db, 'users', foundDocId), upgradeFields, { merge: true });
+          console.log(`[Firestore] Activated license for user ${foundDocId} via search`);
         }
       }
     } catch (dbErr) {
@@ -3688,7 +3737,7 @@ app.use((req, res, next) => {
 // PayTR step 1: Get secure iframe token from PayTR API (handles multi-route aliases for backward compatibility)
 app.all(['/api/paytr/token', '/paytr/token', '/paytr/pay-direct', '/api/paytr/pay-direct', '/iyzico/pay-direct', '/api/iyzico/pay-direct'], async (req, res) => {
   if (req.method === 'OPTIONS') return res.sendStatus(200);
-  const { planId, name, email, phone, address, userSignature } = req.body || {};
+  const { planId, name, email, phone, address, userSignature, username } = req.body || {};
 
   if (!planId || !name || !email) {
     return res.status(400).json({ error: 'Plan seçimi, ad soyad ve e-posta zorunludur.' });
@@ -3715,11 +3764,19 @@ app.all(['/api/paytr/token', '/paytr/token', '/paytr/pay-direct', '/api/paytr/pa
     globalLatestCustomerSignature = activeSig;
   }
 
+  const isFromPanel = !!(
+    req.body.fromPanel || 
+    req.body.returnUrl?.includes('/panel') || 
+    req.headers.referer?.includes('/panel') ||
+    req.headers['x-requested-from'] === 'panel'
+  );
+
   // Save order to our registry and Firestore
   paytrOrders[merchantOid] = {
     merchantOid,
     email,
     name,
+    username: username || '',
     phone,
     address,
     planId,
@@ -3727,6 +3784,7 @@ app.all(['/api/paytr/token', '/paytr/token', '/paytr/pay-direct', '/api/paytr/pa
     userSignature: activeSig,
     status: 'pending',
     testMode: test_mode,
+    isFromPanel,
     createdAt: Date.now()
   };
 
@@ -3766,8 +3824,9 @@ app.all(['/api/paytr/token', '/paytr/token', '/paytr/pay-direct', '/api/paytr/pa
     const currency = 'TL';
 
     const publicUrl = resolvePublicAppUrl(req, paytrConfig.customDomain);
-    const merchant_ok_url = `${publicUrl}/api/paytr/success?oid=${merchantOid}`;
-    const merchant_fail_url = `${publicUrl}/api/paytr/fail?oid=${merchantOid}`;
+    const panelQuery = isFromPanel ? '&source=panel' : '';
+    const merchant_ok_url = `${publicUrl}/api/paytr/success?oid=${merchantOid}${panelQuery}`;
+    const merchant_fail_url = `${publicUrl}/api/paytr/fail?oid=${merchantOid}${panelQuery}`;
 
     // Signature formula: merchant_id + user_ip + merchant_oid + email + payment_amount + user_basket + no_installment + max_installment + currency + test_mode
     const hash_str = PAYTR_MERCHANT_ID + clean_ip + merchantOid + email + paymentAmount + user_basket + no_installment + max_installment + currency + test_mode;
@@ -4170,11 +4229,19 @@ app.all('/api/paytr/success', async (req, res) => {
   const oid = (req.query.oid || req.body.merchant_oid || req.body.oid) as string;
   const order = oid ? paytrOrders[oid] : null;
   const licenseKey = order ? order.licenseKey : 'ISG-PRO-MOCK-LICENSE';
+  const planId = order?.planId || 'yearly';
 
   if (oid) {
     // Process activation immediately in case the callback webhook was blocked/not received (e.g., in localhost testing)
     await activateAndNotifyOrder(oid);
   }
+
+  const isFromPanel = !!(
+    (order && order.isFromPanel) || 
+    req.query.source === 'panel' || 
+    (req.headers.referer && req.headers.referer.includes('/panel'))
+  );
+  const targetPath = isFromPanel ? '/panel/' : '/';
 
   res.send(`
     <!DOCTYPE html>
@@ -4205,16 +4272,19 @@ app.all('/api/paytr/success', async (req, res) => {
             if (targetOrigin.includes('localhost') || targetOrigin.includes('127.0.0.1')) {
               targetOrigin = targetOrigin.replace('https://', 'http://');
             }
-            window.location.href = targetOrigin + "/?paytr_success=true&license=" + encodeURIComponent(${JSON.stringify(licenseKey)});
+            const destination = targetOrigin + ${JSON.stringify(targetPath)} + "?paytr_status=success&payment=success&paytr_success=true&license=" + encodeURIComponent(${JSON.stringify(licenseKey)}) + "&plan=" + encodeURIComponent(${JSON.stringify(planId)}) + "&oid=" + encodeURIComponent(${JSON.stringify(oid || '')}) + "&username=" + encodeURIComponent(${JSON.stringify((order as any)?.username || '')});
+            window.location.href = destination;
           } else {
             // Loaded in iframe -> postMessage to parent React app
             window.parent.postMessage({ 
               type: 'PAYTR_SUCCESS', 
               oid: ${JSON.stringify(oid)}, 
-              licenseKey: ${JSON.stringify(licenseKey)} 
+              licenseKey: ${JSON.stringify(licenseKey)},
+              planId: ${JSON.stringify(planId)},
+              username: ${JSON.stringify((order as any)?.username || '')}
             }, '*');
           }
-        }, 1500);
+        }, 1200);
       </script>
     </body>
     </html>
@@ -4224,6 +4294,14 @@ app.all('/api/paytr/success', async (req, res) => {
 // PayTR Step 4: Failure Iframe Redirect Page (posts message to React parent or redirects main page)
 app.all('/api/paytr/fail', (req, res) => {
   const oid = (req.query.oid || req.body.merchant_oid || req.body.oid) as string;
+  const order = oid ? paytrOrders[oid] : null;
+  const isFromPanel = !!(
+    (order && order.isFromPanel) || 
+    req.query.source === 'panel' || 
+    (req.headers.referer && req.headers.referer.includes('/panel'))
+  );
+  const targetPath = isFromPanel ? '/panel/' : '/';
+
   res.send(`
     <!DOCTYPE html>
     <html lang="tr">
@@ -4250,7 +4328,7 @@ app.all('/api/paytr/fail', (req, res) => {
             if (targetOrigin.includes('localhost') || targetOrigin.includes('127.0.0.1')) {
               targetOrigin = targetOrigin.replace('https://', 'http://');
             }
-            window.location.href = targetOrigin + "/?paytr_fail=true";
+            window.location.href = targetOrigin + ${JSON.stringify(targetPath)} + "?paytr_fail=true&payment=fail";
           } else {
             window.parent.postMessage({ 
               type: 'PAYTR_FAIL', 
@@ -5069,6 +5147,38 @@ app.all('/api/*', (req, res) => {
 });
 
 // ==========================================
+// 1.8. ISG PRO PANEL SUB-SITE (/panel)
+// ==========================================
+const panelDistPath = fs.existsSync(path.resolve(__dirnameSafe, 'panel-dist'))
+  ? path.resolve(__dirnameSafe, 'panel-dist')
+  : path.resolve(__dirnameSafe, 'dist', 'panel');
+if (fs.existsSync(panelDistPath)) {
+  console.log(`[SERVER] Mounting /panel subsite from: ${panelDistPath}`);
+  
+  // Serve static assets for /panel with caching & compression
+  app.use('/panel', express.static(panelDistPath, {
+    index: false,
+    maxAge: '1d',
+    etag: true,
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      } else if (/\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2)$/i.test(filePath)) {
+        res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=3600');
+      }
+    }
+  }));
+  
+  // Handle SPA routing under /panel (e.g. /panel, /panel/, /panel/any-subroute)
+  app.get(['/panel', '/panel/*'], (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.sendFile(path.join(panelDistPath, 'index.html'));
+  });
+}
+
+// ==========================================
 // 2. VITE MIDDLEWARE & STATIC SERVING
 // ==========================================
 
@@ -5087,11 +5197,28 @@ async function startServer() {
     checkAndSendTrialExpiryReminders().catch(err => console.error('[Trial Reminder Check] Interval check failed:', err));
   }, 30 * 60 * 1000);
 
+  // Create unified HTTP server
+  const httpServer = http.createServer(app);
+
+  // Optimize TCP connection handling for LAN / Mobile devices
+  httpServer.keepAliveTimeout = 65000;
+  httpServer.headersTimeout = 66000;
+  httpServer.requestTimeout = 300000;
+  httpServer.on('connection', (socket) => {
+    socket.setNoDelay(true); // Disable Nagle's algorithm for immediate packet transfer without delay
+  });
+
   const isProduction = process.env.NODE_ENV === 'production' || !__filenameSafe.endsWith('.ts');
   if (!isProduction) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        // Bind Vite HMR directly to our HTTP server on the exact same port (eliminates separate port & firewall issues)
+        hmr: {
+          server: httpServer,
+        },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -5133,15 +5260,62 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[SERVER] Running successfully on http://localhost:${PORT}`);
+  interface NetworkInterfaceInfo {
+    name: string;
+    ip: string;
+    isWifi: boolean;
+  }
+
+  const getNetworkIpAddresses = (): NetworkInterfaceInfo[] => {
+    const interfaces = os.networkInterfaces();
+    const result: NetworkInterfaceInfo[] = [];
+    for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name] || []) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+          const lowerName = name.toLowerCase();
+          const isWifi = lowerName.includes('wi-fi') || lowerName.includes('wlan') || lowerName.includes('wireless') || iface.address.startsWith('192.168.1.');
+          result.push({
+            name,
+            ip: iface.address,
+            isWifi,
+          });
+        }
+      }
+    }
+    // Sort so Wi-Fi / primary LAN IP appears first
+    return result.sort((a, b) => (b.isWifi ? 1 : 0) - (a.isWifi ? 1 : 0));
+  };
+
+  httpServer.listen(PORT, '0.0.0.0', () => {
+    const networkInfoList = getNetworkIpAddresses();
+    const primaryLan = networkInfoList[0]?.ip || '127.0.0.1';
+
+    console.log('\n=============================================================');
+    console.log('  🚀 İSG PRO SUNUCUSU YAYINDA (YEREL & AĞ ERİŞİMİ AKTİF)');
+    console.log('=============================================================');
+    console.log(`  ➜  Yerel (Localhost):   http://localhost:${PORT}`);
+    networkInfoList.forEach(item => {
+      const badge = item.isWifi ? ' [Wi-Fi / Birincil]' : '';
+      console.log(`  ➜  Ağ (${item.name}${badge}): http://${item.ip}:${PORT}`);
+      console.log(`  ➜  İSG Uygulama Paneli (${item.name}): http://${item.ip}:${PORT}/panel/`);
+    });
+    console.log('-------------------------------------------------------------');
+    console.log('  📱 AĞDAKİ DİĞER CİHAZLAR (Telefon, Tablet, Laptop):');
+    console.log(`     Aynı Wi-Fi ağına bağlı cihazlardan siteye girmek için:`);
+    console.log(`     👉 http://${primaryLan}:${PORT}`);
+    console.log(`     yazarak doğrudan siteye ve alt paneline erişebilirsiniz.`);
+    console.log('=============================================================\n');
   });
 
   // Secondary Port 5001 listener (only in development)
   if (process.env.NODE_ENV !== 'production' && String(PORT) !== '5001') {
     try {
-      const server5001 = app.listen(5001, '0.0.0.0', () => {
-        console.log(`[SERVER] Secondary Port 5001 listener active on http://localhost:5001`);
+      const server5001 = http.createServer(app);
+      server5001.keepAliveTimeout = 65000;
+      server5001.headersTimeout = 66000;
+      server5001.on('connection', (socket) => socket.setNoDelay(true));
+      server5001.listen(5001, '0.0.0.0', () => {
+        console.log(`[SERVER] Secondary Port 5001 listener active on http://0.0.0.0:5001`);
       });
       server5001.on('error', (err: any) => {
         if (err.code !== 'EADDRINUSE') {

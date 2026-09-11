@@ -13,7 +13,7 @@ import { User as UserType, FAQItem, Review, RiskPreset, SiteConfig } from './typ
 
 // Firebase imports
 import { db } from './lib/firebase';
-import { collection, getDocs, doc, setDoc, getDoc, onSnapshot, deleteDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, setDoc, getDoc, onSnapshot, deleteDoc, query } from 'firebase/firestore';
 import { hashPassword, encryptUser, decryptUser, decryptData, encryptData, getObfuscatedSecret } from './lib/crypto';
 import { logActivity } from './lib/activity';
 
@@ -602,14 +602,53 @@ export default function App() {
     localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
   }, [users]);
 
-  // Sync currentUser with localStorage (readable for admin)
+  // Sync currentUser with localStorage for both landing portal and panel (/panel)
   useEffect(() => {
     if (currentUser) {
-      localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(currentUser));
+      const safeUser = { ...currentUser };
+      if (safeUser.password) delete safeUser.password;
+      
+      try {
+        // 1. Landing portal storage key
+        localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(safeUser));
+        // 2. ISG Panel storage keys (both encrypted and plain active session)
+        localStorage.setItem('currentUser', JSON.stringify(encryptUser(safeUser)));
+        localStorage.setItem('user', JSON.stringify(encryptUser(safeUser)));
+        localStorage.setItem('isg_active_user', JSON.stringify(safeUser));
+      } catch (e) {
+        console.warn('Storage sync error:', e);
+      }
     } else {
-      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+      try {
+        localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+        localStorage.removeItem('currentUser');
+        localStorage.removeItem('user');
+        localStorage.removeItem('isg_active_user');
+        localStorage.removeItem('isg_current_user');
+      } catch (e) {}
     }
   }, [currentUser]);
+
+  // Cross-tab / Cross-subsite session synchronization (detects logout or login from /panel)
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'currentUser' || e.key === STORAGE_KEYS.CURRENT_USER || e.key === 'isg_active_user') {
+        if (!e.newValue) {
+          setCurrentUser(null);
+        } else {
+          try {
+            const parsed = JSON.parse(e.newValue);
+            const decUser = decryptUser(parsed);
+            if (decUser && (decUser.username || decUser.email)) {
+              setCurrentUser(decUser);
+            }
+          } catch (err) {}
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
 
   // ==========================================
   // AUTHENTICATION HANDLERS
@@ -725,7 +764,7 @@ export default function App() {
         } else {
           const q = query(collection(db, 'users'));
           const snap = await getDocs(q);
-          if (snap.docs.some(d => normalizeUsername(d.data()?.username) === usernameKey || normalizeUsername(d.id) === usernameKey)) {
+          if (snap.docs.some(d => normalizeUsername((d.data() as any)?.username) === usernameKey || normalizeUsername(d.id) === usernameKey)) {
             isTaken = true;
           }
         }
@@ -741,7 +780,7 @@ export default function App() {
         try {
           const snap = await getDocs(query(collection(db, 'users')));
           snap.docs.forEach(d => {
-            const u = d.data()?.username || d.id;
+            const u = (d.data() as any)?.username || d.id;
             if (u) existingList.push({ username: u } as any);
           });
         } catch (_) {}
@@ -852,6 +891,10 @@ export default function App() {
     setActiveSection('home');
     try {
       localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+      localStorage.removeItem('currentUser');
+      localStorage.removeItem('user');
+      localStorage.removeItem('isg_active_user');
+      localStorage.removeItem('isg_current_user');
     } catch (e) {}
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };

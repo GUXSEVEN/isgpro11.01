@@ -17,7 +17,15 @@
       "destination": "/api"
     },
     {
-      "source": "/((?!api/|paytr/|health|assets/|favicon.png|.*\\.[a-zA-Z0-9]+).*)",
+      "source": "/panel/(.*)",
+      "destination": "/panel/index.html"
+    },
+    {
+      "source": "/panel",
+      "destination": "/panel/index.html"
+    },
+    {
+      "source": "/((?!api/|paytr/|health|panel|assets/|favicon.png|.*\\.[a-zA-Z0-9]+).*)",
       "destination": "/index.html"
     }
   ],

@@ -10,7 +10,7 @@ import { hashPassword } from '../lib/crypto';
 import { 
   User, KeyRound, Clock, Mail, ShieldCheck, CreditCard, Sparkles, Copy, 
   Settings, RefreshCcw, Save, MessageSquare, Trash2, ArrowUpRight, HelpCircle,
-  Loader2, CheckCircle2, ShieldAlert, Send, Eye, EyeOff
+  Loader2, CheckCircle2, ShieldAlert, Send, Eye, EyeOff, LayoutDashboard
 } from 'lucide-react';
 import { maskLicenseKey } from '../lib/privacy';
 import { validateLicenseAgainstDb, getLicensePlanName, getRemainingLicenseTime, isLicenseActive, getLicenseTypeFromKey } from '../lib/licenseUtils';
@@ -275,6 +275,42 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
           <span className="text-xs font-semibold text-slate-400 dark:text-slate-550 font-mono bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2.5 py-1 rounded-lg shadow-sm">
             Sistem Saati: {new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
           </span>
+        </div>
+
+        {/* Web App Launch Hero Card */}
+        <div className="mb-8 rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-6 md:p-8 text-white shadow-xl border border-indigo-500/20 relative overflow-hidden group">
+          <div className="absolute -right-16 -top-16 w-56 h-56 bg-emerald-500/10 rounded-full blur-3xl group-hover:bg-emerald-500/20 transition-all duration-500"></div>
+          <div className="absolute -left-16 -bottom-16 w-56 h-56 bg-indigo-500/10 rounded-full blur-3xl"></div>
+
+          <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+            <div className="max-w-2xl">
+              <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-[10px] font-bold tracking-wider uppercase mb-3">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>Canlı Web Uygulaması</span>
+              </div>
+              <h3 className="text-xl md:text-2xl font-bold text-white tracking-tight flex items-center gap-2.5">
+                <LayoutDashboard className="text-emerald-400" size={24} />
+                <span>İSG Pro Saha &amp; Yönetim Paneli</span>
+              </h3>
+              <p className="text-xs md:text-sm text-slate-300 mt-2 leading-relaxed">
+                Tüm saha denetimleri, risk analizi, firma ve personel takibi, mevzuat ve raporlama araçlarının yer aldığı 
+                tam kapsamlı İSG yönetim uygulamasını tarayıcınızda ayrı bir sekmede, ana sayfadan bağımsız olarak hemen başlatın.
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
+              <a
+                href="/panel"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center gap-2.5 px-6 py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-slate-950 font-extrabold text-sm shadow-lg shadow-emerald-950/40 hover:shadow-emerald-500/30 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
+              >
+                <LayoutDashboard size={18} />
+                <span>Uygulamayı Yeni Sekmede Başlat</span>
+                <ArrowUpRight size={16} />
+              </a>
+            </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
