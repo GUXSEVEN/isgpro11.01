@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ShieldCheck, Play, ArrowRight, Sparkles, Building2, Download, CheckCircle, FileSpreadsheet, X, HelpCircle, Youtube, ExternalLink } from 'lucide-react';
-import { SiteConfig } from '../types';
+import { ShieldCheck, Play, ArrowRight, Sparkles, Building2, Download, CheckCircle, FileSpreadsheet, X, HelpCircle, Youtube, ExternalLink, Film, ChevronLeft, ChevronRight, ListVideo, Layers } from 'lucide-react';
+import { SiteConfig, PromoVideoItem } from '../types';
 
 interface HeroProps {
   onExploreClick: () => void;
@@ -47,6 +47,24 @@ const getYouTubeLinkUrl = (url: string): string => {
 export default function Hero({ onExploreClick, onPlaygroundClick, onTrialClick, siteConfig }: HeroProps) {
   const [videoModalOpen, setVideoModalOpen] = useState(false);
   const [kurulumModalOpen, setKurulumModalOpen] = useState(false);
+
+  // Multiple promo videos list
+  const promoVideosList: PromoVideoItem[] = useMemo(() => {
+    if (siteConfig.promoVideos && Array.isArray(siteConfig.promoVideos) && siteConfig.promoVideos.length > 0) {
+      return siteConfig.promoVideos;
+    }
+    return [
+      {
+        id: 'default',
+        title: 'İSG Pro Tanıtım Videosu',
+        url: siteConfig.videoUrl || 'https://www.youtube.com/shorts/tNB7_PMT59U',
+        description: 'İSG Pro platformunun genel tanıtımı ve öne çıkan özellikleri.'
+      }
+    ];
+  }, [siteConfig.promoVideos, siteConfig.videoUrl]);
+
+  const [selectedVideoIndex, setSelectedVideoIndex] = useState(0);
+  const currentVideo = promoVideosList[selectedVideoIndex] || promoVideosList[0];
 
   return (
     <section className="relative py-12 md:py-20 overflow-hidden bg-transparent">
@@ -116,11 +134,14 @@ export default function Hero({ onExploreClick, onPlaygroundClick, onTrialClick, 
                 <span>Canlı Demoyu Dene</span>
               </button>
               <button
-                onClick={() => setVideoModalOpen(true)}
+                onClick={() => {
+                  setSelectedVideoIndex(0);
+                  setVideoModalOpen(true);
+                }}
                 className="bg-red-50 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-700 dark:text-red-300 border border-red-200/50 dark:border-red-900/40 px-6 py-3 rounded-xl text-sm font-semibold shadow-sm transition-all flex items-center justify-center gap-2 active:scale-95 cursor-pointer"
               >
                 <Play size={14} className="fill-red-700 dark:fill-red-300 text-red-700 dark:text-red-300" />
-                <span>Tanıtım Videosu</span>
+                <span>{promoVideosList.length > 1 ? `Tanıtım Videoları (${promoVideosList.length})` : 'Tanıtım Videosu'}</span>
               </button>
               <button
                 onClick={() => setKurulumModalOpen(true)}
@@ -253,25 +274,38 @@ export default function Hero({ onExploreClick, onPlaygroundClick, onTrialClick, 
 
       <AnimatePresence>
         {videoModalOpen && (
-          <div className="fixed inset-0 bg-slate-900/80 dark:bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-slate-900/80 dark:bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-slate-950 w-full max-w-4xl rounded-2xl overflow-hidden border border-slate-800 shadow-2xl relative p-1"
+              className={`bg-slate-950 w-full ${promoVideosList.length > 1 ? 'max-w-5xl' : 'max-w-4xl'} rounded-2xl overflow-hidden border border-slate-800 shadow-2xl relative p-1 my-auto`}
             >
               {/* Header Bar */}
               <div className="flex justify-between items-center px-4 py-3 bg-slate-900 text-white rounded-t-xl">
-                <span className="text-xs font-black tracking-wider flex items-center gap-2"><Play size={14} className="text-red-500 fill-red-500" /> İSG PRO TANITIM VİDEOSU</span>
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-lg bg-red-600/20 text-red-500 flex items-center justify-center">
+                    <Play size={12} className="fill-red-500" />
+                  </div>
+                  <span className="text-xs font-black tracking-wider uppercase">
+                    {promoVideosList.length > 1 ? 'İSG PRO TANITIM VİDEOLARI' : 'İSG PRO TANITIM VİDEOSU'}
+                  </span>
+                  {promoVideosList.length > 1 && (
+                    <span className="text-[10px] bg-red-600/20 text-red-400 px-2 py-0.5 rounded-full border border-red-500/30 font-bold ml-1">
+                      {selectedVideoIndex + 1} / {promoVideosList.length}
+                    </span>
+                  )}
+                </div>
+
                 <div className="flex items-center gap-2">
                   <a
-                    href={getYouTubeLinkUrl(siteConfig.videoUrl)}
+                    href={getYouTubeLinkUrl(currentVideo.url)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 active:scale-95 text-white text-[10px] font-bold rounded-lg transition-all"
                   >
                     <Youtube size={14} />
-                    <span>YouTube'da İzle</span>
+                    <span className="hidden sm:inline">YouTube'da Aç</span>
                     <ExternalLink size={10} />
                   </a>
                   <button
@@ -282,15 +316,144 @@ export default function Hero({ onExploreClick, onPlaygroundClick, onTrialClick, 
                   </button>
                 </div>
               </div>
-              <div className="aspect-video w-full bg-black">
-                <iframe
-                  src={getYouTubeEmbedUrl(siteConfig.videoUrl)}
-                  title="İSG Pro Tanıtım Videosu"
-                  className="w-full h-full"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                  allowFullScreen
-                ></iframe>
-              </div>
+
+              {/* Main Content Area */}
+              {promoVideosList.length > 1 ? (
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 p-2 sm:p-3 bg-slate-950">
+                  {/* Left: Active Player & Details (8 columns on lg) */}
+                  <div className="lg:col-span-8 flex flex-col gap-3">
+                    <div className="aspect-video w-full bg-black rounded-xl overflow-hidden shadow-2xl border border-slate-900">
+                      <iframe
+                        key={currentVideo.url}
+                        src={getYouTubeEmbedUrl(currentVideo.url)}
+                        title={currentVideo.title}
+                        className="w-full h-full"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                        allowFullScreen
+                      ></iframe>
+                    </div>
+
+                    {/* Active Video Info & Navigation */}
+                    <div className="bg-slate-900/90 border border-slate-800/80 rounded-xl p-3.5 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 shrink-0">
+                            Video #{selectedVideoIndex + 1}
+                          </span>
+                          <h4 className="text-xs sm:text-sm font-bold text-slate-100 truncate">
+                            {currentVideo.title}
+                          </h4>
+                        </div>
+                        {currentVideo.description && (
+                          <p className="text-[11px] text-slate-400 mt-1 line-clamp-2">
+                            {currentVideo.description}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Prev / Next controls */}
+                      <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+                        <button
+                          onClick={() => setSelectedVideoIndex(prev => Math.max(0, prev - 1))}
+                          disabled={selectedVideoIndex === 0}
+                          className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed text-white text-[11px] font-bold rounded-lg flex items-center gap-1 transition-all"
+                        >
+                          <ChevronLeft size={14} />
+                          <span>Önceki</span>
+                        </button>
+                        <button
+                          onClick={() => setSelectedVideoIndex(prev => Math.min(promoVideosList.length - 1, prev + 1))}
+                          disabled={selectedVideoIndex === promoVideosList.length - 1}
+                          className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:cursor-not-allowed text-white text-[11px] font-bold rounded-lg flex items-center gap-1 transition-all"
+                        >
+                          <span>Sonraki</span>
+                          <ChevronRight size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right: Playlist Sidebar (4 columns on lg) */}
+                  <div className="lg:col-span-4 flex flex-col bg-slate-900/80 border border-slate-800 rounded-xl overflow-hidden">
+                    <div className="p-3 border-b border-slate-800 flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-xs font-black text-slate-200 uppercase tracking-wider">
+                        <ListVideo size={14} className="text-red-500" />
+                        <span>Oynatma Listesi</span>
+                      </div>
+                      <span className="text-[10px] text-slate-400 font-semibold">
+                        {promoVideosList.length} Video
+                      </span>
+                    </div>
+
+                    <div className="p-2 space-y-2 max-h-[380px] lg:max-h-[440px] overflow-y-auto">
+                      {promoVideosList.map((item, idx) => {
+                        const isActive = idx === selectedVideoIndex;
+                        return (
+                          <div
+                            key={item.id || idx}
+                            onClick={() => setSelectedVideoIndex(idx)}
+                            className={`p-2.5 rounded-xl cursor-pointer transition-all border text-left flex items-start gap-2.5 ${
+                              isActive
+                                ? 'bg-gradient-to-r from-red-950/40 via-slate-900 to-indigo-950/30 border-red-500/60 ring-1 ring-red-500/30 shadow-md'
+                                : 'bg-slate-950/60 hover:bg-slate-800/80 border-slate-800/80 hover:border-slate-700'
+                            }`}
+                          >
+                            <div
+                              className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                                isActive
+                                  ? 'bg-red-600 text-white font-black animate-pulse'
+                                  : 'bg-slate-800 text-slate-400 font-bold text-xs'
+                              }`}
+                            >
+                              {isActive ? <Play size={12} className="fill-white" /> : idx + 1}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <h5 className={`text-xs font-bold truncate ${isActive ? 'text-white' : 'text-slate-300'}`}>
+                                {item.title}
+                              </h5>
+                              {item.description && (
+                                <p className="text-[10px] text-slate-400 line-clamp-1 mt-0.5">
+                                  {item.description}
+                                </p>
+                              )}
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className="text-[9px] text-slate-500 font-semibold flex items-center gap-1">
+                                  <Youtube size={10} className="text-red-400" /> YouTube
+                                </span>
+                                {isActive && (
+                                  <span className="text-[9px] font-black text-red-400 uppercase tracking-wider">
+                                    Oynatılıyor
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-2 sm:p-3 bg-slate-950">
+                  <div className="aspect-video w-full bg-black rounded-xl overflow-hidden shadow-inner">
+                    <iframe
+                      src={getYouTubeEmbedUrl(currentVideo.url)}
+                      title={currentVideo.title}
+                      className="w-full h-full"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                      allowFullScreen
+                    ></iframe>
+                  </div>
+                  {currentVideo.title && (
+                    <div className="p-3 text-white">
+                      <h4 className="text-sm font-bold">{currentVideo.title}</h4>
+                      {currentVideo.description && (
+                        <p className="text-xs text-slate-400 mt-1">{currentVideo.description}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </motion.div>
           </div>
         )}

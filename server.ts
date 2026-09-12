@@ -500,6 +500,138 @@ const firebaseConfig = {
 const firebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(firebaseApp);
 
+/**
+ * Güvenlik Kuralı: Bir e-posta adresine bağlı olarak son 1 yıl içerisinde en fazla 2 adet doğrulanmış hesap açılabilir/doğrulanabilir.
+ * Firestore 'users' koleksiyonu üzerinden veritabanı kontrolü gerçekleştirilir.
+ */
+export interface EmailAccountLimitResult {
+  allowed: boolean;
+  count: number;
+  limit: number;
+  verifiedAccounts: string[];
+  message: string;
+}
+
+const MAX_VERIFIED_ACCOUNTS_PER_EMAIL_YEARLY = 2;
+const ONE_YEAR_IN_MS = 365 * 24 * 60 * 60 * 1000;
+
+export const checkEmailAccountLimit = async (
+  rawEmail?: string,
+  targetUsername?: string
+): Promise<EmailAccountLimitResult> => {
+  const cleanEmail = String(rawEmail || '').trim().toLowerCase();
+  const cleanTargetUser = normalizeUsername(targetUsername || '');
+
+  if (!cleanEmail || !cleanEmail.includes('@')) {
+    return {
+      allowed: true,
+      count: 0,
+      limit: MAX_VERIFIED_ACCOUNTS_PER_EMAIL_YEARLY,
+      verifiedAccounts: [],
+      message: 'Geçersiz e-posta adresi.'
+    };
+  }
+
+  // Sistem yöneticileri muafiyeti
+  if (cleanEmail === 'infoisgpro@gmail.com' || cleanEmail === 'admin@isgpro.com' || cleanTargetUser === 'admin') {
+    return {
+      allowed: true,
+      count: 0,
+      limit: MAX_VERIFIED_ACCOUNTS_PER_EMAIL_YEARLY,
+      verifiedAccounts: [],
+      message: 'Yönetici hesabı için limit uygulanmaz.'
+    };
+  }
+
+  if (!db) {
+    return {
+      allowed: true,
+      count: 0,
+      limit: MAX_VERIFIED_ACCOUNTS_PER_EMAIL_YEARLY,
+      verifiedAccounts: [],
+      message: 'Veritabanı bağlantısı yok.'
+    };
+  }
+
+  try {
+    const usersRef = collection(db, 'users');
+    const usersSnap = await getDocs(usersRef);
+    const verifiedAccounts: string[] = [];
+    const now = Date.now();
+
+    usersSnap.forEach((docSnap) => {
+      try {
+        const rawData = docSnap.data();
+        const decrypted = decryptUser(rawData) || rawData;
+        const userEmail = String(decrypted.email || rawData.email || '').trim().toLowerCase();
+        
+        if (userEmail === cleanEmail && (decrypted.isEmailVerified === true || rawData.isEmailVerified === true)) {
+          // 1 yıllık süre kontrolü (emailVerifiedAt veya createdAt)
+          const verifiedTimeStr = decrypted.emailVerifiedAt || rawData.emailVerifiedAt || decrypted.createdAt || rawData.createdAt;
+          let verifiedTimestamp = now;
+          if (verifiedTimeStr) {
+            const parsed = new Date(verifiedTimeStr).getTime();
+            if (!isNaN(parsed)) {
+              verifiedTimestamp = parsed;
+            }
+          }
+
+          // Eğer son 365 gün (1 yıl) içindeyse doğrulanmış hesap sayacına ekle
+          if (now - verifiedTimestamp <= ONE_YEAR_IN_MS) {
+            const uName = normalizeUsername(decrypted.username || rawData.username || docSnap.id);
+            if (uName && !verifiedAccounts.includes(uName)) {
+              verifiedAccounts.push(uName);
+            }
+          }
+        }
+      } catch (err) {
+        // Doc çözümleme hatası
+      }
+    });
+
+    const isAlreadyVerifiedUser = cleanTargetUser && verifiedAccounts.includes(cleanTargetUser);
+    // Eğer mevcut kullanıcı zaten bu doğrulanmış hesaplardan biriyse, kendi oturumu için izin verilir
+    if (isAlreadyVerifiedUser) {
+      return {
+        allowed: true,
+        count: verifiedAccounts.length,
+        limit: MAX_VERIFIED_ACCOUNTS_PER_EMAIL_YEARLY,
+        verifiedAccounts,
+        message: 'Bu kullanıcı hesabı zaten doğrulanmış durumdadır.'
+      };
+    }
+
+    // Doğrulanmış hesap sayısı yıllık sınıra (2) ulaşmışsa yeni hesabı / doğrulamayı engelle
+    if (verifiedAccounts.length >= MAX_VERIFIED_ACCOUNTS_PER_EMAIL_YEARLY) {
+      return {
+        allowed: false,
+        count: verifiedAccounts.length,
+        limit: MAX_VERIFIED_ACCOUNTS_PER_EMAIL_YEARLY,
+        verifiedAccounts,
+        message: `Bu e-posta adresine (${cleanEmail}) bağlı olarak son 1 yıl içerisinde en fazla ${MAX_VERIFIED_ACCOUNTS_PER_EMAIL_YEARLY} adet doğrulanmış hesap açılabilir. Yıllık hesap açma/doğrulama limitine (${verifiedAccounts.length}/${MAX_VERIFIED_ACCOUNTS_PER_EMAIL_YEARLY}) ulaşıldı.`
+      };
+    }
+
+    return {
+      allowed: true,
+      count: verifiedAccounts.length,
+      limit: MAX_VERIFIED_ACCOUNTS_PER_EMAIL_YEARLY,
+      verifiedAccounts,
+      message: `Limit uygun (${verifiedAccounts.length}/${MAX_VERIFIED_ACCOUNTS_PER_EMAIL_YEARLY}).`
+    };
+  } catch (error: any) {
+    console.error('[checkEmailAccountLimit Error]:', error);
+    return {
+      allowed: true,
+      count: 0,
+      limit: MAX_VERIFIED_ACCOUNTS_PER_EMAIL_YEARLY,
+      verifiedAccounts: [],
+      message: 'Limit kontrolü sırasında hata oluştu.'
+    };
+  }
+};
+
+
 // EmailJS Configuration for OTP, Licensing, and Contact support
 const EMAILJS_SERVICE_ID = process.env.EMAILJS_SERVICE_ID || "service_uqwc0fd";
 const EMAILJS_TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID || "template_g923r5o";
@@ -976,6 +1108,15 @@ const getOTPHtmlTemplate = (name: string, code: string, time: string): string =>
       
       <p class="text">Lütfen bu kodu kimseyle paylaşmayınız. Giriş talebi size ait değilse bu e-postayı güvenle görmezden gelebilirsiniz.</p>
       
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; margin: 20px 0; text-align: left;">
+        <div style="font-size: 11px; font-weight: 800; color: #1e3a8a; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">
+          🛡️ Güvenlik ve Hesap Açma Kuralı
+        </div>
+        <p style="margin: 0; font-size: 12px; color: #475569; line-height: 1.5;">
+          Platform güvenliği ve adil kullanım politikası gereğince; <strong>bir e-posta adresine bağlı olarak son 1 yıl içerisinde en fazla 2 adet doğrulanmış hesap</strong> açılabilmektedir.
+        </p>
+      </div>
+
       <div class="warning">
         Bu e-posta otomatik olarak gönderilmiştir. Lütfen doğrudan yanıtlamayınız.
       </div>
@@ -1052,6 +1193,15 @@ const getEmailVerifiedUserHtmlTemplate = (name: string, email: string, username?
             <td class="value"><span style="color: #15803d; font-weight: 700;">✅ Aktif & Onaylı</span></td>
           </tr>
         </table>
+      </div>
+
+      <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 12px 16px; margin: 20px 0; text-align: left;">
+        <div style="font-size: 11px; font-weight: 800; color: #166534; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">
+          🛡️ Yıllık Hesap Kotası Bilgilendirmesi
+        </div>
+        <p style="margin: 0; font-size: 12px; color: #166534; line-height: 1.5;">
+          Platform güvenliği ve kötüye kullanımın önlenmesi kapsamında; <strong>bir e-posta adresine bağlı olarak son 1 yıl içerisinde en fazla 2 adet doğrulanmış hesap</strong> açılabilmektedir.
+        </p>
       </div>
 
       <p style="font-size: 13px; color: #64748b;">
@@ -1291,6 +1441,10 @@ const getContractsApprovalHtmlTemplate = (options: {
         İSG Pro dijital yazılım lisansı satın alım işleminiz sırasında onaylamış olduğunuz <strong>Onaylı Sözleşmeler</strong>'in (Mesafeli Satış Sözleşmesi, Ön Bilgilendirme Formu, İptal ve İade Koşulları, Teslimat ve Kargo Koşulları, Gizlilik Politikası ve KVKK Aydınlatma Metni) onaylanmış nüshaları e-posta ekinde PDF formatında ve aşağıda bilginize sunulmuştur.
       </p>
 
+      <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px 14px; margin: 15px 0; font-size: 12px; color: #1e40af; line-height: 1.5;">
+        <strong>🛡️ Hesap Güvenlik Kuralı:</strong> Platform güvenliği gereğince; <strong>aynı e-posta adresine bağlı olarak son 1 yıl içerisinde en fazla 2 adet doğrulanmış hesap açılabilmektedir</strong>.
+      </div>
+
       <div class="box">
         <div class="box-title">Sipariş Ve Alıcı Bilgileri</div>
         <table class="details-table" border="0" cellpadding="0" cellspacing="0">
@@ -1506,6 +1660,10 @@ function getRegistrationConsentHtmlTemplate(options: {
         </table>
       </div>
 
+      <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px 14px; margin: 15px 0; font-size: 12px; color: #1e40af; line-height: 1.5;">
+        <strong>🛡️ Hesap Güvenlik Kuralı:</strong> Platformumuzda adil kullanım ve hesap güvenliğini temin etmek amacıyla; <strong>bir e-posta adresine bağlı olarak son 1 yıl içinde en fazla 2 adet doğrulanmış hesap</strong> açılmasına izin verilmektedir.
+      </div>
+
       <div class="legal-badge" style="background-color: #ede9fe; color: #5b21b6;">1. ÖN BİLGİLENDİRME FORMU</div>
       <div class="contract-section">
         <strong>ÖN BİLGİLENDİRME FORMU</strong><br><br>
@@ -1647,6 +1805,15 @@ const getEmailVerificationHtmlTemplate = (options: {
       </p>
       <div class="code-box">${options.verificationCode}</div>
       ` : ''}
+
+      <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px 16px; margin: 20px 0; text-align: left;">
+        <div style="font-size: 11px; font-weight: 800; color: #1d4ed8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">
+          🛡️ Hesap Açma Sınırı Bilgilendirmesi
+        </div>
+        <p style="margin: 0; font-size: 12px; color: #1e40af; line-height: 1.5;">
+          Sistem kurallarımız gereğince; <strong>bir e-posta adresine bağlı olarak 1 yıl içerisinde en fazla 2 adet doğrulanmış hesap</strong> oluşturulabilmektedir.
+        </p>
+      </div>
 
       <div class="url-fallback">
         <strong>Buton çalışmıyorsa aşağıdaki bağlantıyı tarayıcınıza yapıştırın:</strong><br>
@@ -1904,11 +2071,20 @@ const getUpdateEmailHtmlTemplate = (options: {
     <div class="content">
       <div class="greeting">Merhaba ${options.name || 'Kullanıcı'},</div>
       <p class="text">İSG Pro sisteminde kayıtlı profilinize ait e-posta adresinizin eksik, hatalı yazılmış veya güncellenmesi gerektiği bildirilmiştir.</p>
-      <p class="text">Hesap güvenliğinizi sağlamak, lisans anahtarınıza ve onaylanmış sözleşme kopyalarınıza sorunsuz erişmek için lütfen aşağıdaki bağlantıya tıklayarak e-posta adresinizi doğrulayıp güncelleyiniz:</p>
+      <p class="text">Bağlantıya tıkladığınızda <strong>isgprotech.com</strong> üzerindeki Profil Ayarlarınız açılacak, e-posta alanınızın güvenlik kilidi otomatik olarak kaldırılacak ve yeni adresinizi doğrudan elle yazıp kaydedebileceksiniz:</p>
 
       <div class="action-box">
-        <a href="${options.updateLink}" target="_blank" class="btn">E-Posta Adresimi Güncelle / Doğrula</a>
+        <a href="${options.updateLink}" target="_blank" class="btn">isgprotech.com Profilime Git & E-Postamı Güncelle</a>
         <div class="link-box">${options.updateLink}</div>
+      </div>
+
+      <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px 16px; margin: 20px 0; text-align: left;">
+        <div style="font-size: 11px; font-weight: 800; color: #1d4ed8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">
+          🛡️ Hesap Açma Sınırı Bilgilendirmesi
+        </div>
+        <p style="margin: 0; font-size: 12px; color: #1e40af; line-height: 1.5;">
+          Platform güvenliği gereğince; <strong>aynı e-posta adresine bağlı olarak son 1 yıl içerisinde en fazla 2 adet doğrulanmış hesap açılabilmektedir</strong>.
+        </p>
       </div>
 
       <p class="text" style="font-size: 13px; color: #64748b;">Bu talebi siz yapmadıysanız bu e-postayı dikkate almayabilir veya <a href="mailto:infoisgpro@gmail.com" style="color:#0284c7;">infoisgpro@gmail.com</a> adresiyle iletişime geçebilirsiniz.</p>
@@ -1976,6 +2152,15 @@ const getVerificationHtmlTemplate = (options: {
       <div class="action-box">
         <p class="text" style="font-size: 13px; margin-bottom: 10px;">Veya aşağıdaki butona tıklayarak hesabınızı doğrudan doğrulayabilirsiniz:</p>
         <a href="${options.verifyLink}" target="_blank" class="btn">E-Posta Adresimi Şimdi Doğrula</a>
+      </div>
+
+      <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 12px 16px; margin: 20px 0; text-align: left;">
+        <div style="font-size: 11px; font-weight: 800; color: #166534; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">
+          🛡️ Güvenlik ve Hesap Açma Kuralı
+        </div>
+        <p style="margin: 0; font-size: 12px; color: #166534; line-height: 1.5;">
+          Platform güvenliği ve kötüye kullanımın önlenmesi amacıyla, <strong>bir e-posta adresine bağlı olarak son 1 yıl içerisinde en fazla 2 adet doğrulanmış hesap</strong> açılabilmektedir.
+        </p>
       </div>
     </div>
     <div class="footer">
@@ -2883,9 +3068,21 @@ app.post('/api/send-email', async (req, res) => {
 
 // Proxy endpoint for OTP verification email (supports both /api/send-email-otp and /api/send-email-verification)
 const handleSendOtpEmail = async (req: express.Request, res: express.Response) => {
-  const { email, code, name } = req.body;
+  const { email, code, name, username } = req.body;
   if (!email || !code) {
     return res.status(400).json({ error: 'Email and code are required.' });
+  }
+
+  // Veritabanından yıllık en fazla 2 doğrulanmış hesap açılabilme kuralı kontrolü
+  const limitCheck = await checkEmailAccountLimit(email, username || name);
+  if (!limitCheck.allowed) {
+    console.warn(`[Email Limit Blocked] OTP dispatch rejected for: ${maskEmail(email)} - Reason: ${limitCheck.message}`);
+    return res.status(403).json({
+      error: limitCheck.message,
+      limitExceeded: true,
+      count: limitCheck.count,
+      limit: limitCheck.limit
+    });
   }
 
   console.log(`[Email Dispatch] Sending OTP to: ${maskEmail(email)}`);
@@ -2905,6 +3102,24 @@ const handleSendOtpEmail = async (req: express.Request, res: express.Response) =
 app.post('/api/send-email-otp', handleSendOtpEmail);
 app.post('/api/send-email-verification', handleSendOtpEmail);
 
+// Endpoint: Bir e-posta adresine bağlı doğrulanmış hesap limitini kontrol eder (Veritabanından: Yılda en fazla 2 hesap)
+app.all('/api/check-email-account-limit', async (req: express.Request, res: express.Response) => {
+  try {
+    const email = (req.body?.email || req.query?.email || '') as string;
+    const username = (req.body?.username || req.query?.username || '') as string;
+
+    if (!email) {
+      return res.status(400).json({ error: 'E-posta parametresi zorunludur.' });
+    }
+
+    const result = await checkEmailAccountLimit(email, username);
+    return res.json(result);
+  } catch (err: any) {
+    console.error('[API /api/check-email-account-limit Error]:', err);
+    return res.status(500).json({ error: 'Limit kontrolü yapılırken bir sunucu hatası oluştu.' });
+  }
+});
+
 // Endpoint: Kullanıcı E-Posta Doğrulamasını Başarıyla Tamamladığında Hem Kullanıcıya Hem Admin'e Teyit E-postası Gönderimi
 app.post('/api/send-email-verified-success', async (req: express.Request, res: express.Response) => {
   const { email, name, username } = req.body;
@@ -2915,6 +3130,18 @@ app.post('/api/send-email-verified-success', async (req: express.Request, res: e
   const cleanEmail = email.trim().toLowerCase();
   const cleanName = name || username || 'Değerli Kullanıcı';
   const cleanUsername = username || '';
+
+  // Veritabanından yıllık en fazla 2 doğrulanmış hesap limitini teyit et
+  const limitCheck = await checkEmailAccountLimit(cleanEmail, cleanUsername);
+  if (!limitCheck.allowed) {
+    console.warn(`[Email Verified Blocked] Confirmation rejected for: ${maskEmail(cleanEmail)}`);
+    return res.status(403).json({
+      error: limitCheck.message,
+      limitExceeded: true,
+      count: limitCheck.count,
+      limit: limitCheck.limit
+    });
+  }
 
   console.log(`[Email Verified Success] Dispatching verification confirmations for: ${maskEmail(cleanEmail)}`);
 
@@ -3447,8 +3674,11 @@ app.post('/api/send-email-update-link', async (req, res) => {
   }
 
   const cleanName = name || 'Değerli Kullanıcı';
-  const host = req.headers.host || 'isgpro.com';
-  const cleanLink = updateLink || `https://${host}/#profile`;
+  // Use updateLink if valid and not localhost, otherwise direct to production isgprotech.com profile
+  let cleanLink = updateLink;
+  if (!cleanLink || cleanLink.includes('localhost') || cleanLink.includes('127.0.0.1')) {
+    cleanLink = `https://isgprotech.com/#dashboard?tab=profile&unlock_email=true`;
+  }
 
   console.log(`[Email Update Link] Dispatching update link email via Port 443 HTTPS to: ${maskEmail(email)}`);
 
@@ -4936,6 +5166,10 @@ async function getTestEmailPayload(
       <div style="margin-top: 25px; padding: 15px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; font-size: 12px; color: #1e40af; line-height: 1.5;">
         ℹ️ <strong>Yönetici Notu:</strong> Kullanıcının detaylarını Admin Paneli &gt; Veritabanı sekmesinde "İncele" veya "Düzenle" butonlarına tıklayarak anında görüntüleyebilirsiniz.
       </div>
+
+      <div style="margin-top: 15px; padding: 12px 14px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; font-size: 12px; color: #1e40af; line-height: 1.5;">
+        <strong>🛡️ Hesap Güvenlik Kuralı:</strong> Platform güvenliği gereğince; <strong>aynı e-posta adresine bağlı olarak son 1 yıl içerisinde en fazla 2 adet doğrulanmış hesap açılabilmektedir</strong>.
+      </div>
     </div>
     <div class="footer">
       İSG Pro Yönetim Platformu · Otomatik Sistem Bilgilendirme Servisi
@@ -5024,7 +5258,7 @@ async function getTestEmailPayload(
     html = getUpdateEmailHtmlTemplate({
       name: 'Ahmet Yılmaz (Test)',
       email: testEmail,
-      updateLink: `${protocol}://${host}/?verify-email=${encodeURIComponent(testEmail)}&token=591823`
+      updateLink: `https://isgprotech.com/#dashboard?tab=profile&unlock_email=true&user=ahmetyilmaz`
     });
   } else if (templateType === 'contact') {
     subject = '[Destek] Uygulama Kurulumu Hakkında Soru (Test Talebi)';
@@ -5058,6 +5292,11 @@ async function getTestEmailPayload(
             <h4 style="margin: 0 0 5px 0; color: #0f172a; font-size: 14px;">Kurulum Başarılı!</h4>
             <p style="margin: 0; font-size: 12px; color: #475569;">E-posta sunucunuz an itibariyle tüm lisans gönderimlerini, kullanıcı giriş şifrelerini (OTP), yasal sözleşmeleri ve destek mesajlarını otomatik olarak iletmeye hazırdır.</p>
           </div>
+
+          <div style="margin: 20px 0; padding: 12px 14px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; font-size: 12px; color: #1e40af; line-height: 1.5;">
+            <strong>🛡️ Hesap Güvenlik Kuralı:</strong> Platform güvenliği gereğince; <strong>aynı e-posta adresine bağlı olarak son 1 yıl içerisinde en fazla 2 adet doğrulanmış hesap açılabilmektedir</strong>.
+          </div>
+
           <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 20px;">
             <tr style="border-bottom: 1px solid #f1f5f9;">
               <td style="padding: 8px 0; color: #64748b; font-weight: bold;">SMTP Sunucusu (Host)</td>

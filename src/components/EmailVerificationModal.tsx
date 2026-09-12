@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mail, ShieldCheck, CheckCircle2, AlertTriangle, Loader2, RefreshCw, Lock, ArrowRight, X } from 'lucide-react';
+import { Mail, ShieldCheck, CheckCircle2, AlertTriangle, Loader2, RefreshCw, Lock, ArrowRight, X, ShieldAlert } from 'lucide-react';
 import { User } from '../types';
+import { checkEmailAccountLimitFromDb } from '../lib/userUtils';
 
 interface EmailVerificationModalProps {
   isOpen: boolean;
@@ -23,6 +24,13 @@ export default function EmailVerificationModal({
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [countdown, setCountdown] = useState(900); // 15 dakika
+  const [limitStatus, setLimitStatus] = useState<{ checked: boolean; allowed: boolean; count: number; limit: number; message: string }>({
+    checked: false,
+    allowed: true,
+    count: 0,
+    limit: 2,
+    message: ''
+  });
   
   const hasSentInitialRef = useRef(false);
   const isSendingRef = useRef(false);
@@ -86,11 +94,33 @@ export default function EmailVerificationModal({
     setIsLoading(true);
     setErrorMsg('');
 
+    // 0. Öncelikli olarak Veritabanından Yıllık 2 Hesap Sınırı Kontrolü
+    try {
+      const limitCheck = await checkEmailAccountLimitFromDb(targetEmail, currentUser?.username);
+      setLimitStatus({
+        checked: true,
+        allowed: limitCheck.allowed,
+        count: limitCheck.count,
+        limit: limitCheck.limit,
+        message: limitCheck.message
+      });
+
+      if (!limitCheck.allowed) {
+        setErrorMsg(limitCheck.message || 'Bu e-posta adresine bağlı son 1 yıl içerisinde en fazla 2 adet doğrulanmış hesap açılabilir. Yıllık limitiniz dolmuştur.');
+        setIsLoading(false);
+        isSendingRef.current = false;
+        return;
+      }
+    } catch (checkErr) {
+      console.warn('Veritabanı limit ön kontrol uyarısı:', checkErr);
+    }
+
     const newCode = Math.floor(100000 + Math.random() * 900000).toString();
     setGeneratedCode(newCode);
 
     const candidateUrls = getCandidateUrls();
     let sent = false;
+    let limitBlocked = false;
 
     for (const base of candidateUrls) {
       try {
@@ -100,9 +130,18 @@ export default function EmailVerificationModal({
           body: JSON.stringify({
             email: targetEmail,
             code: newCode,
-            name: currentUser?.name || currentUser?.username
+            name: currentUser?.name || currentUser?.username,
+            username: currentUser?.username
           })
         });
+
+        if (res.status === 403) {
+          const errData = await res.json().catch(() => ({}));
+          setErrorMsg(errData.error || 'Bu e-posta adresine bağlı son 1 yıl içinde en fazla 2 doğrulanmış hesap açılabilir.');
+          setLimitStatus(prev => ({ ...prev, allowed: false, message: errData.error }));
+          limitBlocked = true;
+          break;
+        }
 
         if (res.ok) {
           sent = true;
@@ -111,7 +150,7 @@ export default function EmailVerificationModal({
       } catch (e) {}
     }
 
-    if (!sent) {
+    if (!sent && !limitBlocked) {
       // Fallback: send-email-otp
       for (const base of candidateUrls) {
         try {
@@ -121,9 +160,18 @@ export default function EmailVerificationModal({
             body: JSON.stringify({
               email: targetEmail,
               code: newCode,
-              name: currentUser?.name || currentUser?.username
+              name: currentUser?.name || currentUser?.username,
+              username: currentUser?.username
             })
           });
+
+          if (res.status === 403) {
+            const errData = await res.json().catch(() => ({}));
+            setErrorMsg(errData.error || 'Bu e-posta adresine bağlı son 1 yıl içinde en fazla 2 doğrulanmış hesap açılabilir.');
+            setLimitStatus(prev => ({ ...prev, allowed: false, message: errData.error }));
+            limitBlocked = true;
+            break;
+          }
 
           if (res.ok) {
             sent = true;
@@ -137,7 +185,7 @@ export default function EmailVerificationModal({
     isSendingRef.current = false;
     if (sent) {
       setStep('verify');
-    } else {
+    } else if (!limitBlocked) {
       setErrorMsg('Doğrulama kodu gönderilemedi. Lütfen tekrar deneyiniz.');
     }
   };
@@ -222,6 +270,33 @@ export default function EmailVerificationModal({
         {/* Modal Gövdesi */}
         <div className="p-6 space-y-4">
           
+          {/* Yıllık Doğrulanmış Hesap Kuralı Bilgilendirme Kartı */}
+          <div className="p-3 bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 rounded-2xl text-xs text-blue-900 dark:text-blue-200 flex items-start gap-2.5">
+            <ShieldCheck size={16} className="shrink-0 text-blue-600 dark:text-blue-400 mt-0.5" />
+            <div className="space-y-0.5 leading-relaxed">
+              <span className="font-extrabold text-blue-950 dark:text-blue-100 block">
+                Hesap Güvenliği & Doğrulama Kuralı
+              </span>
+              <p className="text-[11px] text-blue-800/90 dark:text-blue-300">
+                Platform kuralları gereğince; <strong>bir e-posta adresine bağlı olarak yılda en fazla 2 adet doğrulanmış hesap</strong> açılabilmektedir.
+              </p>
+            </div>
+          </div>
+
+          {!limitStatus.allowed && (
+            <div className="p-3.5 bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 rounded-2xl text-xs text-amber-900 dark:text-amber-200 flex items-start gap-3">
+              <AlertTriangle size={18} className="shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+              <div className="space-y-1">
+                <span className="font-extrabold text-amber-950 dark:text-amber-100 block">
+                  Yıllık Hesap Kotası Doldu ({limitStatus.count}/{limitStatus.limit})
+                </span>
+                <p className="text-[11px] text-amber-800 dark:text-amber-300">
+                  {limitStatus.message || 'Bu e-posta adresine bağlı olarak son 1 yıl içinde en fazla 2 doğrulanmış hesap açılabilir.'}
+                </p>
+              </div>
+            </div>
+          )}
+
           {errorMsg && (
             <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50 rounded-xl text-xs font-semibold text-red-700 dark:text-red-300 flex items-center gap-2">
               <AlertTriangle size={16} className="shrink-0 text-red-500" />
@@ -268,7 +343,7 @@ export default function EmailVerificationModal({
 
               <button
                 type="submit"
-                disabled={isLoading || otpCode.length < 6}
+                disabled={isLoading || otpCode.length < 6 || !limitStatus.allowed}
                 className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 disabled:opacity-50 text-white rounded-xl font-extrabold text-xs shadow-lg shadow-indigo-600/20 transition cursor-pointer flex items-center justify-center gap-2 active:scale-98"
               >
                 {isLoading ? (
@@ -288,7 +363,7 @@ export default function EmailVerificationModal({
                 <button
                   type="button"
                   onClick={handleSendCode}
-                  disabled={isLoading || countdown > 840} // ilk 1 dakika tekrar basamasın
+                  disabled={isLoading || countdown > 840 || !limitStatus.allowed}
                   className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline disabled:opacity-40 disabled:no-underline cursor-pointer"
                 >
                   <RefreshCw size={13} />

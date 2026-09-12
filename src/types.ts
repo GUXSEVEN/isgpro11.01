@@ -64,9 +64,17 @@ export interface RiskPreset {
   text: string;
 }
 
+export interface PromoVideoItem {
+  id: string;
+  title: string;
+  url: string;
+  description?: string;
+}
+
 export interface SiteConfig {
   videoUrl: string;
   kurulumVideoUrl?: string;
+  promoVideos?: PromoVideoItem[];
   heroTitle: string;
   heroSubtitle: string;
   contactEmail: string;

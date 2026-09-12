@@ -442,6 +442,9 @@ export default function Auth({
                       placeholder="ornek@isg.com"
                       value={email} onChange={e => setEmail(e.target.value)}
                     />
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 leading-tight">
+                      ℹ️ Bir e-posta ile yılda en fazla 2 doğrulanmış hesap açılabilir.
+                    </p>
                   </div>
                   <div>
                     <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider">Telefon (İsteğe Bağlı)</label>

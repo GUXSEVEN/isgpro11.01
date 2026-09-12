@@ -10,7 +10,8 @@ import { hashPassword } from '../lib/crypto';
 import { 
   User, KeyRound, Clock, Mail, ShieldCheck, CreditCard, Sparkles, Copy, 
   Settings, RefreshCcw, Save, MessageSquare, Trash2, ArrowUpRight, HelpCircle,
-  Loader2, CheckCircle2, ShieldAlert, Send, Eye, EyeOff, LayoutDashboard
+  Loader2, CheckCircle2, ShieldAlert, Send, Eye, EyeOff, LayoutDashboard,
+  Lock, Unlock, AlertTriangle
 } from 'lucide-react';
 import { maskLicenseKey } from '../lib/privacy';
 import { validateLicenseAgainstDb, getLicensePlanName, getRemainingLicenseTime, isLicenseActive, getLicenseTypeFromKey } from '../lib/licenseUtils';
@@ -48,6 +49,38 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
 
   const [sendingEmailNotice, setSendingEmailNotice] = useState(false);
   const [emailNoticeMsg, setEmailNoticeMsg] = useState('');
+  const [emailUnlocked, setEmailUnlocked] = useState(false);
+  const [emailUnlockNotice, setEmailUnlockNotice] = useState('');
+
+  // Detect email unlock parameter from URL link
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const hash = window.location.hash || '';
+    const hashQuery = hash.includes('?') ? hash.split('?')[1] : '';
+    const hashParams = new URLSearchParams(hashQuery);
+
+    const isUnlock = params.get('unlock_email') === 'true' || hashParams.get('unlock_email') === 'true' || hash.includes('unlock_email=true');
+    const targetUser = params.get('user') || hashParams.get('user') || (hash.match(/user=([^&]+)/)?.[1]);
+
+    if (isUnlock) {
+      if (!targetUser || decodeURIComponent(targetUser).toLowerCase() === currentUser.username.toLowerCase()) {
+        setEmailUnlocked(true);
+        setEditing(true);
+        setEmailUnlockNotice('🔓 E-posta güncelleme kilidi kaldırıldı! Yeni e-posta adresinizi elle yazabilir ve aşağıdaki "Profil Bilgilerini Kaydet" butonuna basarak kaydedebilirsiniz.');
+        setTimeout(() => {
+          const profEl = document.getElementById('profile-settings-container');
+          if (profEl) {
+            profEl.scrollIntoView({ behavior: 'smooth' });
+          }
+          const emailInput = document.getElementById('profile-email-input') as HTMLInputElement;
+          if (emailInput) {
+            emailInput.focus();
+            emailInput.select();
+          }
+        }, 350);
+      }
+    }
+  }, [currentUser.username]);
 
   // Manual License Activation states
   const [activationCode, setActivationCode] = useState('');
@@ -135,25 +168,48 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
   };
 
   const handleSendUpdateLinkEmail = async () => {
-    if (!email) {
+    const targetEmail = currentUser.email || email;
+    if (!targetEmail) {
       alert('Lütfen öncelikle geçerli bir e-posta adresi yazınız.');
       return;
     }
+
+    // Butona basıldığında e-posta kilidini anında kaldır ve elle düzeltilebilir yap
+    setEmailUnlocked(true);
+    setEditing(true);
+    setEmailUnlockNotice('🔓 E-posta güncelleme kilidi kaldırıldı! Yeni e-posta adresinizi elle yazabilir ve aşağıdaki "Profil Bilgilerini Kaydet" butonuna basarak kaydedebilirsiniz.');
+    setTimeout(() => {
+      const emailInput = document.getElementById('profile-email-input') as HTMLInputElement;
+      if (emailInput) {
+        emailInput.focus();
+        emailInput.select();
+      }
+    }, 150);
+
     setSendingEmailNotice(true);
     try {
-      await fetch('/api/send-email-update-link', {
+      // isgprotech.com üzerindeki profil ayarları sayfasına yönlendiren bağlantı
+      const targetUser = currentUser.username;
+      const updateLink = `https://isgprotech.com/#dashboard?tab=profile&unlock_email=true&user=${encodeURIComponent(targetUser)}`;
+
+      const res = await fetch('/api/send-email-update-link', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: email,
+          email: targetEmail,
           name: name || currentUser.username,
-          updateLink: `https://${window.location.host}/#dashboard`
+          updateLink: updateLink
         })
       });
-      setEmailNoticeMsg('E-posta güncelleme ve doğrulama bağlantısı e-posta adresinize iletildi!');
-      setTimeout(() => setEmailNoticeMsg(''), 4000);
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setEmailNoticeMsg(`🔓 E-posta kilidi kaldırıldı ve güncelleme bağlantısı ${targetEmail} adresinize gönderildi! Yeni adresinizi şimdi elle yazıp kaydedebilirsiniz.`);
+      } else {
+        setEmailNoticeMsg(data.error || 'E-posta servisine erişilirken bir uyarı oluştu ancak e-posta alanınız düzenlemeye açıldı.');
+      }
+      setTimeout(() => setEmailNoticeMsg(''), 8000);
     } catch {
-      setEmailNoticeMsg('E-posta gönderilirken bir hata oluştu.');
+      setEmailNoticeMsg('E-posta servisine ulaşılamadı ancak e-posta düzenleme kilidiniz başarıyla açıldı.');
     } finally {
       setSendingEmailNotice(false);
     }
@@ -215,18 +271,45 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
+    const cleanNewEmail = email.trim().toLowerCase();
+    const isEmailChanged = cleanNewEmail !== (currentUser.email || '').trim().toLowerCase();
+
+    if (isEmailChanged && cleanNewEmail) {
+      try {
+        const limRes = await fetch('/api/check-email-account-limit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: cleanNewEmail, currentUsername: currentUser.username })
+        });
+        const limData = await limRes.json();
+        if (!limData.allowed) {
+          alert(limData.message || 'Bu e-posta adresine bağlı son 1 yıl içinde en fazla 2 doğrulanmış hesap açılabilir.');
+          return;
+        }
+      } catch (limErr) {
+        console.warn('Limit check error:', limErr);
+      }
+    }
+
     const result = await onUpdateProfile({
       name,
-      email,
+      email: cleanNewEmail,
       phone,
       role,
-      certificateNo
+      certificateNo,
+      ...(isEmailChanged ? { isEmailVerified: false, emailVerifiedAt: null } : {})
     });
 
-    if (result.success) {
+    if (result && result.success !== false) {
       setEditing(false);
+      setEmailUnlocked(false);
+      setEmailUnlockNotice('');
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2500);
+      if (isEmailChanged) {
+        alert('E-posta adresiniz güncellendi. Güvenlik gereğince yeni e-posta adresinizi doğrulamanız gerekmektedir. Şimdi bir doğrulama kodu gönderiliyor.');
+        handleSendVerificationEmail();
+      }
     }
   };
 
@@ -312,6 +395,45 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
             </div>
           </div>
         </div>
+
+        {/* UNVERIFIED EMAIL BANNER */}
+        {!currentUser.isEmailVerified && (
+          <div className="mb-6 p-4 rounded-2xl bg-gradient-to-r from-amber-500/15 via-amber-500/10 to-transparent border border-amber-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-fadeIn">
+            <div className="flex items-center gap-3.5">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                <AlertTriangle size={20} />
+              </div>
+              <div>
+                <h4 className="text-xs sm:text-sm font-extrabold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+                  E-Posta Adresiniz Henüz Doğrulanmadı
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-800 dark:text-amber-300 font-bold">
+                    {currentUser.email || 'E-posta tanımlanmamış'}
+                  </span>
+                </h4>
+                <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5">
+                  Yasal bildirimler, sözleşme kopyaları ve hesap kurtarma işlemleri için lütfen e-postanızı doğrulayınız. (Platform kuralı: 1 e-postaya bağlı yılda en fazla 2 doğrulanmış hesap açılabilir).
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleSendVerificationEmail}
+              disabled={sendingEmailNotice}
+              className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-extrabold shadow-md shadow-amber-600/20 whitespace-nowrap cursor-pointer transition-all active:scale-95 shrink-0 disabled:opacity-50 flex items-center gap-1.5"
+            >
+              <Mail size={14} />
+              <span>{sendingEmailNotice ? 'Gönderiliyor...' : 'Doğrulama Kodu Gönder'}</span>
+            </button>
+          </div>
+        )}
+
+        {/* EMAIL UNLOCKED SUCCESS BANNER */}
+        {emailUnlockNotice && (
+          <div className="mb-6 p-4 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-900 dark:text-emerald-200 text-xs font-bold flex items-center gap-3 animate-fadeIn">
+            <Unlock size={20} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <div className="flex-1">{emailUnlockNotice}</div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           
@@ -604,8 +726,8 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
           <div className="lg:col-span-5 space-y-6">
             
             {/* Profil Bilgileri Kartı */}
-            <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-2xl p-6 sm:p-8 shadow-sm space-y-6">
-              <div className="flex justify-between items-center border-b border-slate-200 dark:border-slate-800 pb-4">
+            <div id="profile-settings-container" className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-2xl p-6 sm:p-8 shadow-sm space-y-6">
+              <div className="flex justify-between items-center border-b border-slate-200 dark:border-slate-850 pb-4">
                 <div className="flex items-center gap-2.5">
                   <div className="w-8 h-8 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 rounded-lg flex items-center justify-center border border-indigo-100 dark:border-indigo-900/30">
                     <Settings size={16} />
@@ -636,6 +758,16 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
               {saveSuccess && (
                 <div className="bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-900/35 text-green-700 dark:text-green-300 p-3 rounded-xl text-xs font-semibold flex items-center gap-1.5">
                   <CheckCircle2 size={15} /> Profil bilgileriniz başarıyla güncellendi!
+                </div>
+              )}
+
+              {emailUnlockNotice && (
+                <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800/80 text-amber-900 dark:text-amber-100 p-3.5 rounded-xl text-xs font-semibold flex items-start gap-2.5 animate-fadeIn shadow-sm">
+                  <Unlock size={18} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-bold text-amber-950 dark:text-amber-50">E-Posta Düzenleme Kilidi Açıldı</div>
+                    <div className="text-[11px] mt-0.5 text-amber-800 dark:text-amber-200">{emailUnlockNotice}</div>
+                  </div>
                 </div>
               )}
 
@@ -671,17 +803,52 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <div className="flex items-center justify-between">
-                      <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider">E-Posta</label>
-                      <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                        <CheckCircle2 size={12} /> Onaylı
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider">E-Posta</label>
+                        {emailUnlocked ? (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 flex items-center gap-1">
+                            <Unlock size={10} /> Düzenlenebilir (Kilit Açık)
+                          </span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-600 border border-slate-200 dark:bg-slate-800 dark:text-slate-400 flex items-center gap-1" title="Güvenlik gereğince e-posta adresi kilitlidir. Değiştirmek için güncelleme linki isteyiniz veya butona basınız.">
+                            <Lock size={10} /> Kilitli
+                          </span>
+                        )}
+                      </div>
+                      {currentUser.isEmailVerified ? (
+                        <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1 bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800/80">
+                          <CheckCircle2 size={12} /> Onaylı
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleSendVerificationEmail}
+                          disabled={sendingEmailNotice}
+                          className="text-[10px] font-extrabold text-amber-600 dark:text-amber-400 hover:text-amber-700 flex items-center gap-1 bg-amber-50 dark:bg-amber-950/50 px-2 py-0.5 rounded-full border border-amber-300 dark:border-amber-800 cursor-pointer animate-pulse"
+                          title="E-Postanızı doğrulamak için tıklayın"
+                        >
+                          <AlertTriangle size={11} /> Doğrulanmamış (Doğrula)
+                        </button>
+                      )}
                     </div>
                     <input
+                      id="profile-email-input"
                       type="email" required
-                      disabled={!editing}
-                      className="mt-1 w-full p-2.5 border border-slate-200 dark:border-slate-700 bg-slate-50/50 hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-xl text-xs sm:text-sm text-slate-900 dark:text-white font-semibold outline-none focus:border-indigo-500 transition-all disabled:opacity-60 placeholder-slate-400 dark:placeholder-slate-500"
+                      disabled={!emailUnlocked && !editing}
+                      className={`mt-1 w-full p-2.5 border rounded-xl text-xs sm:text-sm font-semibold outline-none transition-all ${
+                        emailUnlocked
+                          ? 'border-emerald-500 dark:border-emerald-500 bg-white dark:bg-slate-800 text-slate-900 dark:text-white ring-2 ring-emerald-400/30'
+                          : 'border-slate-200 dark:border-slate-700 bg-slate-50/50 hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-900 dark:text-white disabled:opacity-60 placeholder-slate-400 dark:placeholder-slate-500 disabled:cursor-not-allowed'
+                      }`}
                       value={email} onChange={e => setEmail(e.target.value)}
                     />
+
+                    {!emailUnlocked && (
+                      <div className="mt-1.5 p-2 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-[11px] text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
+                        <Lock size={12} className="text-amber-600 shrink-0" />
+                        <span>E-postanızı değiştirmek için aşağıdaki <strong>"Güncelleme Linki İstet / Kilidi Aç"</strong> butonuna tıklayınız.</span>
+                      </div>
+                    )}
                     
                     <div className="flex flex-wrap gap-2 mt-2">
                       <button
@@ -697,9 +864,14 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
                         type="button"
                         onClick={handleSendUpdateLinkEmail}
                         disabled={sendingEmailNotice}
-                        className="text-[10px] font-bold text-sky-600 dark:text-sky-400 hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                        className={`text-[10px] font-extrabold flex items-center gap-1 cursor-pointer disabled:opacity-50 transition-colors ${
+                          emailUnlocked
+                            ? 'text-emerald-600 dark:text-emerald-400 hover:underline'
+                            : 'text-sky-600 dark:text-sky-400 hover:underline'
+                        }`}
                       >
-                        <Send size={12} /> Güncelleme Linki İstet
+                        {emailUnlocked ? <Unlock size={12} /> : <Send size={12} />}
+                        {emailUnlocked ? 'Kilidi Açık (Tekrar Link Gönder)' : 'Güncelleme Linki İstet / Kilidi Aç'}
                       </button>
                     </div>
 
@@ -751,13 +923,12 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
                   </div>
                 </div>
 
-                {editing && (
+                {(editing || emailUnlocked) && (
                   <button
                     type="submit"
                     className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 rounded-xl shadow-md transition-all text-xs sm:text-sm flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
                   >
-                    <Save size={14} />
-                    <span>Profil Bilgilerini Kaydet</span>
+                    <Save size={15} /> Profil Bilgilerini Kaydet
                   </button>
                 )}
               </form>

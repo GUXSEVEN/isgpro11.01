@@ -35,7 +35,7 @@ import TrialModal from './components/TrialModal';
 import InitialLegalConsentModal from './components/InitialLegalConsentModal';
 import EmailVerificationModal from './components/EmailVerificationModal';
 import { getLicenseTypeFromKey, getLicenseDurationDays, isLicenseActive, getLicensePlanName } from './lib/licenseUtils';
-import { deduplicateAndCleanUsers, sanitizeUserForFirestore, normalizeUsername, generateAvailableUsernameSuggestions } from './lib/userUtils';
+import { deduplicateAndCleanUsers, sanitizeUserForFirestore, normalizeUsername, generateAvailableUsernameSuggestions, checkEmailAccountLimitFromDb } from './lib/userUtils';
 import { getGenericLegalText } from './data/legal';
 
 const STORAGE_KEYS = {
@@ -286,8 +286,14 @@ export default function App() {
       const rawUsers: UserType[] = [];
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
-        if (data && (data.username || data.email)) {
-          rawUsers.push(decryptUser(data as UserType));
+        if (data) {
+          const dec = decryptUser(data as UserType);
+          const resolvedUsername = dec.username || (data as any).username || docSnap.id;
+          rawUsers.push({
+            ...dec,
+            username: resolvedUsername,
+            email: dec.email || (data as any).email || ''
+          });
         }
       });
 
@@ -308,11 +314,10 @@ export default function App() {
           console.warn("LocalStorage save error:", e);
         }
 
-        // Live update logged-in user state
+        // Live update logged-in user state (match strictly by username to avoid overwriting distinct accounts)
         if (currentUser) {
           const matching = cleaned.find(
-            u => u.username.toLowerCase() === currentUser.username.toLowerCase() ||
-                 (u.email && currentUser.email && u.email.toLowerCase() === currentUser.email.toLowerCase())
+            u => u.username.toLowerCase() === currentUser.username.toLowerCase()
           );
           if (matching) {
             const { password, ...safeUser } = matching;
@@ -333,9 +338,17 @@ export default function App() {
     };
   }, [currentUser?.username, currentUser?.email]);
 
-  // Handle URL parameters (Email verification & PayTR redirection fallback)
+  // Handle URL parameters (Email verification, Unlock Email, & PayTR redirection fallback)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const hashStr = window.location.hash || '';
+    const hashQuery = hashStr.includes('?') ? hashStr.split('?')[1] : '';
+    const hashParams = new URLSearchParams(hashQuery);
+    const unlockEmail = params.get('unlock_email') === 'true' || hashParams.get('unlock_email') === 'true' || hashStr.includes('unlock_email=true');
+    if (unlockEmail) {
+      setActiveSection('dashboard');
+    }
+
     const verifyEmail = params.get('verify-email');
     if (verifyEmail) {
       if (currentUser) {
@@ -395,12 +408,30 @@ export default function App() {
         if (!parsed.kurulumVideoUrl || parsed.kurulumVideoUrl === "https://youtu.be/rn0f9yESCbU?si=5eUBdQ8RJoREVyYb") {
           parsed.kurulumVideoUrl = "https://www.youtube.com/shorts/tNB7_PMT59U";
         }
+        if (!parsed.promoVideos || !Array.isArray(parsed.promoVideos) || parsed.promoVideos.length === 0) {
+          parsed.promoVideos = [
+            {
+              id: 'vid-1',
+              title: 'İSG Pro Genel Tanıtım',
+              url: parsed.videoUrl || "https://www.youtube.com/shorts/tNB7_PMT59U",
+              description: 'İSG Pro platformunun genel tanıtımı ve özellikleri.'
+            }
+          ];
+        }
         return parsed;
       }
     } catch {}
     return {
       videoUrl: "https://www.youtube.com/shorts/tNB7_PMT59U",
       kurulumVideoUrl: "https://www.youtube.com/shorts/tNB7_PMT59U",
+      promoVideos: [
+        {
+          id: 'vid-1',
+          title: 'İSG Pro Genel Tanıtım',
+          url: "https://www.youtube.com/shorts/tNB7_PMT59U",
+          description: 'İSG Pro platformunun genel tanıtımı ve özellikleri.'
+        }
+      ],
       heroTitle: "İSG Süreçlerinizi Yapay Zeka Gücüyle Dijitalleştirin",
       heroSubtitle: "Saha risk analizleri, acil durum eylem planları, ekip imzalı kapak sayfaları, detaylı PDF raporları ve online kütüphane entegrasyonu. Hepsi tek bir platformda.",
       contactEmail: "infoisgpro@gmail.com",
@@ -472,6 +503,16 @@ export default function App() {
           }
           if (!cloudConfig.kurulumVideoUrl || cloudConfig.kurulumVideoUrl === "https://youtu.be/rn0f9yESCbU?si=5eUBdQ8RJoREVyYb") {
             cloudConfig.kurulumVideoUrl = "https://www.youtube.com/shorts/tNB7_PMT59U";
+          }
+          if (!cloudConfig.promoVideos || !Array.isArray(cloudConfig.promoVideos) || cloudConfig.promoVideos.length === 0) {
+            cloudConfig.promoVideos = [
+              {
+                id: 'vid-1',
+                title: 'İSG Pro Genel Tanıtım',
+                url: cloudConfig.videoUrl || "https://www.youtube.com/shorts/tNB7_PMT59U",
+                description: 'İSG Pro platformunun genel tanıtımı ve özellikleri.'
+              }
+            ];
           }
           setSiteConfig(cloudConfig);
           localStorage.setItem('isg_site_config_v1', JSON.stringify(cloudConfig));
@@ -750,6 +791,22 @@ export default function App() {
     if (!usernameKey || usernameKey.length < 3) {
       return { success: false, reason: 'invalid_username', message: 'Kullanıcı adı en az 3 karakter olmalıdır.' };
     }
+
+    // 0. E-Posta Başına Yıllık En Fazla 2 Doğrulanmış Hesap Kontrolü (Veritabanından)
+    if (newUser.email) {
+      try {
+        const limitCheck = await checkEmailAccountLimitFromDb(newUser.email, usernameKey, users);
+        if (!limitCheck.allowed) {
+          return {
+            success: false,
+            reason: 'email_limit_exceeded',
+            message: limitCheck.message || 'Bu e-posta adresine bağlı olarak son 1 yıl içinde en fazla 2 doğrulanmış hesap açılabilir.'
+          };
+        }
+      } catch (limitErr) {
+        console.warn('Kayıt öncesi e-posta limit kontrolü uyarısı:', limitErr);
+      }
+    }
     
     // 1. Check local state
     let isTaken = users.some(u => normalizeUsername(u.username) === usernameKey);
@@ -1014,13 +1071,15 @@ export default function App() {
     } else {
       // User email missing or invalid -> Send email update link and verification email
       const targetEmail = currentUser.email || (currentUser.username.includes('@') ? currentUser.username : 'infoisgpro@gmail.com');
+      const origin = window.location.origin;
+      const targetUser = currentUser.username;
       fetch('/api/send-email-update-link', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: currentUser.name || currentUser.username,
           email: targetEmail,
-          updateLink: `https://${window.location.host}/#dashboard`
+          updateLink: `https://isgprotech.com/#dashboard?tab=profile&unlock_email=true&user=${encodeURIComponent(targetUser)}`
         })
       }).catch(err => console.warn('Could not send update link email:', err));
 
@@ -1030,7 +1089,7 @@ export default function App() {
         body: JSON.stringify({
           name: currentUser.name || currentUser.username,
           email: targetEmail,
-          verifyLink: `https://${window.location.host}/#dashboard`
+          verifyLink: `${origin}/?verify-email=${encodeURIComponent(targetEmail)}`
         })
       }).catch(err => console.warn('Could not send verification email:', err));
     }

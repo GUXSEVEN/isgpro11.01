@@ -95,8 +95,11 @@ export function deduplicateAndCleanUsers(usersList: User[]): User[] {
 
     if (!normalizedUsername && !normalizedEmail) continue;
 
-    // Primary lookup key: normalized email if present, else normalized username
-    const key = normalizedEmail || normalizedUsername;
+    // Primary lookup key: normalized username if present, else doc ID or normalized email.
+    // Accounts are uniquely identified by username. Distinct user accounts sharing the same email
+    // address (up to 2 accounts) must NEVER be collapsed or merged into one another!
+    const rawDocId = (rawUser as any)?.id ? String((rawUser as any).id).trim() : '';
+    const key = normalizedUsername || (rawDocId ? rawDocId.toLowerCase() : '') || normalizedEmail;
 
     const initialType = rawUser.licenseType || (rawUser.licenseKey ? getLicenseTypeFromKey(rawUser.licenseKey) : null);
     const initialIsPremium = rawUser.role === 'admin' ? true : Boolean(rawUser.isPremium && isLicenseActive(rawUser));
@@ -104,11 +107,12 @@ export function deduplicateAndCleanUsers(usersList: User[]): User[] {
     if (!map.has(key)) {
       map.set(key, {
         ...rawUser,
-        username: normalizeUsername(rawUser.username || '') || normalizedEmail || 'kullanici',
-        email: rawUser.email?.trim() || (normalizedUsername.includes('@') ? normalizedUsername : ''),
+        username: normalizeUsername(rawUser.username || '') || rawDocId || normalizedEmail || 'kullanici',
+        email: rawUser.email?.trim() || '',
         name: rawUser.name?.trim() || rawUser.username || 'Kullanıcı',
         isPremium: initialIsPremium,
-        licenseType: initialType
+        licenseType: initialType,
+        isEmailVerified: Boolean(rawUser.isEmailVerified)
       });
     } else {
       const existing = map.get(key)!;
@@ -121,7 +125,7 @@ export function deduplicateAndCleanUsers(usersList: User[]): User[] {
       const activePurchasedAt = rawUser.licensePurchasedAt || existing.licensePurchasedAt;
       const activeExpiresAt = rawUser.licenseExpiresAt || existing.licenseExpiresAt;
 
-      // Determine canonical username (prefer shorter or non-email username if existing, e.g. "ibrahim" over email)
+      // Determine canonical username
       let canonicalUsername = existing.username;
       if (!canonicalUsername || canonicalUsername.includes('@')) {
         if (rawUser.username && !rawUser.username.includes('@')) {
@@ -142,13 +146,13 @@ export function deduplicateAndCleanUsers(usersList: User[]): User[] {
 
       const finalIsPremium = role === 'admin' ? true : (isPremiumCombined && isLicenseActive(candidateUser));
 
-      // Merge fields
+      // Merge fields for the same user account
       const mergedUser: User = {
         ...existing,
         ...rawUser,
         username: canonicalUsername || existing.username || rawUser.username,
         name: (rawUser.name && rawUser.name !== rawUser.username ? rawUser.name : existing.name) || existing.name || rawUser.name,
-        email: existing.email || rawUser.email || (key.includes('@') ? key : ''),
+        email: rawUser.email?.trim() || existing.email || '',
         phone: rawUser.phone || existing.phone || '',
         role,
         isPremium: finalIsPremium,
@@ -158,7 +162,7 @@ export function deduplicateAndCleanUsers(usersList: User[]): User[] {
         licenseExpiresAt: activeExpiresAt || null,
         password: existing.password || rawUser.password,
         certificateNo: rawUser.certificateNo || existing.certificateNo,
-        isEmailVerified: Boolean(existing.isEmailVerified || rawUser.isEmailVerified),
+        isEmailVerified: rawUser.isEmailVerified !== undefined ? Boolean(rawUser.isEmailVerified) : Boolean(existing.isEmailVerified),
       };
 
       map.set(key, mergedUser);
@@ -238,3 +242,97 @@ export function sanitizeUserForFirestore(user: any): Record<string, any> {
   // Return clean readable user so admin can view all fields in Firestore and Admin Panel
   return cleanUser;
 }
+
+/**
+ * Bir e-posta adresine bağlı olarak son 1 yıl içinde en fazla 2 adet doğrulanmış hesap açılabilir kuralını
+ * hem sunucu API'sinden (veritabanı) hem de yerel yedek üzerinden kontrol eder.
+ */
+export async function checkEmailAccountLimitFromDb(
+  email?: string,
+  username?: string,
+  localUsers?: any[]
+): Promise<{
+  allowed: boolean;
+  count: number;
+  limit: number;
+  message: string;
+}> {
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  const cleanUsername = normalizeUsername(username || '');
+
+  if (!cleanEmail || !cleanEmail.includes('@')) {
+    return { allowed: true, count: 0, limit: 2, message: '' };
+  }
+
+  // Yönetici hesapları için kural uygulanmaz
+  if (cleanEmail === 'infoisgpro@gmail.com' || cleanEmail === 'admin@isgpro.com' || cleanUsername === 'admin') {
+    return { allowed: true, count: 0, limit: 2, message: '' };
+  }
+
+  // 1. Veritabanı API Uç Noktası Kontrolü (Primary / Authoritative)
+  try {
+    const isLocal = typeof window !== 'undefined' && (
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1' ||
+      window.location.hostname.startsWith('192.168.')
+    );
+    const candidateUrls = isLocal ? ['', 'http://localhost:5001', 'http://127.0.0.1:5001'] : [''];
+    for (const base of candidateUrls) {
+      try {
+        const res = await fetch(`${base}/api/check-email-account-limit`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: cleanEmail, username: cleanUsername })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          return {
+            allowed: data.allowed !== false,
+            count: Number(data.count) || 0,
+            limit: Number(data.limit) || 2,
+            message: data.message || ''
+          };
+        }
+      } catch (_) {}
+    }
+  } catch (err) {
+    console.warn('[checkEmailAccountLimitFromDb API check error]:', err);
+  }
+
+  // 2. Yedek: Yerel kullanıcı havuzu üzerinden kontrol
+  if (Array.isArray(localUsers) && localUsers.length > 0) {
+    const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const verifiedUsers: string[] = [];
+
+    localUsers.forEach(u => {
+      const uEmail = String(u?.email || '').trim().toLowerCase();
+      if (uEmail === cleanEmail && (u?.isEmailVerified === true || Boolean(u?.emailVerifiedAt))) {
+        const dateVal = u?.emailVerifiedAt || u?.createdAt;
+        const timeVal = dateVal ? new Date(dateVal).getTime() : now;
+        if (!isNaN(timeVal) && (now - timeVal) <= ONE_YEAR_MS) {
+          const uName = normalizeUsername(u?.username || '');
+          if (uName && !verifiedUsers.includes(uName)) {
+            verifiedUsers.push(uName);
+          }
+        }
+      }
+    });
+
+    if (cleanUsername && verifiedUsers.includes(cleanUsername)) {
+      return { allowed: true, count: verifiedUsers.length, limit: 2, message: '' };
+    }
+
+    if (verifiedUsers.length >= 2) {
+      return {
+        allowed: false,
+        count: verifiedUsers.length,
+        limit: 2,
+        message: `Bu e-posta adresine bağlı olarak son 1 yıl içerisinde en fazla 2 adet doğrulanmış hesap açılabilir. Yıllık limitiniz dolmuştur (${verifiedUsers.length}/2).`
+      };
+    }
+  }
+
+  return { allowed: true, count: 0, limit: 2, message: '' };
+}
+

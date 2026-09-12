@@ -11,9 +11,10 @@ import {
   RefreshCcw, AlertCircle, Sparkles, FileText, FileEdit, Clock,
   Download, Database, Search, Upload, UserPlus, ShieldAlert, CheckSquare, Sparkle,
   Link as LinkIcon, ExternalLink, PenTool, KeyRound, ShieldCheck, CreditCard, Lock, Copy,
-  AlertTriangle, CheckCircle2, Eye, EyeOff, Building2, Calendar, BadgeCheck
+  AlertTriangle, CheckCircle2, Eye, EyeOff, Building2, Calendar, BadgeCheck,
+  ArrowUp, ArrowDown, Play, Video, ListVideo, Youtube
 } from 'lucide-react';
-import { FAQItem, Review, RiskPreset, SiteConfig, ContactMessage, AppRelease, User } from '../types';
+import { FAQItem, Review, RiskPreset, SiteConfig, ContactMessage, AppRelease, User, PromoVideoItem } from '../types';
 import { db } from '../lib/firebase';
 import { collection, getDocs, doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { hashPassword, encryptSensitiveData, decryptSensitiveData, encryptUser, decryptUser } from '../lib/crypto';
@@ -34,6 +35,22 @@ interface AdminPanelProps {
   users?: User[];
   onUpdateUsers?: (users: User[]) => void;
 }
+
+const getYouTubeEmbedUrl = (url: string): string => {
+  if (!url) return '';
+  let videoId = '';
+  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=|shorts\/)([^#\&\?]*).*/;
+  const match = url.match(regExp);
+  if (match && match[2].length === 11) {
+    videoId = match[2];
+  } else {
+    if (url.includes('youtube.com/embed/')) {
+      return url.replace('youtube.com/embed/', 'youtube-nocookie.com/embed/');
+    }
+    return url;
+  }
+  return `https://www.youtube-nocookie.com/embed/${videoId}`;
+};
 
 export default function AdminPanel({
   siteConfig,
@@ -139,6 +156,19 @@ export default function AdminPanel({
   };
   
   // Content edit states
+  const [promoVideos, setPromoVideos] = useState<PromoVideoItem[]>(() => {
+    if (siteConfig.promoVideos && Array.isArray(siteConfig.promoVideos) && siteConfig.promoVideos.length > 0) {
+      return siteConfig.promoVideos;
+    }
+    return [
+      {
+        id: 'vid-1',
+        title: 'İSG Pro Genel Tanıtım',
+        url: siteConfig.videoUrl || 'https://www.youtube.com/shorts/tNB7_PMT59U',
+        description: 'İSG Pro platformunun genel tanıtımı ve özellikleri.'
+      }
+    ];
+  });
   const [videoUrl, setVideoUrl] = useState(siteConfig.videoUrl);
   const [kurulumVideoUrl, setKurulumVideoUrl] = useState(siteConfig.kurulumVideoUrl || '');
   const [heroTitle, setHeroTitle] = useState(siteConfig.heroTitle);
@@ -149,6 +179,14 @@ export default function AdminPanel({
   const [kanunLink, setKanunLink] = useState(siteConfig.kanunLink || '');
   const [yonetmelikLink, setYonetmelikLink] = useState(siteConfig.yonetmelikLink || '');
   const [contentSuccess, setContentSuccess] = useState(false);
+
+  // Promo Video Add/Edit Modal states
+  const [newVideoTitle, setNewVideoTitle] = useState('');
+  const [newVideoUrl, setNewVideoUrl] = useState('');
+  const [newVideoDesc, setNewVideoDesc] = useState('');
+  const [editingVideoId, setEditingVideoId] = useState<string | null>(null);
+  const [showAddVideoModal, setShowAddVideoModal] = useState(false);
+  const [previewingVideoUrl, setPreviewingVideoUrl] = useState<string | null>(null);
 
   // SMTP & HTTPS REST Config states
   const [smtpHost, setSmtpHost] = useState('smtp.gmail.com');
@@ -554,9 +592,15 @@ export default function AdminPanel({
         const querySnapshot = await getDocs(collection(db, 'users'));
         const cloudUsers: User[] = [];
         querySnapshot.forEach((docSnap) => {
-          const data = docSnap.data() as User;
-          if (data && (data.username || data.email)) {
-            cloudUsers.push(data);
+          const raw = docSnap.data() as any;
+          if (raw) {
+            const dec = decryptUser(raw as User);
+            const resolvedUsername = dec.username || raw.username || docSnap.id;
+            cloudUsers.push({
+              ...dec,
+              username: resolvedUsername,
+              email: dec.email || raw.email || ''
+            });
           }
         });
         if (cloudUsers.length > 0) {
@@ -600,27 +644,9 @@ export default function AdminPanel({
 
     if (db) {
       try {
-        const querySnapshot = await getDocs(collection(db, 'users'));
-        const currentFirestoreUsers: User[] = [];
-        querySnapshot.forEach((docSnap) => {
-          const data = decryptUser(docSnap.data() as User);
-          if (data) currentFirestoreUsers.push(data);
-        });
-
-        const deletedUsers = currentFirestoreUsers.filter(pu => 
-          !cleaned.some(uu => 
-            uu.username.toLowerCase() === pu.username.toLowerCase() ||
-            (uu.email && pu.email && uu.email.toLowerCase() === pu.email.toLowerCase())
-          )
-        );
-        
-        for (const u of deletedUsers) {
-          if (u.username) await deleteDoc(doc(db, 'users', u.username.toLowerCase()));
-          if (u.email) await deleteDoc(doc(db, 'users', u.email.toLowerCase()));
-        }
-
+        // Save/Update users in Firestore without deleting missing accounts
         for (const u of cleaned) {
-          const usernameKey = (u.username || u.email || '').toLowerCase().trim();
+          const usernameKey = normalizeUsername(u.username || u.email || '');
           if (!usernameKey) continue;
           let pwd = u.password;
           if (pwd && !pwd.match(/^[a-f0-9]{64}$/i)) {
@@ -642,18 +668,36 @@ export default function AdminPanel({
     }
   };
 
-  const handleDeleteUser = (email: string) => {
-    if (email === 'admin@isg.com') {
+  const handleDeleteUser = (targetUser: User) => {
+    const targetUsername = normalizeUsername(targetUser.username);
+    if (targetUsername === 'admin' || targetUser.email === 'admin@isg.com') {
       alert('Sistem yöneticisi silinemez!');
       return;
     }
     requestConfirm(
       'Kullanıcıyı Sil',
-      `${email} e-postasına sahip kullanıcıyı tamamen silmek istediğinize emin misiniz?`,
-      () => {
-        const updated = dbUsers.filter(u => u.email !== email);
-        saveUsersToStorage(updated);
-        showDbSuccess('Kullanıcı başarıyla silindi.');
+      `@${targetUser.username} (${targetUser.email || 'E-posta yok'}) kullanıcısını tamamen silmek istediğinize emin misiniz?`,
+      async () => {
+        const updated = dbUsers.filter(u => normalizeUsername(u.username) !== targetUsername);
+        setDbUsers(updated);
+        if (onUpdateUsers) onUpdateUsers(updated);
+        try {
+          localStorage.setItem('isg_landing_users_v1', JSON.stringify(updated));
+          localStorage.setItem('isg_users_db', JSON.stringify(updated));
+          window.dispatchEvent(new Event('storage'));
+        } catch (e) {}
+
+        if (db) {
+          try {
+            await deleteDoc(doc(db, 'users', targetUsername));
+            if (targetUser.username && targetUser.username !== targetUsername) {
+              await deleteDoc(doc(db, 'users', targetUser.username));
+            }
+          } catch (delErr) {
+            console.warn('Firestore deleteDoc error:', delErr);
+          }
+        }
+        showDbSuccess(`@${targetUser.username} kullanıcısı başarıyla silindi.`);
         setConfirmModal(null);
       }
     );
@@ -718,10 +762,10 @@ export default function AdminPanel({
     }
 
     const cleanUName = (editModalUsername.trim() || editUserModal.username || editModalEmail.trim()).replace(/\s+/g, '');
+    const oldUsername = normalizeUsername(editUserModal.username);
 
     const updatedUsers = dbUsers.map(u => {
-      const isTarget = (u.email && u.email.toLowerCase() === editUserModal.email.toLowerCase()) ||
-                       (u.username && u.username.toLowerCase() === editUserModal.username.toLowerCase());
+      const isTarget = normalizeUsername(u.username) === oldUsername;
       if (!isTarget) return u;
 
       return {
@@ -751,6 +795,12 @@ export default function AdminPanel({
         licenseExpiresAt: editModalIsPremium ? expiryDate.toISOString() : null
       };
     });
+
+    if (db && cleanUName.toLowerCase() !== oldUsername) {
+      try {
+        await deleteDoc(doc(db, 'users', oldUsername));
+      } catch (e) {}
+    }
 
     await saveUsersToStorage(updatedUsers);
     setEditUserModal(null);
@@ -1097,12 +1147,83 @@ export default function AdminPanel({
     );
   };
 
+  // Promo Video actions
+  const handleSavePromoVideo = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!newVideoTitle.trim()) {
+      alert('Lütfen tanıtım videosu başlığı giriniz.');
+      return;
+    }
+    if (!newVideoUrl.trim()) {
+      alert('Lütfen geçerli bir YouTube video bağlantısı giriniz.');
+      return;
+    }
+
+    if (editingVideoId) {
+      setPromoVideos(prev => prev.map(v => v.id === editingVideoId ? {
+        ...v,
+        title: newVideoTitle.trim(),
+        url: newVideoUrl.trim(),
+        description: newVideoDesc.trim()
+      } : v));
+    } else {
+      const newItem: PromoVideoItem = {
+        id: `vid-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        title: newVideoTitle.trim(),
+        url: newVideoUrl.trim(),
+        description: newVideoDesc.trim()
+      };
+      setPromoVideos(prev => [...prev, newItem]);
+    }
+
+    setNewVideoTitle('');
+    setNewVideoUrl('');
+    setNewVideoDesc('');
+    setEditingVideoId(null);
+    setShowAddVideoModal(false);
+  };
+
+  const handleEditPromoVideo = (video: PromoVideoItem) => {
+    setEditingVideoId(video.id);
+    setNewVideoTitle(video.title);
+    setNewVideoUrl(video.url);
+    setNewVideoDesc(video.description || '');
+    setShowAddVideoModal(true);
+  };
+
+  const handleDeletePromoVideo = (id: string) => {
+    if (promoVideos.length <= 1) {
+      alert('En az 1 adet tanıtım videosu bulunmalıdır.');
+      return;
+    }
+    requestConfirm(
+      'Tanıtım Videosunu Sil',
+      'Bu tanıtım videosunu silmek istediğinize emin misiniz?',
+      () => {
+        setPromoVideos(prev => prev.filter(v => v.id !== id));
+        setConfirmModal(null);
+      }
+    );
+  };
+
+  const handleMovePromoVideo = (index: number, direction: 'up' | 'down') => {
+    if (direction === 'up' && index === 0) return;
+    if (direction === 'down' && index === promoVideos.length - 1) return;
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    const updated = [...promoVideos];
+    const temp = updated[index];
+    updated[index] = updated[targetIndex];
+    updated[targetIndex] = temp;
+    setPromoVideos(updated);
+  };
+
   // Content actions
   const handleSaveContent = (e: React.FormEvent) => {
     e.preventDefault();
     onUpdateSiteConfig({
-      videoUrl,
+      videoUrl: promoVideos[0]?.url || videoUrl,
       kurulumVideoUrl,
+      promoVideos,
       heroTitle,
       heroSubtitle,
       contactEmail,
@@ -1388,15 +1509,162 @@ export default function AdminPanel({
 
               <form onSubmit={handleSaveContent} className="space-y-5">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                  <div className="space-y-1.5 col-span-1 md:col-span-2">
-                    <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Tanıtım Videosu Embed URL (YouTube)</label>
-                    <input
-                      type="url" required
-                      value={videoUrl} onChange={e => setVideoUrl(e.target.value)}
-                      placeholder="https://www.youtube.com/embed/..."
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs sm:text-sm font-semibold outline-none focus:ring-2 focus:ring-indigo-500/20"
-                    />
-                    <span className="text-[9px] text-slate-400 block font-medium">Lütfen youtube.com/embed/... formatında bir embed linki girdiğinizden emin olun.</span>
+                  {/* MULTIPLE PROMOTIONAL VIDEOS SECTION */}
+                  <div className="col-span-1 md:col-span-2 p-5 bg-gradient-to-br from-slate-50 to-indigo-50/30 dark:from-slate-800/60 dark:to-indigo-950/20 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-700 pb-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <Film className="text-red-500" size={18} />
+                          <h4 className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-100 uppercase tracking-wider">
+                            Ana Sayfa Tanıtım Videoları
+                          </h4>
+                          <span className="text-[10px] bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-300 font-extrabold px-2 py-0.5 rounded-full">
+                            {promoVideos.length} Video
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                          Ziyaretçiler ana sayfada bu videoları liste halinde sırayla veya seçerek izleyebilirler.
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingVideoId(null);
+                          setNewVideoTitle('');
+                          setNewVideoUrl('');
+                          setNewVideoDesc('');
+                          setShowAddVideoModal(true);
+                        }}
+                        className="self-start sm:self-auto px-3.5 py-2 bg-red-600 hover:bg-red-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Plus size={14} />
+                        <span>Yeni Tanıtım Videosu Ekle</span>
+                      </button>
+                    </div>
+
+                    {/* Videos List */}
+                    <div className="space-y-2.5">
+                      {promoVideos.map((video, idx) => (
+                        <div
+                          key={video.id || idx}
+                          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700/80 rounded-xl p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs hover:border-indigo-300 dark:hover:border-indigo-700 transition-all"
+                        >
+                          <div className="flex items-start gap-3 flex-1 min-w-0">
+                            <div className="w-8 h-8 rounded-lg bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 flex items-center justify-center font-black text-xs shrink-0 mt-0.5 border border-red-100 dark:border-red-900/30">
+                              #{idx + 1}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <h5 className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100 truncate">
+                                  {video.title}
+                                </h5>
+                                {idx === 0 && (
+                                  <span className="text-[9px] bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-extrabold px-1.5 py-0.2 rounded uppercase">
+                                    Ana / Varsayılan
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-slate-400 font-mono truncate mt-0.5">
+                                {video.url}
+                              </p>
+                              {video.description && (
+                                <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 line-clamp-1">
+                                  {video.description}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Action Buttons */}
+                          <div className="flex items-center gap-1.5 self-end sm:self-center shrink-0">
+                            {/* Move Up */}
+                            <button
+                              type="button"
+                              onClick={() => handleMovePromoVideo(idx, 'up')}
+                              disabled={idx === 0}
+                              title="Yukarı Taşı"
+                              className="p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed text-slate-600 dark:text-slate-300 rounded-lg transition-all cursor-pointer"
+                            >
+                              <ArrowUp size={14} />
+                            </button>
+
+                            {/* Move Down */}
+                            <button
+                              type="button"
+                              onClick={() => handleMovePromoVideo(idx, 'down')}
+                              disabled={idx === promoVideos.length - 1}
+                              title="Aşağı Taşı"
+                              className="p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed text-slate-600 dark:text-slate-300 rounded-lg transition-all cursor-pointer"
+                            >
+                              <ArrowDown size={14} />
+                            </button>
+
+                            {/* Test / Watch Preview */}
+                            <button
+                              type="button"
+                              onClick={() => setPreviewingVideoUrl(previewingVideoUrl === video.url ? null : video.url)}
+                              title="Önizle / İzle"
+                              className={`p-1.5 rounded-lg transition-all cursor-pointer ${
+                                previewingVideoUrl === video.url
+                                  ? 'bg-red-600 text-white'
+                                  : 'bg-red-50 dark:bg-red-950/40 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-600 dark:text-red-400'
+                              }`}
+                            >
+                              <Play size={14} className={previewingVideoUrl === video.url ? 'fill-white' : ''} />
+                            </button>
+
+                            {/* Edit */}
+                            <button
+                              type="button"
+                              onClick={() => handleEditPromoVideo(video)}
+                              title="Düzenle"
+                              className="p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-indigo-600 dark:text-indigo-400 rounded-lg transition-all cursor-pointer"
+                            >
+                              <Edit2 size={14} />
+                            </button>
+
+                            {/* Delete */}
+                            <button
+                              type="button"
+                              onClick={() => handleDeletePromoVideo(video.id)}
+                              disabled={promoVideos.length <= 1}
+                              title={promoVideos.length <= 1 ? "En az 1 video kalmalıdır" : "Sil"}
+                              className="p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 text-slate-400 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg transition-all cursor-pointer"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Live Preview If Opened */}
+                    {previewingVideoUrl && (
+                      <div className="mt-3 p-3 bg-slate-900 rounded-2xl border border-slate-800 animate-in fade-in">
+                        <div className="flex justify-between items-center mb-2 px-1">
+                          <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                            <Play size={12} className="text-red-500 fill-red-500" /> Canlı Video Önizleme
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setPreviewingVideoUrl(null)}
+                            className="text-slate-400 hover:text-white text-xs font-bold cursor-pointer"
+                          >
+                            Önizlemeyi Kapat
+                          </button>
+                        </div>
+                        <div className="aspect-video w-full max-w-xl mx-auto rounded-xl overflow-hidden bg-black">
+                          <iframe
+                            src={getYouTubeEmbedUrl(previewingVideoUrl)}
+                            title="Video Önizleme"
+                            className="w-full h-full"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                            allowFullScreen
+                          ></iframe>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div className="space-y-1.5 col-span-1 md:col-span-2">
@@ -2807,7 +3075,7 @@ export default function AdminPanel({
                                             'Lisansı İptal Et',
                                             `${u.name} kullanıcısının Premium lisans yetkisini derhal İPTAL etmek istiyor musunuz?`,
                                             () => {
-                                              const updated = dbUsers.map(usr => usr.email === u.email ? { ...usr, isPremium: false, licenseKey: null, licenseType: null } : usr);
+                                              const updated = dbUsers.map(usr => normalizeUsername(usr.username) === normalizeUsername(u.username) ? { ...usr, isPremium: false, licenseKey: null, licenseType: null } : usr);
                                               saveUsersToStorage(updated);
                                               showDbSuccess(`${u.name} kullanıcısının premium lisans yetkisi iptal edildi.`);
                                               setConfirmModal(null);
@@ -2872,7 +3140,7 @@ export default function AdminPanel({
                                     </button>
 
                                     <button
-                                      onClick={() => handleDeleteUser(u.email)}
+                                      onClick={() => handleDeleteUser(u)}
                                       className="bg-red-50 hover:bg-red-100 text-red-600 text-[10px] font-bold px-1.5 py-1 rounded cursor-pointer"
                                       title="Kullanıcıyı Sil"
                                     >
@@ -4653,6 +4921,130 @@ PAYTR_MERCHANT_SALT="MAĞAZA_SALT_BURAYA"`}
                   </button>
                 </div>
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ========================================================================= */}
+      {/* 4. TANITIM VİDEOSU EKLEME / DÜZENLEME MODALI (PROMO VIDEO MODAL)           */}
+      {/* ========================================================================= */}
+      <AnimatePresence>
+        {showAddVideoModal && (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="relative w-full max-w-lg bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 my-8 overflow-hidden"
+            >
+              {/* Header */}
+              <div className="p-5 bg-gradient-to-r from-red-600 to-indigo-600 text-white flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-white">
+                    <Film size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-white">
+                      {editingVideoId ? 'Tanıtım Videosunu Düzenle' : 'Yeni Tanıtım Videosu Ekle'}
+                    </h3>
+                    <p className="text-xs text-red-100 font-medium">
+                      Ana sayfadaki oynatma listesinde yer alacak video bilgileri
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowAddVideoModal(false)}
+                  className="p-1.5 bg-black/20 hover:bg-black/30 rounded-full text-white transition cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Form Body */}
+              <form onSubmit={handleSavePromoVideo} className="p-6 space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+                    Video Başlığı *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={newVideoTitle}
+                    onChange={(e) => setNewVideoTitle(e.target.value)}
+                    placeholder="Örn: 5x5 L Tipi Risk Analizi & Raporlama"
+                    className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl p-3 text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100 outline-none focus:ring-2 focus:ring-red-500/20"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+                    YouTube Video URL *
+                  </label>
+                  <input
+                    type="url"
+                    required
+                    value={newVideoUrl}
+                    onChange={(e) => setNewVideoUrl(e.target.value)}
+                    placeholder="https://www.youtube.com/watch?v=... veya https://youtu.be/..."
+                    className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl p-3 text-xs sm:text-sm font-mono text-slate-900 dark:text-slate-100 outline-none focus:ring-2 focus:ring-red-500/20"
+                  />
+                  <span className="text-[10px] text-slate-400 block font-medium">
+                    Standart YouTube linki, Shorts veya Embed bağlantısı yapıştırabilirsiniz. Otomatik dönüştürülür.
+                  </span>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+                    Kısa Açıklama (İsteğe Bağlı)
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={newVideoDesc}
+                    onChange={(e) => setNewVideoDesc(e.target.value)}
+                    placeholder="Örn: Saha denetimlerinde risk analizlerinin nasıl yapılacağını anlatan rehber video."
+                    className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl p-3 text-xs sm:text-sm text-slate-700 dark:text-slate-300 outline-none focus:ring-2 focus:ring-red-500/20 resize-none"
+                  />
+                </div>
+
+                {/* Video Quick Preview */}
+                {newVideoUrl.trim() && (
+                  <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2">
+                    <span className="text-[10px] font-bold uppercase text-slate-500 tracking-wider flex items-center gap-1.5">
+                      <Play size={12} className="text-red-500 fill-red-500" /> Video Önizleme
+                    </span>
+                    <div className="aspect-video w-full rounded-xl overflow-hidden bg-black shadow-inner">
+                      <iframe
+                        src={getYouTubeEmbedUrl(newVideoUrl.trim())}
+                        title="Önizleme"
+                        className="w-full h-full"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
+                      ></iframe>
+                    </div>
+                  </div>
+                )}
+
+                {/* Footer Buttons */}
+                <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddVideoModal(false)}
+                    className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition cursor-pointer"
+                  >
+                    Vazgeç
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2.5 bg-red-600 hover:bg-red-700 active:scale-95 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-md shadow-red-600/25 flex items-center gap-1.5"
+                  >
+                    <Save size={14} />
+                    <span>{editingVideoId ? 'Değişiklikleri Kaydet' : 'Videoyu Listeye Ekle'}</span>
+                  </button>
+                </div>
+              </form>
             </motion.div>
           </div>
         )}
