@@ -1,0 +1,72 @@
+# Admin Hesabı Çift Aşamalı Doğrulama (2FA) Uygulama Planı
+
+Bu plan, **sadece `admin` hesabına** giriş yapılırken çift aşamalı doğrulama (2FA) zorunluluğu getirilmesini; doğru şifre girilse dahi `infoisgpro@gmail.com` adresine gönderilen 6 haneli tek kullanımlık güvenlik kodu girilmeden **hiçbir şekilde** admin hesabına erişim sağlanmamasını ve hem ana uygulamada hem de panel uygulamasında bunun kalıcı olarak uygulanmasını kapsamaktadır.
+
+---
+
+## Kullanıcı İncelemesi Gerektiren Konular (User Review Required)
+
+> [!IMPORTANT]
+> **Kesin Erişim Engeli:** Admin kullanıcı adı ve şifresi %100 doğru girilse bile, `infoisgpro@gmail.com` adresine giden 6 haneli kod sunucu tarafından doğrulanmadığı sürece oturum açılmayacak, token/kullanıcı objesi oluşturulmayacak ve admin paneline erişim verilmeyecektir. Diğer normal kullanıcıların giriş akışı etkilenmeyecektir.
+
+---
+
+## Önerilen Değişiklikler
+
+### Bileşen 1: Sunucu Tarafı 2FA Motoru ve E-Posta Şablonu (`server.ts`)
+- **Admin 2FA E-Posta Şablonu (`getAdmin2FAHtmlTemplate`):**
+  - Yönetici güvenlik protokolüne uygun, şık ve koyu/açık temalı güvenlik şablonu.
+  - Başlık: *"İSG Pro Yönetici Güvenlik Protokolü - Çift Aşamalı Giriş Doğrulama (2FA)"*.
+  - Büyük puntolu 6 haneli kod kutusu.
+  - 10 dakikalık geçerlilik süresi ve yetkisiz erişim uyarısı.
+  - Alıcı sabit: **`infoisgpro@gmail.com`**.
+- **`POST /api/auth/admin-2fa/send-code` Endpoint'i:**
+  - 6 haneli rastgele kod üretir, `admin2FASessions` belleğinde 10 dakikalık süre ve `challengeId` ile saklar.
+  - Kodu doğrudan `infoisgpro@gmail.com` adresine `sendEmailUniversal` (SMTP / Port 443 Resend) ile gönderir.
+- **`POST /api/auth/admin-2fa/verify-code` Endpoint'i:**
+  - Gelen `challengeId` ve `code` eşleşmesini doğrular.
+  - Hatalı denemeleri sayar (brute-force engellemek için 5 hatalı denemede kodu geçersiz kılar).
+  - Başarılı ise `{ success: true, verified: true }` döner.
+
+---
+
+### Bileşen 2: Ana Uygulama (`src/App.tsx` ve `src/components/Auth.tsx`)
+- **`src/App.tsx` (`handleLogin`):**
+  - Girilen kullanıcı adı `admin` ise ve şifre doğru ise; oturumu doğrudan açmak yerine `/api/auth/admin-2fa/send-code` çağrılır ve `Auth.tsx` bileşenine 2FA doğrulama adımı açtırılır.
+- **`src/components/Auth.tsx`:**
+  - Giriş ekranına `admin_2fa` görünümü eklenir:
+    - *"🔐 Yönetici Çift Aşamalı Doğrulama (2FA)"*
+    - *"infoisgpro@gmail.com adresinize gönderilen 6 haneli güvenlik kodunu giriniz."*
+    - 6 haneli kod giriş kutusu, 10 dakikalık geri sayım sayacı.
+    - *"Doğrula ve Giriş Yap"* butonu.
+    - *"Kodu Tekrar Gönder"* ve *"Geri Dön"* butonları.
+  - Kod sunucu tarafından doğrulanmadan giriş modalı kapanmaz ve admin yetkisi verilmez.
+
+---
+
+### Bileşen 3: Panel Uygulaması (`isg-projesi - Copy/src/App.jsx`)
+- **`LoginScreen` ve `handleLogin`:**
+  - `admin` girişi yapıldığında doğrudan `setCurrentUser(adminUser)` çalışması iptal edilir.
+  - `/api/auth/admin-2fa/send-code` ile `infoisgpro@gmail.com` adresine kod gönderilir.
+  - `LoginScreen` içinde `admin_2fa` ekranı render edilir.
+  - Kod girilip sunucudan onay alınana kadar admin paneline geçiş engellenir.
+
+---
+
+### Bileşen 4: Derleme ve Senkronizasyon
+- `scripts/patch-panel-admin-2fa.cjs` yazılarak panel uygulamasına yama uygulanır.
+- `powershell scripts/sync-panel.ps1` ile panel derlenir ve `panel-dist` güncellenir.
+- `npm run build` ile ana proje derlenir (`dist/server.cjs` ve frontend).
+
+---
+
+## Doğrulama Planı
+
+### Otomatik Testler
+1. `node -e` ile `server.ts` 2FA endpoint'lerinin API çağrıları test edilecek (`send-code` ve `verify-code`).
+2. Hatalı kod girildiğinde reddedildiği, doğru kod girildiğinde onaylandığı test edilecek.
+3. 5 hatalı denemede oturumun kilitlendiği teyit edilecek.
+
+### Derleme Testi
+1. `npx vite build --base=/panel/` ile panelin hatasız derlendiği test edilecek.
+2. `npm run build` ile ana sunucu ve arayüzün hatasız derlendiği test edilecek.

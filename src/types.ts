@@ -22,7 +22,15 @@ export interface User {
   name: string;
   email: string;
   phone: string;
-  role: 'uzman' | 'hekim' | 'dsp' | 'other' | 'admin';
+  role: 'uzman' | 'hekim' | 'dsp' | 'other' | 'admin' | 'osgb_manager';
+  isOsgbManager?: boolean;
+  managedOsgbName?: string;
+  canViewAllCompanies?: boolean;
+  companyPermissions?: Array<{
+    companyId: string;
+    canView: boolean;
+    canEdit: boolean;
+  }>;
   certificateNo?: string;
   tcNo?: string;
   diplomaNo?: string;

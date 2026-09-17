@@ -43,22 +43,7 @@ const replaceSave = `const saveCompanyToDB = async (company) => {
     // Firestore 1MB (1,048,576 byte) kotası koruması:
     // Eğer doküman 700KB'ı aşıyorsa fotoğrafları güvenli boyuta sıkıştır
     let strLen = JSON.stringify(cleanCompany).length;
-    if (strLen > 700000 && cleanCompany.assessments && Array.isArray(cleanCompany.assessments)) {
-      console.warn(\`[Firestore Quota Guard] Firma boyutu (\${strLen} byte) sınıra yaklaşıyor, fotoğraflar optimize ediliyor...\`);
-      cleanCompany.assessments = cleanCompany.assessments.map(ass => ({
-        ...ass,
-        risks: (ass.risks || []).map(r => {
-          const nr = { ...r };
-          if (nr.beforePhoto && typeof nr.beforePhoto === 'string' && nr.beforePhoto.length > 35000) {
-            nr.beforePhoto = nr.beforePhoto.substring(0, 30000);
-          }
-          if (nr.afterPhoto && typeof nr.afterPhoto === 'string' && nr.afterPhoto.length > 35000) {
-            nr.afterPhoto = nr.afterPhoto.substring(0, 30000);
-          }
-          return nr;
-        })
-      }));
-    }
+    // Firestore 1MB kotası - Asla substring ile kesme yapılmaz, görsel bozulması engellenir
 
     await setDoc(doc(db, 'companies', docId), cleanCompany, { merge: true });
     console.log(\`Firma (\${company.name || docId}) buluta başarıyla yedeklendi.\`);

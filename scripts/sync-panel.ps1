@@ -1,10 +1,14 @@
 # İSG Proje Panel Senkronizasyon Scripti
-$SourceDir = "C:\Users\İBRAHİM\Desktop\isg-projesi - Copy"
+$SourceCandidates = @(
+    "C:\Users\İBRAHİM\Desktop\isg-projesi - mobile",
+    "C:\Users\İBRAHİM\Desktop\isg-projesi - Copy"
+)
+$SourceDir = $SourceCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 $DestDir = Join-Path -Path $PSScriptRoot -ChildPath "..\panel-dist"
 
-Write-Host ">>> ISG Proje (Panel) build başlatılıyor..." -ForegroundColor Cyan
+Write-Host ">>> ISG Proje (Panel) build başlatılıyor ($SourceDir)..." -ForegroundColor Cyan
 
-if (-not (Test-Path $SourceDir)) {
+if (-not $SourceDir -or -not (Test-Path $SourceDir)) {
     Write-Error "Kaynak klasör bulunamadı: $SourceDir"
     exit 1
 }

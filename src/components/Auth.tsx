@@ -11,10 +11,12 @@ import { normalizeUsername } from '../lib/userUtils';
 
 interface AuthProps {
   onClose: () => void;
-  onLogin: (username: string, password: string) => boolean | Promise<boolean>;
+  onLogin: (username: string, password: string) => boolean | { requires2FA?: boolean; challengeId?: string } | Promise<boolean | { requires2FA?: boolean; challengeId?: string }>;
   onRegister: (newUser: UserType) => boolean | { success: boolean; reason?: string; suggestions?: string[]; message?: string } | Promise<boolean | { success: boolean; reason?: string; suggestions?: string[]; message?: string }>;
   checkUserExists: (username: string) => UserType | undefined | Promise<UserType | undefined>;
   onResetPassword: (username: string, newPass: string) => boolean | Promise<boolean>;
+  onVerifyAdmin2FA?: (challengeId: string, code: string) => boolean | Promise<boolean>;
+  onResendAdmin2FA?: () => string | Promise<string>;
 }
 
 export default function Auth({
@@ -23,8 +25,10 @@ export default function Auth({
   onRegister,
   checkUserExists,
   onResetPassword,
+  onVerifyAdmin2FA,
+  onResendAdmin2FA,
 }: AuthProps) {
-  const [view, setView] = useState<'login' | 'register' | 'reset' | 'otp' | 'newpass'>('login');
+  const [view, setView] = useState<'login' | 'register' | 'reset' | 'otp' | 'newpass' | 'admin_2fa'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
@@ -37,6 +41,11 @@ export default function Auth({
   const [tescilNo, setTescilNo] = useState('');
   const [usernameSuggestions, setUsernameSuggestions] = useState<string[]>([]);
 
+  // Admin 2FA states
+  const [admin2FAChallengeId, setAdmin2FAChallengeId] = useState('');
+  const [admin2FACode, setAdmin2FACode] = useState('');
+  const [admin2FACountdown, setAdmin2FACountdown] = useState(600); // 10 minutes
+
   // Reset password states
   const [resetUsername, setResetUsername] = useState('');
   const [foundUser, setFoundUser] = useState<UserType | null>(null);
@@ -47,6 +56,27 @@ export default function Auth({
   const [message, setMessage] = useState({ type: '', text: '' });
   const [loading, setLoading] = useState(false);
 
+  React.useEffect(() => {
+    if (view !== 'admin_2fa') return;
+    setAdmin2FACountdown(600);
+    const timer = setInterval(() => {
+      setAdmin2FACountdown(prev => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [view]);
+
+  const formatCountdown = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  };
+
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanUser = normalizeUsername(username);
@@ -56,14 +86,64 @@ export default function Auth({
     setLoading(true);
     setMessage({ type: '', text: '' });
     try {
-      const success = await onLogin(cleanUser, cleanPass);
-      if (success) {
+      const result = await onLogin(cleanUser, cleanPass);
+      if (result === true) {
         onClose();
+      } else if (result && typeof result === 'object' && result.requires2FA) {
+        setAdmin2FAChallengeId(result.challengeId || '');
+        setAdmin2FACode('');
+        setView('admin_2fa');
+        setMessage({ type: 'info', text: 'Admin doğrulama kodu infoisgpro@gmail.com adresine iletildi.' });
       } else {
         setMessage({ type: 'error', text: 'Hatalı kullanıcı adı veya şifre girdiniz.' });
       }
-    } catch (err) {
-      setMessage({ type: 'error', text: 'Giriş yapılırken bir hata oluştu.' });
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message || 'Giriş yapılırken bir hata oluştu.' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAdmin2FASubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanCode = admin2FACode.trim().replace(/\s+/g, '');
+    if (!cleanCode || cleanCode.length !== 6) {
+      setMessage({ type: 'error', text: 'Lütfen 6 haneli güvenlik kodunu eksiksiz giriniz.' });
+      return;
+    }
+
+    setLoading(true);
+    setMessage({ type: '', text: '' });
+    try {
+      if (onVerifyAdmin2FA) {
+        const verified = await onVerifyAdmin2FA(admin2FAChallengeId, cleanCode);
+        if (verified) {
+          onClose();
+        } else {
+          setMessage({ type: 'error', text: 'Hatalı veya süresi dolmuş kod girdiniz.' });
+        }
+      }
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message || 'Doğrulama sırasında hata oluştu.' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResendAdmin2FACode = async () => {
+    setLoading(true);
+    setMessage({ type: '', text: '' });
+    try {
+      if (onResendAdmin2FA) {
+        const newChallengeId = await onResendAdmin2FA();
+        if (newChallengeId) {
+          setAdmin2FAChallengeId(newChallengeId);
+          setAdmin2FACountdown(600);
+          setMessage({ type: 'success', text: 'Yeni güvenlik kodu infoisgpro@gmail.com adresine gönderildi.' });
+        }
+      }
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message || 'Kod gönderilemedi.' });
     } finally {
       setLoading(false);
     }
@@ -345,6 +425,74 @@ export default function Auth({
                     Kayıt Olun
                   </button>
                 </div>
+              </motion.form>
+            )}
+
+            {/* ADMIN 2FA VIEW */}
+            {view === 'admin_2fa' && (
+              <motion.form
+                key="admin_2fa"
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 10 }}
+                onSubmit={handleAdmin2FASubmit}
+                className="space-y-4 text-center"
+              >
+                <div className="mx-auto w-12 h-12 rounded-2xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 flex items-center justify-center border border-indigo-200 dark:border-indigo-800 shadow-inner">
+                  <Lock size={22} />
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-slate-800 dark:text-white text-base">Yönetici Giriş Doğrulaması (2FA)</h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    Güvenliğiniz için <strong className="text-indigo-600 dark:text-indigo-400 font-mono">infoisgpro@gmail.com</strong> adresine 6 haneli güvenlik kodu gönderildi.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider block text-left mb-1">
+                    6 Haneli Doğrulama Kodu
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={6}
+                    autoFocus
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-3 text-center text-2xl tracking-[8px] font-black focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition text-indigo-600 dark:text-indigo-400 font-mono"
+                    placeholder="000000"
+                    value={admin2FACode}
+                    onChange={e => setAdmin2FACode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  />
+                  <div className="flex justify-between items-center mt-2 text-[11px] text-slate-400">
+                    <span>Kalan Süre: <strong className="text-slate-700 dark:text-slate-300 font-mono">{formatCountdown(admin2FACountdown)}</strong></span>
+                    <button
+                      type="button"
+                      disabled={admin2FACountdown > 540 || loading}
+                      onClick={handleResendAdmin2FACode}
+                      className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline disabled:opacity-50 cursor-pointer"
+                    >
+                      Tekrar Kod Gönder
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading || admin2FACode.length !== 6}
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 rounded-xl shadow-md hover:shadow-lg transition-all text-xs sm:text-sm active:scale-95 cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {loading ? 'Doğrulanıyor...' : 'Kodu Doğrula ve Giriş Yap'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setView('login');
+                    setMessage({ type: '', text: '' });
+                  }}
+                  className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-bold hover:underline cursor-pointer pt-2 block mx-auto"
+                >
+                  ← Giriş Ekranına Geri Dön
+                </button>
               </motion.form>
             )}
 

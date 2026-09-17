@@ -133,7 +133,9 @@ export function deduplicateAndCleanUsers(usersList: User[]): User[] {
         }
       }
 
-      const role = (existing.role === 'admin' || rawUser.role === 'admin') ? 'admin' : (rawUser.role || existing.role || 'uzman');
+      const isOsgbManagerCombined = Boolean(existing.isOsgbManager || rawUser.isOsgbManager || existing.role === 'osgb_manager' || rawUser.role === 'osgb_manager');
+      const managedOsgbCombined = (rawUser.managedOsgbName || existing.managedOsgbName || (rawUser.osgb && typeof rawUser.osgb === 'object' ? rawUser.osgb.name : '') || (existing.osgb && typeof existing.osgb === 'object' ? existing.osgb.name : '') || '').trim();
+      const role = (existing.role === 'admin' || rawUser.role === 'admin') ? 'admin' : (isOsgbManagerCombined ? 'osgb_manager' : (rawUser.role || existing.role || 'uzman'));
       const isExistingPremium = Boolean(existing.isPremium);
       const isRawPremium = Boolean(rawUser.isPremium);
       const isPremiumCombined = isExistingPremium || isRawPremium;
@@ -155,6 +157,12 @@ export function deduplicateAndCleanUsers(usersList: User[]): User[] {
         email: rawUser.email?.trim() || existing.email || '',
         phone: rawUser.phone || existing.phone || '',
         role,
+        isOsgbManager: isOsgbManagerCombined,
+        managedOsgbName: managedOsgbCombined,
+        canViewAllCompanies: Boolean(rawUser.canViewAllCompanies !== undefined ? rawUser.canViewAllCompanies : existing.canViewAllCompanies),
+        companyPermissions: (Array.isArray(rawUser.companyPermissions) && rawUser.companyPermissions.length > 0)
+          ? rawUser.companyPermissions
+          : (Array.isArray(existing.companyPermissions) ? existing.companyPermissions : []),
         isPremium: finalIsPremium,
         licenseKey: activeLicenseKey || null,
         licenseType: activeLicenseType || null,
@@ -175,7 +183,7 @@ export function deduplicateAndCleanUsers(usersList: User[]): User[] {
 /**
  * Sanitizes and normalizes user object for Firestore persistence.
  * - Completely eliminates 'undefined' values (which crash Firestore setDoc).
- * - Ensures all standard fields expected by the companion application (isg-projesi - Copy)
+ * - Ensures all standard fields expected by the companion application (isg-projesi)
  *   are properly formatted and present with suitable fallbacks.
  */
 export function sanitizeUserForFirestore(user: any): Record<string, any> {
@@ -190,7 +198,22 @@ export function sanitizeUserForFirestore(user: any): Record<string, any> {
   cleanUser.name = String(decrypted.name || decrypted.username || 'Kullanıcı').trim();
   cleanUser.email = String(decrypted.email || '').trim().toLowerCase();
   cleanUser.phone = String(decrypted.phone || '').trim();
-  cleanUser.role = decrypted.role || 'other';
+  
+  // OSGB Manager flag & role alignment
+  const isManager = Boolean(
+    decrypted.isOsgbManager === true ||
+    decrypted.isOsgbManager === 'true' ||
+    decrypted.role === 'osgb_manager' ||
+    decrypted.isManager === true
+  );
+  cleanUser.isOsgbManager = isManager;
+  cleanUser.role = (decrypted.role === 'admin' || cleanUser.username === 'admin') 
+    ? 'admin' 
+    : (isManager ? 'osgb_manager' : (decrypted.role || 'uzman'));
+
+  const managedOsgb = String(decrypted.managedOsgbName || (decrypted.osgb && typeof decrypted.osgb === 'object' ? decrypted.osgb.name : '') || '').trim();
+  cleanUser.managedOsgbName = managedOsgb;
+
   cleanUser.tcNo = decrypted.tcNo ? String(decrypted.tcNo).trim() : '';
   cleanUser.certificateNo = decrypted.certificateNo ? String(decrypted.certificateNo).trim() : '';
   cleanUser.diplomaNo = decrypted.diplomaNo ? String(decrypted.diplomaNo).trim() : '';
@@ -199,15 +222,19 @@ export function sanitizeUserForFirestore(user: any): Record<string, any> {
   // OSGB structure (expected by isg-projesi)
   if (decrypted.osgb && typeof decrypted.osgb === 'object') {
     cleanUser.osgb = {
-      name: decrypted.osgb.name || '',
+      name: decrypted.osgb.name || managedOsgb || '',
       logo: decrypted.osgb.logo || null,
       idNo: decrypted.osgb.idNo || '',
       contact: decrypted.osgb.contact || '',
       staff: Array.isArray(decrypted.osgb.staff) ? decrypted.osgb.staff : []
     };
   } else {
-    cleanUser.osgb = { name: '', logo: null, idNo: '', contact: '', staff: [] };
+    cleanUser.osgb = { name: managedOsgb || '', logo: null, idNo: '', contact: '', staff: [] };
   }
+
+  // Permissions
+  cleanUser.canViewAllCompanies = Boolean(decrypted.canViewAllCompanies);
+  cleanUser.companyPermissions = Array.isArray(decrypted.companyPermissions) ? decrypted.companyPermissions : [];
 
   // Booleans
   cleanUser.hasAcceptedLegalTerms = Boolean(decrypted.hasAcceptedLegalTerms);

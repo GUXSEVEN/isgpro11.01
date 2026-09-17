@@ -694,8 +694,45 @@ export default function App() {
   // ==========================================
   // AUTHENTICATION HANDLERS
   // ==========================================
+  const [pendingAdminUser, setPendingAdminUser] = useState<UserType | null>(null);
 
-  const handleLogin = async (usernameInput: string, passwordInput: string): Promise<boolean> => {
+  const handleVerifyAdmin2FA = async (challengeId: string, code: string): Promise<boolean> => {
+    if (!pendingAdminUser) {
+      throw new Error('Bekleyen yönetici oturumu bulunamadı. Lütfen tekrar giriş yapınız.');
+    }
+    const res = await fetch('/api/auth/admin-2fa/verify-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ challengeId, code })
+    });
+    const data = await res.json();
+    if (data.success && data.verified) {
+      setCurrentUser(pendingAdminUser);
+      try {
+        localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(pendingAdminUser));
+      } catch (e) {}
+      logActivity('admin', 'login_2fa_success', { role: 'admin', email: 'infoisgpro@gmail.com' })
+        .catch(e => console.error("Error logging admin 2fa activity:", e));
+      setPendingAdminUser(null);
+      return true;
+    } else {
+      throw new Error(data.error || 'Doğrulama kodu geçersiz.');
+    }
+  };
+
+  const handleResendAdmin2FA = async (): Promise<string> => {
+    const res = await fetch('/api/auth/admin-2fa/send-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const data = await res.json();
+    if (!data.success) {
+      throw new Error(data.error || '2FA kodu gönderilemedi.');
+    }
+    return data.challengeId;
+  };
+
+  const handleLogin = async (usernameInput: string, passwordInput: string): Promise<boolean | { requires2FA: boolean; challengeId: string }> => {
     const usernameKey = normalizeUsername(usernameInput);
     const cleanPass = (passwordInput || '').trim();
     const hashedInput = await hashPassword(cleanPass);
@@ -736,6 +773,16 @@ export default function App() {
             const loggedInUser = { ...userData };
             if (normalizeUsername(loggedInUser.username) === 'admin') {
               loggedInUser.role = 'admin';
+              setPendingAdminUser(loggedInUser);
+              const res = await fetch('/api/auth/admin-2fa/send-code', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+              });
+              const data = await res.json();
+              if (!data.success) {
+                throw new Error(data.error || 'Admin 2FA kodu gönderilemedi.');
+              }
+              return { requires2FA: true, challengeId: data.challengeId };
             }
             setCurrentUser(loggedInUser);
             try {
@@ -773,6 +820,16 @@ export default function App() {
       const loggedInUser = { ...found };
       if (normalizeUsername(loggedInUser.username) === 'admin') {
         loggedInUser.role = 'admin';
+        setPendingAdminUser(loggedInUser);
+        const res = await fetch('/api/auth/admin-2fa/send-code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        if (!data.success) {
+          throw new Error(data.error || 'Admin 2FA kodu gönderilemedi.');
+        }
+        return { requires2FA: true, challengeId: data.challengeId };
       }
       setCurrentUser(loggedInUser);
       try {
@@ -1393,6 +1450,8 @@ export default function App() {
             onRegister={handleRegister}
             checkUserExists={checkUserExists}
             onResetPassword={handleResetPassword}
+            onVerifyAdmin2FA={handleVerifyAdmin2FA}
+            onResendAdmin2FA={handleResendAdmin2FA}
           />
         )}
       </AnimatePresence>
@@ -1486,6 +1545,9 @@ export default function App() {
           currentUser={currentUser}
           onClose={handleLogout}
           onLogout={handleLogout}
+          onUpdateEmail={async (newEmail: string) => {
+            await handleUpdateProfile({ email: newEmail });
+          }}
           onVerified={async () => {
             await handleUpdateProfile({ isEmailVerified: true, emailVerifiedAt: new Date().toISOString() });
           }}

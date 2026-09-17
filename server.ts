@@ -699,11 +699,25 @@ const getSMTPConfig = async () => {
       if (data.googleScriptUrl) googleScriptUrl = data.googleScriptUrl;
       if (data.brevoApiKey) brevoApiKey = data.brevoApiKey;
     }
+
+    if (!googleScriptUrl) {
+      try {
+        const altDoc = await getDoc(doc(db, 'settings', 'appscript'));
+        if (altDoc.exists() && (altDoc.data().url || altDoc.data().googleScriptUrl)) {
+          googleScriptUrl = altDoc.data().url || altDoc.data().googleScriptUrl;
+        } else {
+          const smtpAlt = await getDoc(doc(db, 'settings', 'smtp'));
+          if (smtpAlt.exists() && smtpAlt.data().googleScriptUrl) {
+            googleScriptUrl = smtpAlt.data().googleScriptUrl;
+          }
+        }
+      } catch (_) {}
+    }
   } catch (err) {
     console.error('[SMTP Config] Error reading dynamic SMTP settings from Firestore:', err);
   }
 
-  return { host: "smtp.gmail.com", port: 443, user, pass, fromName, active, resendApiKey, googleScriptUrl, brevoApiKey };
+  return { host: "smtp.gmail.com", port: 465, user, pass, fromName, active, resendApiKey, googleScriptUrl, brevoApiKey };
 };
 
 const sendEmailWithGoogleFallback = async (options: {
@@ -885,7 +899,85 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
     content: Buffer.isBuffer(a.content) ? a.content.toString('base64') : (typeof a.content === 'string' ? Buffer.from(a.content).toString('base64') : a.content)
   })) : undefined;
 
-  // 2. Resend HTTPS REST API (Port 443 - Cloud Delivery)
+  // 2. Google Apps Script Webhook REST API (SADECE Admin Doğrulama / OTP / 2FA mailleri için sıfır engel iletimi)
+  const isVerificationOrAdminOtp = templateType === 'admin_2fa' || templateType === 'otp' || templateType === 'admin_verification' || templateType === 'email_verification';
+  if (isVerificationOrAdminOtp && smtpConfig.googleScriptUrl && smtpConfig.googleScriptUrl.startsWith('https://')) {
+    try {
+      console.log(`[Google Apps Script REST 443] Dispatching verification/OTP email over HTTPS Port 443 to ${targetEmail}`);
+      const toRecipientString = (Array.isArray(recipients) ? recipients[0] : (recipients || targetEmail)) as string;
+      const scriptPayload = {
+        to: toRecipientString,
+        recipient: toRecipientString,
+        to_email: toRecipientString,
+        email: toRecipientString,
+        subject,
+        html,
+        htmlBody: html,
+        body: html,
+        text: html.replace(/<[^>]*>?/gm, '').trim(),
+        fromName,
+        name: fromName,
+        from_name: fromName,
+        replyTo: replyTo || 'infoisgpro@gmail.com',
+        templateType,
+        timestamp: new Date().toISOString()
+      };
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+      const resp = await fetch(smtpConfig.googleScriptUrl, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json, text/plain, */*'
+        },
+        body: JSON.stringify(scriptPayload),
+        redirect: 'follow',
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      const respText = await resp.text();
+      let isSuccess = false;
+      let parsedJson: any = null;
+      try {
+        parsedJson = JSON.parse(respText);
+        if (resp.ok && parsedJson && (parsedJson.success === true || parsedJson.status === 'success')) {
+          isSuccess = true;
+        }
+      } catch (_) {
+        if (resp.ok && respText.toLowerCase().includes('success') && !respText.toLowerCase().includes('error')) {
+          isSuccess = true;
+        }
+      }
+
+      if (isSuccess) {
+        console.log(`[Google Apps Script REST 443 Success] Delivered via Google Cloud Webhook to ${targetEmail}`);
+        // Dual delivery: Also trigger direct SMTP in background to guarantee instant arrival
+        if (smtpConfig.user && smtpConfig.pass) {
+          sendEmailWithGoogleFallback({
+            config: smtpConfig,
+            to: [targetEmail],
+            subject,
+            html,
+            replyTo
+          }).catch(e => console.warn('[SMTP Dual Delivery Backup Note]:', e?.message));
+        }
+        return { 
+          success: true, 
+          method: 'google_apps_script_443', 
+          message: `E-posta Google Apps Script REST API (Port 443) üzerinden '${targetEmail}' adresine başarıyla ulaştırıldı.` 
+        };
+      } else {
+        console.warn(`[Google Apps Script REST 443 Warning]: Status ${resp.status}, Response:`, respText);
+      }
+    } catch (whErr: any) {
+      console.warn(`[Google Apps Script REST 443 Exception]:`, whErr?.message || whErr);
+    }
+  }
+
+  // 3. Resend HTTPS REST API (Port 443 - Cloud Delivery)
   if (smtpConfig.resendApiKey) {
     try {
       console.log(`[Resend REST API 443] Dispatching email over HTTPS Port 443 to ${targetEmail}`);
@@ -913,24 +1005,6 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
       }
     } catch (rErr) {
       console.warn(`[Resend REST API 443 Exception]:`, rErr);
-    }
-  }
-
-  // 3. Google Apps Script Webhook REST API (Port 443 HTTPS)
-  if (smtpConfig.googleScriptUrl && smtpConfig.googleScriptUrl.startsWith('https://')) {
-    try {
-      console.log(`[Google Webhook REST 443] Dispatching email over HTTPS Port 443 to ${targetEmail}`);
-      const resp = await fetch(smtpConfig.googleScriptUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: recipients, subject, html, fromName, replyTo })
-      });
-      if (resp.ok) {
-        console.log(`[Google Webhook REST 443 Success] Delivered via HTTPS REST Webhook API to ${targetEmail}`);
-        return { success: true, method: 'google_rest_webhook_443', message: `E-posta Google Webhook REST API (Port 443) üzerinden '${targetEmail}' adresine ulaştırıldı.` };
-      }
-    } catch (whErr) {
-      console.warn(`[Google Webhook REST 443 Warning]:`, whErr);
     }
   }
 
@@ -1013,7 +1087,16 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
     }
   }
 
-  // 7. Guaranteed System Queue Recording
+  // 7. Guaranteed System Queue Recording (Sadece arka plan bilgilendirme mailleri için, OTP/2FA için asla sahte başarı dönülmez)
+  if (isVerificationOrAdminOtp) {
+    console.error(`[Verification/2FA Dispatch Error]: Failed to deliver critical security code to ${targetEmail} via any available channel.`);
+    return {
+      success: false,
+      method: 'delivery_failed',
+      error: 'Doğrulama kodu e-posta servisleri üzerinden alıcıya ulaştırılamadı. Lütfen SMTP veya Google Apps Script ayarlarını kontrol ediniz.'
+    };
+  }
+
   messageQueue.push({
     id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     email: targetEmail,
@@ -1035,7 +1118,10 @@ const createDynamicTransporter = (config: { host: string; port: number; user: st
   const cleanUser = (config.user || '').trim();
   const host = config.host || 'smtp.gmail.com';
   const isGmail = !host || host.includes('gmail.com') || host.includes('google');
-  const targetPort = config.port || (isGmail ? 465 : 587);
+  let targetPort = Number(config.port) || (isGmail ? 465 : 587);
+  if (isGmail && (targetPort === 443 || (targetPort !== 465 && targetPort !== 587))) {
+    targetPort = 465;
+  }
 
   return nodemailer.createTransport({
     host: isGmail ? 'smtp.gmail.com' : host,
@@ -1123,6 +1209,70 @@ const getOTPHtmlTemplate = (name: string, code: string, time: string): string =>
     </div>
     <div class="footer">
       &copy; 2026 İSG Pro Teknolojileri. Tüm hakları saklıdır.
+    </div>
+  </div>
+</body>
+</html>
+`;
+
+// HTML Email Template for Admin Two-Factor Authentication (2FA) Security Verification
+const getAdmin2FAHtmlTemplate = (code: string, expiryTime: string, ipAddress?: string): string => `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>İSG Pro - Yönetici Giriş Doğrulama Kodu (2FA)</title>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0f172a; margin: 0; padding: 20px 0; color: #334155; }
+    .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 20px 35px -10px rgba(0,0,0,0.3); border: 1px solid #e2e8f0; }
+    .header { background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #312e81 100%); padding: 35px 25px; text-align: center; color: #ffffff; }
+    .security-badge { display: inline-block; background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5; padding: 6px 14px; border-radius: 9999px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 12px; }
+    .content { padding: 35px 30px; }
+    .title { font-size: 20px; font-weight: 800; color: #0f172a; margin: 0 0 10px 0; }
+    .text { font-size: 14px; color: #475569; line-height: 1.6; margin: 0 0 20px 0; }
+    .otp-box { background: linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%); border: 2px dashed #6366f1; border-radius: 16px; padding: 25px; text-align: center; margin: 25px 0; }
+    .otp-code { font-size: 40px; font-weight: 900; letter-spacing: 12px; color: #4338ca; font-family: Consolas, 'Courier New', monospace; padding-left: 12px; }
+    .expiry { font-size: 12px; font-weight: 600; color: #64748b; margin-top: 10px; }
+    .alert-box { background-color: #fff1f2; border-left: 4px solid #f43f5e; border-radius: 8px; padding: 14px 18px; margin: 25px 0; }
+    .alert-title { font-size: 12px; font-weight: 800; color: #be123c; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+    .alert-text { font-size: 12px; color: #881337; line-height: 1.5; margin: 0; }
+    .meta-box { background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 16px; font-size: 11px; color: #64748b; margin-top: 20px; }
+    .footer { background-color: #0f172a; padding: 20px; text-align: center; font-size: 11px; color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="security-badge">🛡️ YÖNETİCİ GÜVENLİK PROTOKOLÜ</div>
+      <div style="color: #ffffff; font-size: 24px; font-weight: 900; letter-spacing: -0.5px;">İSG Pro Yönetim Paneli</div>
+      <div style="color: #c7d2fe; font-size: 13px; font-weight: 600; margin-top: 4px;">Çift Aşamalı Doğrulama (2FA) Giriş Onayı</div>
+    </div>
+    <div class="content">
+      <h2 class="title">Sistem Yöneticisi Giriş Onayı</h2>
+      <p class="text">
+        İSG Pro sisteminde <strong>admin</strong> hesabı için bir oturum açma denemesi yapılmıştır. Hesaba erişim sağlamak için aşağıdaki 6 haneli tek kullanımlık güvenlik kodunu sisteme girmeniz gerekmektedir:
+      </p>
+
+      <div class="otp-box">
+        <div class="otp-code">${code}</div>
+        <div class="expiry">Bu kod <strong>${expiryTime}</strong> süresine kadar (10 dakika) geçerlidir.</div>
+      </div>
+
+      <div class="alert-box">
+        <div class="alert-title">⚠️ Kritik Güvenlik Uyarısı</div>
+        <p class="alert-text">
+          Bu kod girilmeden sisteme <strong>hiçbir koşulda yönetici erişimi verilemez</strong>. Bu giriş denemesini siz gerçekleştirmediyseniz, lütfen derhal yönetici şifrenizi güncelleyiniz.
+        </p>
+      </div>
+
+      ${ipAddress ? `
+      <div class="meta-box">
+        <strong>İstek Bilgileri:</strong> IP: ${ipAddress} | Tarih: ${new Date().toLocaleString('tr-TR')}
+      </div>` : ''}
+    </div>
+    <div class="footer">
+      &copy; ${new Date().getFullYear()} İSG Pro Güvenli Kimlik Doğrulama Sistemi. Bu e-posta gizlidir.
     </div>
   </div>
 </body>
@@ -3102,6 +3252,126 @@ const handleSendOtpEmail = async (req: express.Request, res: express.Response) =
 app.post('/api/send-email-otp', handleSendOtpEmail);
 app.post('/api/send-email-verification', handleSendOtpEmail);
 
+// ── ADMIN ÇİFT AŞAMALI DOĞRULAMA (2FA) MOTORU ──────────────────────────────
+interface Admin2FASession {
+  challengeId: string;
+  code: string;
+  expiresAt: number;
+  attempts: number;
+  verified: boolean;
+}
+const admin2FASessions = new Map<string, Admin2FASession>();
+
+const cleanExpiredAdmin2FASessions = () => {
+  const now = Date.now();
+  for (const [key, session] of admin2FASessions.entries()) {
+    if (session.expiresAt < now) {
+      admin2FASessions.delete(key);
+    }
+  }
+};
+
+// Admin 2FA: Kod Üret ve infoisgpro@gmail.com Adresine Gönder
+app.post('/api/auth/admin-2fa/send-code', async (req: express.Request, res: express.Response) => {
+  try {
+    cleanExpiredAdmin2FASessions();
+    const adminEmail = 'infoisgpro@gmail.com';
+
+    // 6 haneli yüksek güvenlikli rastgele nümerik kod üretimi
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const challengeId = crypto.randomUUID ? crypto.randomUUID() : `2fa_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 dakika geçerlilik
+    const expTime = new Date(expiresAt).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+
+    admin2FASessions.set(challengeId, {
+      challengeId,
+      code,
+      expiresAt,
+      attempts: 0,
+      verified: false
+    });
+
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '';
+    console.log(`[Admin 2FA Security] Generated 2FA code (${code}) for admin login. ChallengeId: ${challengeId}. Dispatching to: ${adminEmail}`);
+
+    const htmlContent = getAdmin2FAHtmlTemplate(code, expTime, clientIp);
+
+    const emailResult = await sendEmailUniversal({
+      to: adminEmail,
+      subject: `🔐 ${code} - İSG Pro Yönetici (Admin) Çift Aşamalı Giriş Doğrulama Kodu`,
+      html: htmlContent,
+      templateType: 'admin_2fa'
+    });
+
+    if (!emailResult || !emailResult.success) {
+      console.error('[Admin 2FA Failure]: Delivery failed to ' + adminEmail + ':', emailResult);
+      return res.status(500).json({
+        success: false,
+        error: 'Admin güvenlik kodu e-posta adresine iletilemedi: ' + (emailResult?.error || emailResult?.message || 'Lütfen sistem e-posta ayarlarını kontrol ediniz.')
+      });
+    }
+
+    return res.json({
+      success: true,
+      challengeId,
+      message: `Yönetici güvenlik kodu ${adminEmail} adresine iletildi.`,
+      method: emailResult.method
+    });
+  } catch (err: any) {
+    console.error('[Admin 2FA Send Code Error]:', err);
+    return res.status(500).json({ error: 'Admin doğrulama kodu gönderilirken bir hata oluştu: ' + err.message });
+  }
+});
+
+// Admin 2FA: Kodu Doğrula
+app.post('/api/auth/admin-2fa/verify-code', (req: express.Request, res: express.Response) => {
+  try {
+    cleanExpiredAdmin2FASessions();
+    const { challengeId, code } = req.body || {};
+
+    if (!challengeId || !code) {
+      return res.status(400).json({ success: false, error: 'challengeId ve code parametreleri zorunludur.' });
+    }
+
+    const session = admin2FASessions.get(challengeId);
+    if (!session) {
+      return res.status(400).json({ success: false, error: 'Doğrulama oturumu bulunamadı veya süresi doldu. Lütfen yeni bir kod isteyiniz.' });
+    }
+
+    if (Date.now() > session.expiresAt) {
+      admin2FASessions.delete(challengeId);
+      return res.status(400).json({ success: false, error: 'Doğrulama kodunun süresi (10 dakika) doldu. Lütfen yeni kod isteyiniz.' });
+    }
+
+    session.attempts += 1;
+    if (session.attempts > 5) {
+      admin2FASessions.delete(challengeId);
+      return res.status(429).json({ success: false, error: 'Çok fazla hatalı kod denemesi yapıldı. Oturum güvenlik nedeniyle iptal edildi. Lütfen yeni kod isteyiniz.' });
+    }
+
+    const cleanInputCode = String(code).trim().replace(/\s+/g, '');
+    if (cleanInputCode !== session.code) {
+      return res.status(400).json({
+        success: false,
+        error: `Hatalı doğrulama kodu. (Kalan deneme hakkı: ${Math.max(0, 5 - session.attempts)})`
+      });
+    }
+
+    // Kod doğru! Oturum doğrulandı olarak işaretlenir
+    session.verified = true;
+    console.log(`[Admin 2FA Success] Admin 2FA verification succeeded for challenge: ${challengeId}`);
+    return res.json({
+      success: true,
+      verified: true,
+      message: 'Admin çift aşamalı doğrulaması başarıyla tamamlandı.'
+    });
+  } catch (err: any) {
+    console.error('[Admin 2FA Verify Code Error]:', err);
+    return res.status(500).json({ success: false, error: 'Doğrulama kontrolü sırasında hata oluştu: ' + err.message });
+  }
+});
+// ──────────────────────────────────────────────────────────────────────────
+
 // Endpoint: Bir e-posta adresine bağlı doğrulanmış hesap limitini kontrol eder (Veritabanından: Yılda en fazla 2 hesap)
 app.all('/api/check-email-account-limit', async (req: express.Request, res: express.Response) => {
   try {
@@ -3384,47 +3654,45 @@ const handleSendRegistrationContracts = async (req: express.Request, res: expres
   const mailAttachments = pdfAttachments;
 
   const smtpConfig = await getSMTPConfig();
-  if (smtpConfig.active) {
-    try {
-      const transporter = createDynamicTransporter(smtpConfig);
-      await transporter.sendMail({
-        from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
-        to: recipients,
-        subject: emailSubject,
-        html: htmlContent,
-        attachments: mailAttachments
-      });
-      console.log(`[SMTP Registration Contracts] 3 adet yasal metin PDF'i başarıyla gönderildi: ${recipients.join(', ')}`);
-      return res.json({ success: true, message: 'Yasal bilgilendirme nüshaları 3 PDF olarak başarıyla gönderildi.', recipients });
-    } catch (err: any) {
-      console.error('[SMTP Registration Contracts Error]:', err);
-    }
+  const resSMTP = await sendEmailWithGoogleFallback({
+    config: smtpConfig,
+    to: recipients,
+    subject: emailSubject,
+    html: htmlContent,
+    attachments: mailAttachments
+  });
+
+  if (resSMTP.success) {
+    console.log(`[SMTP Registration Contracts] 3 adet yasal metin PDF'i başarıyla gönderildi: ${recipients.join(', ')}`);
+    return res.json({ success: true, message: 'Yasal bilgilendirme nüshaları 3 PDF olarak başarıyla gönderildi.', recipients });
   }
 
   // Fallback SMTP
   try {
-    const transporter = createDynamicTransporter({
+    const fallbackConfig = {
       host: process.env.SMTP_HOST || "smtp.gmail.com",
       port: Number(process.env.SMTP_PORT) || 465,
       user: process.env.SMTP_USER || "infoisgpro@gmail.com",
       pass: process.env.SMTP_PASS || "nflz ovsy dskk jwvy",
       fromName: "İSG Pro Teknolojileri",
       active: true
-    });
-
-    await transporter.sendMail({
-      from: `"İSG Pro Teknolojileri" <infoisgpro@gmail.com>`,
+    };
+    const resFallback = await sendEmailWithGoogleFallback({
+      config: fallbackConfig,
       to: recipients,
       subject: emailSubject,
       html: htmlContent,
       attachments: mailAttachments
     });
-
-    return res.json({ success: true, method: 'fallback_smtp', message: 'Yasal bilgilendirmeler 3 PDF olarak iletildi.' });
+    if (resFallback.success) {
+      console.log(`[Fallback SMTP Registration Contracts] Delivered to ${recipients.join(', ')}`);
+      return res.json({ success: true, method: 'fallback_smtp', message: 'Yasal bilgilendirmeler 3 PDF olarak iletildi.' });
+    }
   } catch (err: any) {
     console.error('Registration Contract Email Fallback Error:', err);
-    return res.status(500).json({ error: 'Yasal bilgilendirme e-postası gönderilirken hata oluştu.', details: err.message });
   }
+
+  return res.status(500).json({ error: 'Yasal bilgilendirme e-postası gönderilirken hata oluştu.', details: resSMTP.error });
 };
 
 app.post('/api/send-registration-contracts', handleSendRegistrationContracts);
@@ -4278,6 +4546,11 @@ async function activateAndNotifyOrder(merchantOid: string): Promise<boolean> {
     }
   }
 
+  // Redirect test email addresses to infoisgpro@gmail.com so test notifications arrive directly to admin
+  if (!order.email || order.email.toLowerCase().trim() === 'test@isgpro.com' || order.email.includes('test@isgpro')) {
+    order.email = 'infoisgpro@gmail.com';
+  }
+
   // Automatically trigger license key delivery email (SMTP)
   const planName = order.planId === 'yearly' ? 'Yıllık Pro Lisans' : 'Aylık Pro Lisans';
   const planType = order.planId === 'yearly' ? 'Yıllık Premium' : 'Aylık Standart';
@@ -4635,7 +4908,10 @@ app.all(['/api/paytr/callback', '/paytr/callback'], express.urlencoded({ extende
 // PayTR Step 2 Test Mode Callback Simulator / Verification Endpoint
 app.post('/api/paytr/test-callback', async (req, res) => {
   try {
-    const { planId = 'yearly', email = 'test@isgpro.com', name = 'Test Kullanıcı', testStatus = 'success' } = req.body;
+    let { planId = 'yearly', email = 'infoisgpro@gmail.com', name = 'Test Kullanıcı', testStatus = 'success' } = req.body;
+    if (!email || email.toLowerCase().trim() === 'test@isgpro.com' || email.includes('test@isgpro')) {
+      email = 'infoisgpro@gmail.com';
+    }
     const paytrConfig = await getPayTRConfig();
 
     const merchantOid = `ISGTEST${Date.now()}${Math.floor(1000 + Math.random() * 9000)}`;
@@ -5064,6 +5340,11 @@ async function getTestEmailPayload(
     subject = '748291 - İSG Pro Güvenli Giriş Kodunuz';
     const expTime = new Date(Date.now() + 15 * 60 * 1000).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
     html = getOTPHtmlTemplate('Ahmet Yılmaz (Test)', '748291', expTime);
+  } else if (templateType === 'admin_2fa') {
+    subject = '🔐 592814 - İSG Pro Yönetici (Admin) Çift Aşamalı Giriş Doğrulama Kodu';
+    const expTime = new Date(Date.now() + 10 * 60 * 1000).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '192.168.1.100';
+    html = getAdmin2FAHtmlTemplate('592814', expTime, clientIp);
   } else if (templateType === 'verification' || templateType === 'verify') {
     subject = 'İSG Pro - E-Posta Adresi Doğrulama & Güncelleme Bağlantısı (Test)';
     html = getEmailVerificationHtmlTemplate({
@@ -5373,16 +5654,37 @@ app.post('/api/smtp-config/test', async (req, res) => {
     brevoApiKey: brevoApiKey || ''
   };
 
-  if (!testConfig.user || !testConfig.pass) {
-    return res.status(400).json({ error: 'E-posta kullanıcısı ve şifresi belirtilmelidir.' });
+  if (!testConfig.user && !testConfig.pass && !testConfig.googleScriptUrl && !testConfig.resendApiKey && !testConfig.brevoApiKey) {
+    return res.status(400).json({ error: 'E-posta kullanıcısı/şifresi veya Google Apps Script / REST API bağlantısı belirtilmelidir.' });
   }
 
-  console.log(`[SMTP Test] Testing email (${templateType}) to ${maskEmail(testEmail)} using host ${testConfig.host}:${testConfig.port}`);
+  console.log(`[SMTP Test] Testing email (${templateType}) to ${maskEmail(testEmail)}`);
 
   try {
     const payload = await getTestEmailPayload(templateType, testEmail, req, testConfig);
 
-    // 1. Direct SMTP with the supplied credentials (ensures exact HTML and PDF attachments are tested)
+    // 1. If Google Apps Script is provided, test it first (instant delivery over Port 443)
+    if (testConfig.googleScriptUrl && testConfig.googleScriptUrl.startsWith('https://')) {
+      const gResult = await sendEmailUniversal({
+        to: testEmail,
+        subject: payload.subject,
+        html: payload.html,
+        fromName: fromName || 'İSG Pro',
+        attachments: payload.attachments,
+        templateType: templateType as any,
+        config: testConfig
+      });
+      if (gResult.success && gResult.method === 'google_apps_script_443') {
+        const attText = payload.attachments && payload.attachments.length > 0 ? ` (${payload.attachments.length} PDF eki ile)` : '';
+        return res.json({
+          success: true,
+          method: 'google_apps_script_443',
+          message: `E-posta Google Apps Script üzerinden '${testEmail}' adresine${attText} başarıyla iletildi.`
+        });
+      }
+    }
+
+    // 2. Direct SMTP with the supplied credentials (ensures exact HTML and PDF attachments are tested)
     let smtpErrorDetails = '';
     if (testConfig.user && testConfig.pass) {
       const smtpRes = await sendEmailWithGoogleFallback({
@@ -5406,7 +5708,7 @@ app.post('/api/smtp-config/test', async (req, res) => {
       }
     }
 
-    // 2. Fallback to Universal REST APIs (Resend, Brevo, Google Script)
+    // 3. Fallback to Universal REST APIs (Resend, Brevo, Google Script)
     const resResult = await sendEmailUniversal({
       to: testEmail,
       subject: payload.subject,

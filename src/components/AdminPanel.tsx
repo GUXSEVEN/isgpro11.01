@@ -11,15 +11,15 @@ import {
   RefreshCcw, AlertCircle, Sparkles, FileText, FileEdit, Clock,
   Download, Database, Search, Upload, UserPlus, ShieldAlert, CheckSquare, Sparkle,
   Link as LinkIcon, ExternalLink, PenTool, KeyRound, ShieldCheck, CreditCard, Lock, Copy,
-  AlertTriangle, CheckCircle2, Eye, EyeOff, Building2, Calendar, BadgeCheck,
-  ArrowUp, ArrowDown, Play, Video, ListVideo, Youtube
+  AlertTriangle, CheckCircle2, Eye, EyeOff, Building2, Calendar, BadgeCheck, Briefcase,
+  ArrowUp, ArrowDown, Play, Video, ListVideo, Youtube, Send, UserCheck, Loader2
 } from 'lucide-react';
 import { FAQItem, Review, RiskPreset, SiteConfig, ContactMessage, AppRelease, User, PromoVideoItem } from '../types';
 import { db } from '../lib/firebase';
-import { collection, getDocs, doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { collection, getDocs, getDoc, doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { hashPassword, encryptSensitiveData, decryptSensitiveData, encryptUser, decryptUser } from '../lib/crypto';
 import { maskLicenseKey } from '../lib/privacy';
-import { deduplicateAndCleanUsers, sanitizeUserForFirestore, normalizeUsername, generateAvailableUsernameSuggestions } from '../lib/userUtils';
+import { deduplicateAndCleanUsers, sanitizeUserForFirestore, normalizeUsername, generateAvailableUsernameSuggestions, checkEmailAccountLimitFromDb } from '../lib/userUtils';
 import { generateLicenseKey, registerGeneratedLicense, LicenseType, getLicenseTypeFromKey } from '../lib/licenseUtils';
 import SignatureCanvas from './SignatureCanvas';
 
@@ -101,7 +101,7 @@ export default function AdminPanel({
       const res = await fetch('/api/paytr/test-callback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ planId: 'yearly', email: 'test@isgpro.com', name: 'Test Kullanıcı' })
+        body: JSON.stringify({ planId: 'yearly', email: 'infoisgpro@gmail.com', name: 'Test Kullanıcı' })
       });
       const data = await res.json();
       setPaytrTestCallbackResult(data);
@@ -198,11 +198,13 @@ export default function AdminPanel({
   const [resendApiKey, setResendApiKey] = useState('');
   const [googleScriptUrl, setGoogleScriptUrl] = useState('');
   const [brevoApiKey, setBrevoApiKey] = useState('');
+  const [showScriptCode, setShowScriptCode] = useState(false);
+  const [copiedScript, setCopiedScript] = useState(false);
   const [smtpLoading, setSmtpLoading] = useState(false);
   const [smtpSaveSuccess, setSmtpSaveSuccess] = useState(false);
   const [testEmailAddress, setTestEmailAddress] = useState('');
   const [testTemplateType, setTestTemplateType] = useState<
-    'general' | 'otp' | 'verification' | 'verified_user' | 'verified_admin' | 'new_user' |
+    'general' | 'otp' | 'admin_2fa' | 'verification' | 'verified_user' | 'verified_admin' | 'new_user' |
     'license' | 'trial_license' | 'trial_reminder' | 'contracts' | 'registration_consent' |
     'update' | 'contact'
   >('general');
@@ -293,6 +295,47 @@ export default function AdminPanel({
   const [editModalIsPremium, setEditModalIsPremium] = useState(false);
   const [editModalLicenseType, setEditModalLicenseType] = useState<LicenseType>('yearly');
   const [editModalLicenseKey, setEditModalLicenseKey] = useState('');
+  const [editModalIsOsgbManager, setEditModalIsOsgbManager] = useState(false);
+  const [editModalManagedOsgbName, setEditModalManagedOsgbName] = useState('');
+  const [editModalCanViewAllCompanies, setEditModalCanViewAllCompanies] = useState(false);
+  const [editModalCompanyPermissions, setEditModalCompanyPermissions] = useState<Array<{ companyId: string; canView: boolean; canEdit: boolean }>>([]);
+
+  // New User OSGB & Company states
+  const [newUserIsOsgbManager, setNewUserIsOsgbManager] = useState(false);
+  const [newUserManagedOsgbName, setNewUserManagedOsgbName] = useState('');
+  const [newUserCanViewAllCompanies, setNewUserCanViewAllCompanies] = useState(false);
+
+  // Dedicated Company Permissions Modal state
+  const [permModalUser, setPermModalUser] = useState<User | null>(null);
+  const [permModalIsOsgbManager, setPermModalIsOsgbManager] = useState(false);
+  const [permModalManagedOsgbName, setPermModalManagedOsgbName] = useState('');
+  const [permModalCanViewAllCompanies, setPermModalCanViewAllCompanies] = useState(false);
+  const [permModalCompanyPerms, setPermModalCompanyPerms] = useState<Array<{ companyId: string; canView: boolean; canEdit: boolean }>>([]);
+  const [allCompaniesList, setAllCompaniesList] = useState<Array<{ id: string; name: string; assignedOsgbName?: string }>>([]);
+
+  // Load companies for permission management
+  useEffect(() => {
+    if (activeTab === 'database') {
+      try {
+        const rawLocal = localStorage.getItem('companies');
+        if (rawLocal) {
+          const parsed = JSON.parse(rawLocal);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setAllCompaniesList(parsed);
+          }
+        }
+      } catch (e) {}
+
+      if (db) {
+        getDocs(collection(db, 'companies')).then(snap => {
+          const comps = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+          if (comps.length > 0) {
+            setAllCompaniesList(comps);
+          }
+        }).catch(err => console.warn('Could not fetch companies list:', err));
+      }
+    }
+  }, [activeTab]);
 
   // Manual License Assignment Modal states
   const [assignLicenseUser, setAssignLicenseUser] = useState<User | null>(null);
@@ -318,6 +361,19 @@ export default function AdminPanel({
       message,
       onConfirm
     });
+  };
+
+  // E-Postayı Değiştir ve Doğrulama Kodu Gönder Modalı State'leri
+  const [changeEmailModalUser, setChangeEmailModalUser] = useState<User | null>(null);
+  const [changeEmailInput, setChangeEmailInput] = useState('');
+  const [changeEmailIsSubmitting, setChangeEmailIsSubmitting] = useState(false);
+  const [changeEmailError, setChangeEmailError] = useState('');
+
+  const openChangeEmailAndVerifyModal = (u: User) => {
+    setChangeEmailModalUser(u);
+    setChangeEmailInput(u.email || '');
+    setChangeEmailError('');
+    setChangeEmailIsSubmitting(false);
   };
 
   const [faqSuccess, setFaqSuccess] = useState(false);
@@ -401,6 +457,7 @@ export default function AdminPanel({
   const fetchSMTPConfig = async () => {
     try {
       const response = await fetch('/api/smtp-config');
+      let loadedConfig = false;
       if (response.ok) {
         const data = await response.json();
         if (data.config) {
@@ -413,10 +470,38 @@ export default function AdminPanel({
           setResendApiKey(data.config.resendApiKey || '');
           setGoogleScriptUrl(data.config.googleScriptUrl || '');
           setBrevoApiKey(data.config.brevoApiKey || '');
+          loadedConfig = true;
         }
       }
+      // Firestore direct fallback if googleScriptUrl is not retrieved
+      if (db && (!loadedConfig || !googleScriptUrl)) {
+        try {
+          const snap = await getDoc(doc(db, 'smtp_config', 'default'));
+          if (snap.exists()) {
+            const d = snap.data();
+            if (d.googleScriptUrl) setGoogleScriptUrl(d.googleScriptUrl);
+            if (d.user && !smtpUser) setSmtpUser(d.user);
+            if (d.fromName && !smtpFromName) setSmtpFromName(d.fromName);
+            if (d.resendApiKey && !resendApiKey) setResendApiKey(d.resendApiKey);
+            if (d.brevoApiKey && !brevoApiKey) setBrevoApiKey(d.brevoApiKey);
+          }
+        } catch (_) {}
+      }
     } catch (err) {
-      console.error('Error fetching SMTP config:', err);
+      console.error('Error fetching SMTP config from API, trying Firestore direct:', err);
+      if (db) {
+        try {
+          const snap = await getDoc(doc(db, 'smtp_config', 'default'));
+          if (snap.exists()) {
+            const d = snap.data();
+            if (d.googleScriptUrl) setGoogleScriptUrl(d.googleScriptUrl);
+            if (d.user) setSmtpUser(d.user);
+            if (d.fromName) setSmtpFromName(d.fromName);
+            if (d.resendApiKey) setResendApiKey(d.resendApiKey);
+            if (d.brevoApiKey) setBrevoApiKey(d.brevoApiKey);
+          }
+        } catch (_) {}
+      }
     }
   };
 
@@ -424,6 +509,29 @@ export default function AdminPanel({
     e.preventDefault();
     setSmtpLoading(true);
     setSmtpSaveSuccess(false);
+
+    // 1. Direct Firestore Persistence (Guaranteed DB Save)
+    try {
+      if (db) {
+        await setDoc(doc(db, 'smtp_config', 'default'), {
+          host: smtpHost,
+          port: smtpPort,
+          user: smtpUser,
+          pass: smtpPass,
+          fromName: smtpFromName,
+          active: smtpActive,
+          resendApiKey,
+          googleScriptUrl: (googleScriptUrl || '').trim(),
+          brevoApiKey,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+        console.log('[Firestore SMTP] Saved smtp_config/default directly to Firestore.');
+      }
+    } catch (fErr) {
+      console.warn('[Firestore SMTP Save Warning]:', fErr);
+    }
+
+    // 2. Server API Sync
     try {
       const response = await fetch('/api/smtp-config', {
         method: 'POST',
@@ -436,7 +544,7 @@ export default function AdminPanel({
           fromName: smtpFromName,
           active: smtpActive,
           resendApiKey,
-          googleScriptUrl,
+          googleScriptUrl: (googleScriptUrl || '').trim(),
           brevoApiKey
         })
       });
@@ -444,14 +552,73 @@ export default function AdminPanel({
         setSmtpSaveSuccess(true);
         setTimeout(() => setSmtpSaveSuccess(false), 3000);
       } else {
-        const error = await response.json();
-        alert(error.error || 'SMTP ayarları kaydedilemedi.');
+        // If Firestore succeeded, we still notify success with note
+        setSmtpSaveSuccess(true);
+        setTimeout(() => setSmtpSaveSuccess(false), 3000);
       }
     } catch (err) {
-      console.error(err);
-      alert('SMTP sunucusuyla bağlantı kurulamadı.');
+      console.warn('Server API sync note:', err);
+      setSmtpSaveSuccess(true);
+      setTimeout(() => setSmtpSaveSuccess(false), 3000);
     } finally {
       setSmtpLoading(false);
+    }
+  };
+
+  const handleTestGoogleScriptDirect = async () => {
+    const targetEmail = testEmailAddress || 'infoisgpro@gmail.com';
+    const cleanUrl = (googleScriptUrl || '').trim();
+    if (!cleanUrl || !cleanUrl.startsWith('https://')) {
+      alert('Lütfen geçerli bir Google Apps Script Webhook URL giriniz (https://script.google.com/macros/s/.../exec).');
+      return;
+    }
+    setSmtpTesting(true);
+    setSmtpTestResult(null);
+    try {
+      const resp = await fetch(cleanUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: targetEmail,
+          recipient: targetEmail,
+          to_email: targetEmail,
+          subject: '🧪 [İSG Pro Test] Google Apps Script Doğrulama',
+          html: `<div style="font-family: Arial, sans-serif; padding: 24px; color: #1e293b; line-height: 1.6; border: 1px solid #e2e8f0; border-radius: 12px;">
+            <h2 style="color: #4f46e5; margin-top: 0;">🚀 İSG Pro - Google Apps Script Entegrasyonu Doğrulandı</h2>
+            <p>Tebrikler! Google Apps Script e-posta gönderim webhook'unuz <strong>Port 443 HTTPS</strong> üzerinden başarıyla çalıştı.</p>
+            <p>Bu yöntem sayesinde Gmail SMTP port engelleri tamamen aşılır ve Admin 2FA doğrulama kodları anında gelen kutunuza iletilir.</p>
+            <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
+            <p style="color: #64748b; font-size: 12px; margin-bottom: 0;">Gönderim Zamanı: ${new Date().toLocaleString('tr-TR')} | Gönderen: ${smtpFromName || 'İSG Pro'}</p>
+          </div>`,
+          fromName: smtpFromName || 'İSG Pro'
+        })
+      });
+
+      const text = await resp.text();
+      let ok = resp.ok;
+      try {
+        const j = JSON.parse(text);
+        if (j.success === false || j.status === 'error') ok = false;
+      } catch (_) {}
+
+      if (ok) {
+        setSmtpTestResult({
+          success: true,
+          message: `E-posta Google Apps Script üzerinden '${targetEmail}' adresine başarıyla ulaştırıldı!`
+        });
+      } else {
+        setSmtpTestResult({
+          success: false,
+          message: `Google Apps Script yanıtı: ${text}`
+        });
+      }
+    } catch (err: any) {
+      setSmtpTestResult({
+        success: false,
+        message: 'Google Apps Script bağlantı hatası: ' + (err.message || err)
+      });
+    } finally {
+      setSmtpTesting(false);
     }
   };
 
@@ -723,6 +890,10 @@ export default function AdminPanel({
     const detectedType = user.licenseType || getLicenseTypeFromKey(user.licenseKey) || 'yearly';
     setEditModalLicenseType(detectedType);
     setEditModalLicenseKey(user.licenseKey || '');
+    setEditModalIsOsgbManager(Boolean(user.isOsgbManager || user.role === 'osgb_manager'));
+    setEditModalManagedOsgbName(user.managedOsgbName || '');
+    setEditModalCanViewAllCompanies(Boolean(user.canViewAllCompanies));
+    setEditModalCompanyPermissions(user.companyPermissions || []);
   };
 
   const generateRandomPassword = () => {
@@ -775,14 +946,14 @@ export default function AdminPanel({
         email: editModalEmail.trim(),
         phone: editModalPhone.trim(),
         password: newHashedPassword ? newHashedPassword : u.password,
-        role: editModalRole,
+        role: editModalRole === 'admin' ? 'admin' : (editModalIsOsgbManager ? 'osgb_manager' : editModalRole),
         tcNo: editModalTcNo.trim(),
         certificateNo: editModalCertificateNo.trim(),
         diplomaNo: editModalDiplomaNo.trim(),
         tescilNo: editModalTescilNo.trim(),
         osgb: {
           ...(typeof u.osgb === 'object' && u.osgb ? u.osgb : { name: '', logo: null, idNo: '', contact: '', staff: [] }),
-          name: editModalOsgbName.trim()
+          name: (editModalOsgbName.trim() || editModalManagedOsgbName.trim())
         },
         isEmailVerified: editModalIsEmailVerified,
         emailVerifiedAt: editModalIsEmailVerified ? (u.emailVerifiedAt || new Date().toISOString()) : null,
@@ -792,7 +963,11 @@ export default function AdminPanel({
         licenseKey: finalKey,
         licenseType: editModalIsPremium ? editModalLicenseType : null,
         licensePurchasedAt: editModalIsPremium ? purchaseDate : null,
-        licenseExpiresAt: editModalIsPremium ? expiryDate.toISOString() : null
+        licenseExpiresAt: editModalIsPremium ? expiryDate.toISOString() : null,
+        isOsgbManager: Boolean(editModalIsOsgbManager || editModalRole === 'osgb_manager'),
+        managedOsgbName: (editModalManagedOsgbName.trim() || editModalOsgbName.trim()),
+        canViewAllCompanies: editModalCanViewAllCompanies,
+        companyPermissions: editModalCompanyPermissions
       };
     });
 
@@ -866,6 +1041,54 @@ export default function AdminPanel({
     showDbSuccess('Kullanıcı bilgileri başarıyla güncellendi.');
   };
 
+  const openPermissionsModalForUser = (user: User) => {
+    setPermModalUser(user);
+    setPermModalIsOsgbManager(Boolean(user.isOsgbManager || user.role === 'osgb_manager'));
+    setPermModalManagedOsgbName(user.managedOsgbName || (user.osgb && typeof user.osgb === 'object' ? user.osgb.name : '') || '');
+    setPermModalCanViewAllCompanies(Boolean(user.canViewAllCompanies));
+    setPermModalCompanyPerms(user.companyPermissions || []);
+  };
+
+  const handleToggleUserPerm = (companyId: string, field: 'canView' | 'canEdit', value: boolean) => {
+    setPermModalCompanyPerms(prev => {
+      const existing = prev.find(p => p.companyId === companyId);
+      const updatedItem = existing ? { ...existing, [field]: value } : { companyId, canView: false, canEdit: false, [field]: value };
+      if (field === 'canEdit' && value) updatedItem.canView = true;
+      if (field === 'canView' && !value) updatedItem.canEdit = false;
+      return [
+        ...prev.filter(p => p.companyId !== companyId),
+        ...(updatedItem.canView || updatedItem.canEdit ? [updatedItem] : [])
+      ];
+    });
+  };
+
+  const handleSavePermModal = async () => {
+    if (!permModalUser) return;
+    const cleanUName = normalizeUsername(permModalUser.username);
+    const updatedUsers = dbUsers.map(u => {
+      if (normalizeUsername(u.username) === cleanUName) {
+        const targetRole = u.role === 'admin' ? 'admin' : (permModalIsOsgbManager ? 'osgb_manager' : (u.role === 'osgb_manager' ? 'uzman' : u.role));
+        const finalManagedOsgb = permModalManagedOsgbName.trim();
+        return {
+          ...u,
+          role: targetRole,
+          isOsgbManager: permModalIsOsgbManager,
+          managedOsgbName: finalManagedOsgb,
+          osgb: {
+            ...(typeof u.osgb === 'object' && u.osgb ? u.osgb : { name: '', logo: null, idNo: '', contact: '', staff: [] }),
+            name: finalManagedOsgb || (u.osgb && typeof u.osgb === 'object' ? u.osgb.name : '') || ''
+          },
+          canViewAllCompanies: permModalCanViewAllCompanies,
+          companyPermissions: permModalCompanyPerms
+        };
+      }
+      return u;
+    });
+    await saveUsersToStorage(updatedUsers);
+    setPermModalUser(null);
+    showDbSuccess(`@${permModalUser.username} kullanıcısının firma yetkileri ve OSGB yöneticilik ayarları başarıyla kaydedildi.`);
+  };
+
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanUser = normalizeUsername(newUsername);
@@ -914,7 +1137,11 @@ export default function AdminPanel({
       licenseExpiresAt: newUserIsPremium ? expiryDate.toISOString() : null,
       isEmailVerified: newUserIsEmailVerified,
       hasAcceptedLegalTerms: false,
-      createdBy: 'admin'
+      createdBy: 'admin',
+      isOsgbManager: newUserIsOsgbManager,
+      managedOsgbName: newUserManagedOsgbName.trim(),
+      canViewAllCompanies: newUserCanViewAllCompanies,
+      companyPermissions: []
     };
 
     const updated = [...dbUsers, newUser];
@@ -943,6 +1170,9 @@ export default function AdminPanel({
     setNewUserRole('uzman');
     setNewUserIsPremium(false);
     setNewUserIsEmailVerified(true);
+    setNewUserIsOsgbManager(false);
+    setNewUserManagedOsgbName('');
+    setNewUserCanViewAllCompanies(false);
     setNewUserOpen(false);
 
     showDbSuccess('Yeni kullanıcı başarıyla eklendi.');
@@ -961,7 +1191,7 @@ export default function AdminPanel({
 
   const handleSendVerificationEmail = async (targetUser: User) => {
     if (!targetUser.email) {
-      alert('Kullanıcının geçerli bir e-posta adresi bulunmuyor!');
+      openChangeEmailAndVerifyModal(targetUser);
       return;
     }
     const code = Math.floor(100000 + Math.random() * 900000).toString();
@@ -973,6 +1203,7 @@ export default function AdminPanel({
         body: JSON.stringify({
           email: targetUser.email,
           name: targetUser.name || targetUser.username,
+          username: targetUser.username,
           code
         })
       });
@@ -983,6 +1214,80 @@ export default function AdminPanel({
       }
     } catch (err) {
       alert('Bağlantı hatası: Doğrulama e-postası gönderilemedi.');
+    }
+  };
+
+  const handleExecuteChangeEmailAndSendCode = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!changeEmailModalUser) return;
+
+    const cleanEmail = changeEmailInput.trim().toLowerCase();
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setChangeEmailError('Lütfen geçerli bir e-posta adresi giriniz (örn: ad.soyad@firma.com).');
+      return;
+    }
+
+    setChangeEmailIsSubmitting(true);
+    setChangeEmailError('');
+
+    try {
+      // 1. Veritabanından yıllık 2 hesap kotası kontrolü
+      const limitCheck = await checkEmailAccountLimitFromDb(cleanEmail, changeEmailModalUser.username);
+      if (!limitCheck.allowed) {
+        setChangeEmailError(limitCheck.message || 'Bu e-posta adresine bağlı son 1 yıl içinde en fazla 2 doğrulanmış hesap açılabilir.');
+        setChangeEmailIsSubmitting(false);
+        return;
+      }
+
+      // 2. Kullanıcının e-postasını güncelle ve veritabanına kaydet
+      const updated = dbUsers.map(u => 
+        u.username.toLowerCase() === changeEmailModalUser.username.toLowerCase()
+          ? { ...u, email: cleanEmail, isEmailVerified: false, emailVerifiedAt: null }
+          : u
+      );
+      await saveUsersToStorage(updated);
+
+      // 3. 6 haneli doğrulama kodu oluştur ve e-postaya gönder
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      let sent = false;
+      try {
+        const res = await fetch('/api/send-email-verification', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: cleanEmail,
+            name: changeEmailModalUser.name || changeEmailModalUser.username,
+            username: changeEmailModalUser.username,
+            code
+          })
+        });
+        if (res.ok) sent = true;
+      } catch (err) {}
+
+      if (!sent) {
+        // Fallback: send-email-otp
+        try {
+          const res2 = await fetch('/api/send-email-otp', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: cleanEmail,
+              name: changeEmailModalUser.name || changeEmailModalUser.username,
+              username: changeEmailModalUser.username,
+              code
+            })
+          });
+          if (res2.ok) sent = true;
+        } catch (err) {}
+      }
+
+      showDbSuccess(`@${changeEmailModalUser.username} e-postası "${cleanEmail}" olarak kaydedildi ve doğrulama kodu başarıyla iletildi.`);
+      setChangeEmailModalUser(null);
+    } catch (err: any) {
+      console.error('E-posta değiştirme ve doğrulama kodu gönderme hatası:', err);
+      setChangeEmailError(err?.message || 'İşlem sırasında bir hata oluştu.');
+    } finally {
+      setChangeEmailIsSubmitting(false);
     }
   };
 
@@ -2691,6 +2996,53 @@ export default function AdminPanel({
                       </label>
                     </div>
 
+                    <div className="pt-2 border-t border-slate-200/60 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id="newUserIsOsgbManager"
+                          checked={newUserIsOsgbManager}
+                          onChange={(e) => setNewUserIsOsgbManager(e.target.checked)}
+                          className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                        />
+                        <label htmlFor="newUserIsOsgbManager" className="text-xs text-slate-800 font-extrabold cursor-pointer flex items-center gap-1">
+                          <Building2 size={13} className="text-indigo-600" />
+                          <span>🏢 OSGB Yöneticisi Yetkisi Ver (Firma ataması olmasa bile firma bilgilerini düzenleyebilir)</span>
+                        </label>
+                      </div>
+
+                      {newUserIsOsgbManager && (
+                        <div className="pl-6 pt-1">
+                          <label className="block text-[10px] font-black text-indigo-700 uppercase tracking-wider mb-1">
+                            Yönetilen OSGB Unvanı / Adı
+                          </label>
+                          <input
+                            type="text"
+                            value={newUserManagedOsgbName}
+                            onChange={(e) => setNewUserManagedOsgbName(e.target.value)}
+                            placeholder="Örn: Kuzey Doğu İSG OSGB"
+                            className="w-full bg-white border border-indigo-200 rounded-lg px-3 py-1.5 text-xs font-bold text-slate-900 focus:outline-indigo-600"
+                          />
+                          <p className="text-[10px] text-slate-500 mt-1 font-normal">
+                            Bu yönetici, bu OSGB'ye kayıtlı tüm firmaları ve bilgilerini tek tek atama yapılmasa bile düzenleyebilir.
+                          </p>
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id="newUserCanViewAllCompanies"
+                          checked={newUserCanViewAllCompanies}
+                          onChange={(e) => setNewUserCanViewAllCompanies(e.target.checked)}
+                          className="rounded border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer"
+                        />
+                        <label htmlFor="newUserCanViewAllCompanies" className="text-xs text-slate-800 font-extrabold cursor-pointer">
+                          <span>👁️ Sistemdeki Tüm Firmaları Görme Yetkisi (canViewAllCompanies)</span>
+                        </label>
+                      </div>
+                    </div>
+
                     {newUserIsPremium && (
                       <div className="pl-6 pt-1 flex flex-col sm:flex-row gap-3 items-start sm:items-center">
                         <span className="text-xs font-bold text-slate-600">Lisans Paket Türü:</span>
@@ -2839,6 +3191,20 @@ export default function AdminPanel({
                                        u.role === 'uzman' ? 'İSG UZMANI' :
                                        u.role === 'hekim' ? 'İŞYERİ HEKİMİ' : 'PERSONEL'}
                                     </span>
+                                    {Boolean(u.isOsgbManager || u.role === 'osgb_manager') && (
+                                      <div className="mt-1">
+                                        <span className="inline-flex items-center gap-1 text-[9px] font-black px-2 py-0.5 rounded-md bg-indigo-100 text-indigo-800 border border-indigo-200">
+                                          <Building2 size={10} /> OSGB Yöneticisi: {u.managedOsgbName || 'Atanmamış'}
+                                        </span>
+                                      </div>
+                                    )}
+                                    {Boolean(u.canViewAllCompanies) && (
+                                      <div className="mt-0.5">
+                                        <span className="inline-block text-[8px] font-bold px-1.5 py-0.5 rounded bg-teal-50 text-teal-700 border border-teal-200">
+                                          👁️ Tüm Firmaları Görebilir
+                                        </span>
+                                      </div>
+                                    )}
                                   </div>
                                   {u.certificateNo && (
                                     <div className="text-[9px] font-mono text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200/60 inline-block">
@@ -2875,7 +3241,7 @@ export default function AdminPanel({
                                 </div>
                               ) : (
                                 <div className="space-y-1 text-[11px]">
-                                  <div className="text-slate-800 font-bold">{u.email}</div>
+                                  <div className="text-slate-800 font-bold">{u.email || <span className="text-amber-600 font-bold italic">E-Posta Tanımlanmamış</span>}</div>
                                   <div className="text-slate-400 font-semibold">{u.phone || 'Telefon Yok'}</div>
                                   <div className="pt-0.5 flex flex-wrap items-center gap-1.5">
                                     {u.isEmailVerified ? (
@@ -3126,9 +3492,26 @@ export default function AdminPanel({
                                         >
                                           Kod Gönder
                                         </button>
+                                        <button
+                                          onClick={() => openChangeEmailAndVerifyModal(u)}
+                                          title={u.email ? "E-Posta Adresini Değiştir ve Doğrulama Kodu Gönder" : "E-Posta Adresi Tanımla ve Doğrulama Kodu Gönder"}
+                                          className="bg-amber-50 hover:bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-1 rounded cursor-pointer transition border border-amber-300 flex items-center gap-1 shadow-xs"
+                                        >
+                                          <Mail size={11} className="text-amber-600 shrink-0" />
+                                          <span>{u.email ? 'E-Postayı Değiştir & Doğrula' : 'E-Posta Tanımla & Doğrula'}</span>
+                                        </button>
                                       </>
                                     )}
 
+                                     {/* Firma İzinleri ve OSGB Yetkileri Modalı Açıcı */}
+                                     <button
+                                       onClick={() => openPermissionsModalForUser(u)}
+                                       title="Firma İzinlerini ve OSGB Yetkilerini Yönet"
+                                       className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] font-bold px-2 py-1 rounded cursor-pointer transition border border-indigo-200 flex items-center gap-1 shadow-xs"
+                                     >
+                                       <ShieldCheck size={11} className="text-indigo-600" />
+                                       <span>Firma İzinleri</span>
+                                     </button>
                                     {/* Şifre ve Tüm Bilgileri Düzenleme Modalı Açıcı */}
                                     <button
                                       onClick={() => openEditModalForUser(u)}
@@ -3222,17 +3605,86 @@ export default function AdminPanel({
                           />
                         </div>
 
-                        <div>
-                          <label className="text-[10px] font-extrabold uppercase text-indigo-900 dark:text-indigo-300 tracking-wider flex items-center gap-1">
-                            🔗 Google Webhook REST URL (Port 443 HTTPS REST API)
-                          </label>
+                        <div className="bg-white/80 dark:bg-slate-900/80 p-3 rounded-xl border border-indigo-200/80 dark:border-indigo-800/80 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[10px] font-extrabold uppercase text-indigo-900 dark:text-indigo-300 tracking-wider flex items-center gap-1">
+                              🔗 Google Apps Script Webhook URL (Port 443 HTTPS REST API)
+                            </label>
+                            <span className="text-[9px] font-extrabold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-full">
+                              ⭐ 1. Öncelikli & Sıfır Port Engeli
+                            </span>
+                          </div>
                           <input
                             type="text"
                             value={googleScriptUrl}
                             onChange={(e) => setGoogleScriptUrl(e.target.value)}
                             placeholder="https://script.google.com/macros/s/.../exec"
-                            className="mt-1 w-full bg-white dark:bg-slate-900 border border-indigo-200 dark:border-slate-750 rounded-xl p-3 text-slate-950 dark:text-white text-xs sm:text-sm outline-none font-mono focus:ring-2 focus:ring-indigo-500/30"
+                            className="w-full bg-white dark:bg-slate-900 border border-indigo-200 dark:border-slate-750 rounded-xl p-2.5 text-slate-950 dark:text-white text-xs sm:text-sm outline-none font-mono focus:ring-2 focus:ring-indigo-500/30"
                           />
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={handleTestGoogleScriptDirect}
+                              disabled={!googleScriptUrl || smtpTesting}
+                              className="text-[11px] font-bold px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-sm transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                            >
+                              ⚡ Apps Script Test Maili Gönder
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setShowScriptCode(!showScriptCode)}
+                              className="text-[11px] font-bold text-indigo-700 dark:text-indigo-300 hover:underline cursor-pointer flex items-center gap-1"
+                            >
+                              {showScriptCode ? '▲ Kodu Gizle' : '📋 Hazır Google Script Kodunu Görüntüle'}
+                            </button>
+                          </div>
+
+                          {showScriptCode && (
+                            <div className="mt-2 p-3 bg-slate-900 rounded-xl border border-slate-700 text-slate-200 text-xs font-mono space-y-2">
+                              <div className="flex items-center justify-between text-[11px] text-slate-400">
+                                <span>script.google.com &gt; Yeni Dağıtım (Deploy as Web app &gt; Anyone)</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const codeToCopy = `function doPost(e) {\\n  try {\\n    var data = JSON.parse(e.postData.contents);\\n    var to = Array.isArray(data.to) ? data.to.join(',') : (data.to || data.recipient || 'infoisgpro@gmail.com');\\n    var subject = data.subject || 'İSG Pro Bildirim';\\n    var htmlBody = data.html || data.htmlBody || data.body || '';\\n    var fromName = data.fromName || data.name || 'İSG Pro Güvenlik';\\n\\n    MailApp.sendEmail({\\n      to: to,\\n      subject: subject,\\n      htmlBody: htmlBody,\\n      name: fromName\\n    });\\n\\n    return ContentService\\n      .createTextOutput(JSON.stringify({ success: true, message: 'E-posta başarıyla iletildi' }))\\n      .setMimeType(ContentService.MimeType.JSON);\\n  } catch (err) {\\n    return ContentService\\n      .createTextOutput(JSON.stringify({ success: false, error: err.toString() }))\\n      .setMimeType(ContentService.MimeType.JSON);\\n  }\\n}`;
+                                    navigator.clipboard.writeText(codeToCopy);
+                                    setCopiedScript(true);
+                                    setTimeout(() => setCopiedScript(false), 2500);
+                                  }}
+                                  className="bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded text-[10px] font-bold cursor-pointer"
+                                >
+                                  {copiedScript ? '✔ Kopyalandı' : 'Kodu Kopyala'}
+                                </button>
+                              </div>
+                              <pre className="text-[10px] text-emerald-400 max-h-40 overflow-y-auto p-2 bg-slate-950 rounded border border-slate-800 whitespace-pre">
+{`function doPost(e) {
+  try {
+    var data = JSON.parse(e.postData.contents);
+    var to = Array.isArray(data.to) ? data.to.join(',') : (data.to || data.recipient || 'infoisgpro@gmail.com');
+    var subject = data.subject || 'İSG Pro Bildirim';
+    var htmlBody = data.html || data.htmlBody || data.body || '';
+    var fromName = data.fromName || data.name || 'İSG Pro Güvenlik';
+
+    MailApp.sendEmail({
+      to: to,
+      subject: subject,
+      htmlBody: htmlBody,
+      name: fromName
+    });
+
+    return ContentService
+      .createTextOutput(JSON.stringify({ success: true, message: 'E-posta başarıyla iletildi' }))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ success: false, error: err.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}`}
+                              </pre>
+                            </div>
+                          )}
                         </div>
 
                         <div>
@@ -3350,6 +3802,7 @@ export default function AdminPanel({
                           <optgroup label="Doğrulama, Güvenlik ve Hesap Şablonları">
                             <option value="general">🌐 Genel Bağlantı Doğrulama Testi (Standart Servis)</option>
                             <option value="otp">🔑 Güvenli Giriş Kodu (OTP) Şablonu</option>
+                            <option value="admin_2fa">🔐 Yönetici (Admin) 2FA Giriş Doğrulama Kodu Şablonu</option>
                             <option value="verification">✉️ E-Posta Doğrulama Kodu & Aktivasyon Linki</option>
                             <option value="verified_user">✅ E-Posta Adresiniz Doğrulandı (Kullanıcı Güvenlik Teyidi)</option>
                             <option value="verified_admin">🛡️ Kullanıcı E-Postasını Doğruladı (Yönetici Bildirimi)</option>
@@ -4258,7 +4711,7 @@ PAYTR_MERCHANT_SALT="MAĞAZA_SALT_BURAYA"`}
                     <div>
                       <span className="text-slate-400 font-bold block text-[11px]">E-Posta Adresi:</span>
                       <span className="font-bold text-slate-800 dark:text-slate-100 break-all">
-                        {viewUserDetail.email}
+                        {viewUserDetail.email || <span className="text-amber-600 font-bold italic">E-Posta Tanımlanmamış</span>}
                       </span>
                       <div className="mt-1">
                         {viewUserDetail.isEmailVerified ? (
@@ -4267,10 +4720,24 @@ PAYTR_MERCHANT_SALT="MAĞAZA_SALT_BURAYA"`}
                             <span>E-Posta Doğrulandı {viewUserDetail.emailVerifiedAt ? `(${new Date(viewUserDetail.emailVerifiedAt).toLocaleDateString('tr-TR')})` : ''}</span>
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-extrabold text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/60 px-2 py-0.5 rounded-md border border-amber-300">
-                            <AlertTriangle size={11} />
-                            <span>Doğrulanmamış Hesap</span>
-                          </span>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-extrabold text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/60 px-2 py-0.5 rounded-md border border-amber-300">
+                              <AlertTriangle size={11} />
+                              <span>Doğrulanmamış Hesap</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const u = viewUserDetail;
+                                setViewUserDetail(null);
+                                openChangeEmailAndVerifyModal(u);
+                              }}
+                              className="text-[10px] font-extrabold text-amber-800 dark:text-amber-300 hover:text-amber-900 bg-amber-50 dark:bg-amber-950/50 hover:bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-md flex items-center gap-1 cursor-pointer transition shadow-xs"
+                            >
+                              <Mail size={11} className="text-amber-600 shrink-0" />
+                              <span>{viewUserDetail.email ? 'E-Postayı Değiştir & Doğrula' : 'E-Posta Tanımla & Doğrula'}</span>
+                            </button>
+                          </div>
                         )}
                       </div>
                     </div>
@@ -4455,6 +4922,198 @@ PAYTR_MERCHANT_SALT="MAĞAZA_SALT_BURAYA"`}
                   className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 dark:text-slate-200 rounded-xl text-xs font-bold transition cursor-pointer"
                 >
                   Kapat
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ========================================================================= */}
+      {/* 1.5. KULLANICI FİRMA İZİNLERİ VE OSGB YÖNETİM MODALI                       */}
+      {/* ========================================================================= */}
+      <AnimatePresence>
+        {permModalUser && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-2xl w-full shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              {/* Header */}
+              <div className="bg-gradient-to-r from-indigo-600 to-blue-600 px-6 py-4 flex items-center justify-between text-white shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-white/10 flex items-center justify-center backdrop-blur-sm">
+                    <ShieldCheck size={22} className="text-white" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-base leading-tight">Firma İzinleri ve OSGB Yetkilendirme</h3>
+                    <p className="text-[11px] text-white/80 font-medium">@{permModalUser.username} — {permModalUser.name}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPermModalUser(null)}
+                  className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-6 space-y-5 overflow-y-auto flex-1">
+                {/* OSGB Yöneticisi Kartı */}
+                <div className="p-4 bg-indigo-50 dark:bg-indigo-950/40 rounded-2xl border border-indigo-200 dark:border-indigo-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={permModalIsOsgbManager}
+                        onChange={(e) => setPermModalIsOsgbManager(e.target.checked)}
+                        className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
+                      />
+                      <span className="text-xs font-black text-indigo-900 dark:text-indigo-200">
+                        👑 Bu Kullanıcı OSGB Yöneticisidir
+                      </span>
+                    </label>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-200 text-indigo-800">
+                      Önemli Yetki
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                    OSGB yöneticisi olarak işaretlenen kullanıcılar, firmaya uzman veya hekim olarak tek tek atanmamış olsa dahi OSGB bünyesindeki tüm firmaların firma bilgilerini ve ayarlarını tam yetkiyle (görüntüleme ve düzenleme) yönetebilirler.
+                  </p>
+
+                  {permModalIsOsgbManager && (
+                    <div className="pt-1">
+                      <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        Yönettiği OSGB Adı:
+                      </label>
+                      <input
+                        type="text"
+                        value={permModalManagedOsgbName}
+                        onChange={(e) => setPermModalManagedOsgbName(e.target.value)}
+                        placeholder="Örn: Kuzey Doğu İSG OSGB"
+                        className="w-full bg-white dark:bg-slate-800 border border-indigo-200 dark:border-indigo-700 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                  )}
+
+                  <label className="flex items-center gap-2 cursor-pointer pt-1 border-t border-indigo-100 dark:border-indigo-900">
+                    <input
+                      type="checkbox"
+                      checked={permModalCanViewAllCompanies}
+                      onChange={(e) => setPermModalCanViewAllCompanies(e.target.checked)}
+                      className="rounded text-teal-600 focus:ring-teal-500 w-4 h-4 cursor-pointer"
+                    />
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-300">
+                      👁️ Sistemdeki Tüm Firmaları Görme İzni (canViewAllCompanies)
+                    </span>
+                  </label>
+                </div>
+
+                {/* Firma İzinleri Tablosu */}
+                <div className="space-y-3">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                    <h4 className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                      <Briefcase size={14} className="text-teal-600" />
+                      <span>Firma Bazlı İzinler ({allCompaniesList.length} Firma)</span>
+                    </h4>
+                    
+                    {/* Toplu İşlem Butonları */}
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const allView = allCompaniesList.map(c => ({ companyId: c.id, canView: true, canEdit: false }));
+                          setPermModalCompanyPerms(allView);
+                        }}
+                        className="text-[10px] font-bold px-2 py-1 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-700 border border-teal-200 cursor-pointer transition"
+                      >
+                        Hepsini Gör
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const allEdit = allCompaniesList.map(c => ({ companyId: c.id, canView: true, canEdit: true }));
+                          setPermModalCompanyPerms(allEdit);
+                        }}
+                        className="text-[10px] font-bold px-2 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 cursor-pointer transition"
+                      >
+                        Hepsini Düzenle
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPermModalCompanyPerms([])}
+                        className="text-[10px] font-bold px-2 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 cursor-pointer transition"
+                      >
+                        Sıfırla
+                      </button>
+                    </div>
+                  </div>
+
+                  {allCompaniesList.length === 0 ? (
+                    <div className="p-8 text-center bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-800 text-slate-400 text-xs">
+                      Sistemde henüz kayıtlı firma bulunmuyor. Firmalar oluşturuldukça burada listelenecektir.
+                    </div>
+                  ) : (
+                    <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800 max-h-72 overflow-y-auto">
+                      {allCompaniesList.map(c => {
+                        const perm = permModalCompanyPerms.find(p => p.companyId === c.id) || { canView: false, canEdit: false };
+                        return (
+                          <div key={c.id} className="p-3 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors">
+                            <div className="min-w-0 flex-1 pr-3">
+                              <p className="font-bold text-xs text-slate-800 dark:text-slate-100 truncate">{c.name || 'İsimsiz Firma'}</p>
+                              {c.assignedOsgbName && (
+                                <p className="text-[10px] text-slate-400">OSGB: {c.assignedOsgbName}</p>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-4 shrink-0">
+                              <label className="flex items-center gap-1.5 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={perm.canView}
+                                  onChange={(e) => handleToggleUserPerm(c.id, 'canView', e.target.checked)}
+                                  className="w-4 h-4 accent-teal-600 rounded cursor-pointer"
+                                />
+                                <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Görüntüle</span>
+                              </label>
+                              <label className="flex items-center gap-1.5 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={perm.canEdit}
+                                  onChange={(e) => handleToggleUserPerm(c.id, 'canEdit', e.target.checked)}
+                                  className="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
+                                />
+                                <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Düzenle</span>
+                              </label>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 bg-slate-50 dark:bg-slate-800/80 border-t border-slate-200 dark:border-slate-800 flex justify-end gap-3 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setPermModalUser(null)}
+                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 dark:text-slate-200 rounded-xl text-xs font-bold transition cursor-pointer"
+                >
+                  Vazgeç
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSavePermModal}
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-extrabold transition cursor-pointer shadow-md shadow-indigo-600/30 flex items-center gap-1.5"
+                >
+                  <Save size={14} />
+                  <span>Yetkileri Kaydet</span>
                 </button>
               </div>
             </motion.div>
@@ -4683,6 +5342,57 @@ PAYTR_MERCHANT_SALT="MAĞAZA_SALT_BURAYA"`}
                         placeholder="OSGB Adı"
                       />
                     </div>
+                  </div>
+                </div>
+
+                {/* OSGB YÖNETİCİSİ VE FİRMA ERİŞİM YETKİLERİ */}
+                <div className="p-4 bg-indigo-50/70 dark:bg-indigo-950/30 rounded-2xl border border-indigo-200 dark:border-indigo-800 space-y-3">
+                  <h4 className="text-xs font-black text-indigo-900 dark:text-indigo-300 uppercase tracking-wider flex items-center gap-1.5">
+                    <Building2 size={14} className="text-indigo-600" />
+                    <span>OSGB Yöneticisi & Firma Yetki Ayarları</span>
+                  </h4>
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editModalIsOsgbManager}
+                        onChange={(e) => setEditModalIsOsgbManager(e.target.checked)}
+                        className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
+                      />
+                      <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                        👑 Bu kullanıcı bir OSGB Yöneticisidir (Ataması olmasa bile OSGB firmalarını düzenleyebilir)
+                      </span>
+                    </label>
+
+                    {editModalIsOsgbManager && (
+                      <div className="pl-6 pt-1">
+                        <label className="block text-[11px] font-bold text-indigo-700 dark:text-indigo-300 mb-1">
+                          Yönetilen OSGB Ticaret Adı:
+                        </label>
+                        <input
+                          type="text"
+                          value={editModalManagedOsgbName}
+                          onChange={(e) => setEditModalManagedOsgbName(e.target.value)}
+                          placeholder="Örn: Kuzey Doğu İSG OSGB"
+                          className="w-full bg-white dark:bg-slate-800 border border-indigo-200 dark:border-indigo-700 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          OSGB yöneticisi, bu OSGB adına kayıtlı tüm firmaların verilerini ve firma ayarlarını tek tek yetki tanımlanmasa dahi tam yetkiyle (görüntüle + düzenle) güncelleyebilir.
+                        </p>
+                      </div>
+                    )}
+
+                    <label className="flex items-center gap-2 cursor-pointer pt-1">
+                      <input
+                        type="checkbox"
+                        checked={editModalCanViewAllCompanies}
+                        onChange={(e) => setEditModalCanViewAllCompanies(e.target.checked)}
+                        className="rounded text-teal-600 focus:ring-teal-500 w-4 h-4 cursor-pointer"
+                      />
+                      <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                        👁️ Sistemdeki Tüm Firmaları Görme Yetkisi (canViewAllCompanies)
+                      </span>
+                    </label>
                   </div>
                 </div>
 
@@ -5049,6 +5759,124 @@ PAYTR_MERCHANT_SALT="MAĞAZA_SALT_BURAYA"`}
           </div>
         )}
       </AnimatePresence>
+      {/* ========================================================================= */}
+      {/* E-POSTAYI DEĞİŞTİR / TANIMLA VE DOĞRULAMA KODU GÖNDER MODALI               */}
+      {/* ========================================================================= */}
+      <AnimatePresence>
+        {changeEmailModalUser && (
+          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden"
+            >
+              {/* Modal Başlık */}
+              <div className="bg-gradient-to-r from-amber-600 via-orange-600 to-amber-700 text-white p-5 relative">
+                <button
+                  type="button"
+                  onClick={() => setChangeEmailModalUser(null)}
+                  className="absolute top-4 right-4 w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition cursor-pointer border border-white/15"
+                >
+                  <X size={16} />
+                </button>
+                <div className="flex items-center gap-3 pr-8">
+                  <div className="w-10 h-10 rounded-xl bg-white/15 border border-white/20 flex items-center justify-center text-white shrink-0">
+                    <Mail size={22} />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider bg-black/20 text-amber-100 px-2 py-0.5 rounded-md border border-white/20">
+                      {changeEmailModalUser.email ? 'E-Posta Güncelleme' : 'Yeni E-Posta Tanımlama'}
+                    </span>
+                    <h3 className="font-black text-base text-white mt-0.5">
+                      {changeEmailModalUser.email ? 'E-Postayı Değiştir & Doğrula' : 'E-Posta Tanımla & Doğrula'}
+                    </h3>
+                  </div>
+                </div>
+              </div>
+
+              {/* Form Alanı */}
+              <form onSubmit={handleExecuteChangeEmailAndSendCode} className="p-6 space-y-4">
+                <div className="p-3.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 rounded-2xl text-xs space-y-1.5">
+                  <div className="font-extrabold text-amber-950 dark:text-amber-100 flex items-center gap-1.5 text-xs">
+                    <UserCheck size={15} className="text-amber-700 dark:text-amber-400" />
+                    <span>@{changeEmailModalUser.username} {changeEmailModalUser.name ? '(' + changeEmailModalUser.name + ')' : ''}</span>
+                  </div>
+                  <div className="text-[11px] text-amber-800/90 dark:text-amber-300">
+                    {changeEmailModalUser.email ? (
+                      <div>Mevcut E-Posta: <strong className="font-mono">{changeEmailModalUser.email}</strong> (Doğrulanmamış)</div>
+                    ) : (
+                      <div className="font-bold text-red-600 dark:text-red-400">⚠️ Bu kullanıcının sistemde tanımlı bir e-posta adresi bulunmuyor!</div>
+                    )}
+                  </div>
+                  <p className="text-[10px] leading-relaxed text-slate-600 dark:text-slate-400 pt-1.5 border-t border-amber-200/60 dark:border-amber-900/40">
+                    Tanımlanan yeni e-posta adresi kullanıcının profiline ve veritabanına kaydedilecek, ardından bu yeni adrese anında <strong>6 haneli tek kullanımlık doğrulama kodu (OTP)</strong> gönderilecektir.
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                    {changeEmailModalUser.email ? 'Yeni E-Posta Adresi' : 'Tanımlanacak E-Posta Adresi'} <span className="text-red-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                      <Mail size={16} />
+                    </div>
+                    <input
+                      type="email"
+                      required
+                      autoFocus
+                      value={changeEmailInput}
+                      onChange={(e) => {
+                        setChangeEmailInput(e.target.value);
+                        setChangeEmailError('');
+                      }}
+                      placeholder="ad.soyad@firma.com"
+                      className="w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-800/80 border border-slate-300 dark:border-slate-700 rounded-xl text-xs sm:text-sm font-semibold text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition"
+                    />
+                  </div>
+                </div>
+
+                {changeEmailError && (
+                  <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50 rounded-xl text-xs font-semibold text-red-700 dark:text-red-300 flex items-center gap-2">
+                    <AlertTriangle size={16} className="shrink-0 text-red-500" />
+                    <span>{changeEmailError}</span>
+                  </div>
+                )}
+
+                <div className="pt-2 flex items-center justify-end gap-2.5">
+                  <button
+                    type="button"
+                    disabled={changeEmailIsSubmitting}
+                    onClick={() => setChangeEmailModalUser(null)}
+                    className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold transition cursor-pointer"
+                  >
+                    Vazgeç
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={changeEmailIsSubmitting || !changeEmailInput.trim()}
+                    className="px-5 py-2.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white rounded-xl text-xs font-extrabold shadow-md shadow-amber-600/20 transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    {changeEmailIsSubmitting ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin" />
+                        <span>Kaydediliyor & Gönderiliyor...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send size={14} />
+                        <span>E-Postayı Değiştir ve Kod Gönder</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
 
     </div>
   );

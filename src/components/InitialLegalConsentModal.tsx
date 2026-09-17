@@ -52,7 +52,7 @@ export default function InitialLegalConsentModal({ currentUser, onComplete, onCl
     { key: 'privacy', label: 'Gizlilik Politikası' }
   ];
 
-  // Sözleşmeleri sunucu üzerinden hem kullanıcıya hem admin'e e-posta olarak gönder
+  // Sözleşmeleri sunucu üzerinden hem kullanıcıya hem admin'e e-posta olarak gönder (Arka plan asenkron)
   const sendContractsDispatch = async (sigData: string) => {
     try {
       const customerEmail = currentUser?.email || 'kullanici@isgpro.app';
@@ -65,6 +65,8 @@ export default function InitialLegalConsentModal({ currentUser, onComplete, onCl
 
       for (const base of candidateUrls) {
         try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 12000);
           const res = await fetch(`${base}/api/send-registration-contracts`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
@@ -76,8 +78,10 @@ export default function InitialLegalConsentModal({ currentUser, onComplete, onCl
               purchaseDate: new Date().toLocaleString('tr-TR'),
               userSignature: sigData,
               customerSignature: sigData
-            })
+            }),
+            signal: controller.signal
           });
+          clearTimeout(timeoutId);
 
           if (res.ok) {
             console.log('[Initial Consent] Onaylı 3 yasal bilgilendirme metni (Ön Bilgilendirme, Gizlilik, KVKK) PDF ile iletildi.');
@@ -97,12 +101,6 @@ export default function InitialLegalConsentModal({ currentUser, onComplete, onCl
     }
 
     setIsSubmitting(true);
-    try {
-      // Arka planda sözleşme e-postasını tetikle (hem kullanıcıya hem admin'e 3 PDF)
-      await sendContractsDispatch(signature);
-    } catch (e) {
-      console.warn('E-posta gönderim adımı uyarısı:', e);
-    }
 
     if (currentUser?.username) {
       try {
@@ -111,9 +109,15 @@ export default function InitialLegalConsentModal({ currentUser, onComplete, onCl
       } catch {}
     }
 
-    // Kullanıcının imza ve onayını tamamla
+    // Kullanıcının imza ve onayını anında tamamla - Modal anında kapanır, kullanıcı bekletilmez!
     onComplete(signature);
-    setIsSubmitting(false);
+
+    // Arka planda sözleşme e-postasını asenkron tetikle (fire-and-forget)
+    sendContractsDispatch(signature).catch(e => {
+      console.warn('E-posta gönderim adımı uyarısı:', e);
+    }).finally(() => {
+      setIsSubmitting(false);
+    });
   };
 
   const isButtonDisabled = !agreeTerms || !agreeKvkk || !signature || isSubmitting;

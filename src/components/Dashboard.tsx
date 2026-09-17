@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { maskLicenseKey } from '../lib/privacy';
 import { validateLicenseAgainstDb, getLicensePlanName, getRemainingLicenseTime, isLicenseActive, getLicenseTypeFromKey } from '../lib/licenseUtils';
+import EmailVerificationModal from './EmailVerificationModal';
 
 interface DashboardProps {
   currentUser: UserType;
@@ -27,6 +28,8 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
   const [phone, setPhone] = useState(currentUser.phone || '');
   const [role, setRole] = useState(currentUser.role || 'uzman');
   const [certificateNo, setCertificateNo] = useState(currentUser.certificateNo || '');
+  const [showVerifyModal, setShowVerifyModal] = useState(false);
+  const [verifyModalChangeMode, setVerifyModalChangeMode] = useState(false);
   
   const [myEmails, setMyEmails] = useState<ContactMessage[]>([]);
   const [loadingEmails, setLoadingEmails] = useState(false);
@@ -144,8 +147,11 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
   };
 
   const handleSendVerificationEmail = async () => {
-    if (!email) {
-      alert('Lütfen öncelikle geçerli bir e-posta adresi kaydediniz.');
+    const targetEmail = (currentUser.email || email || '').trim();
+    if (!targetEmail || !targetEmail.includes('@')) {
+      alert('Lütfen öncelikle geçerli bir e-posta adresi tanımlayınız ve kaydediniz.');
+      const el = document.getElementById('profile-email-input');
+      if (el) el.focus();
       return;
     }
     setSendingEmailNotice(true);
@@ -154,7 +160,7 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: email,
+          email: targetEmail,
           name: name || currentUser.username
         })
       });
@@ -405,26 +411,62 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
               </div>
               <div>
                 <h4 className="text-xs sm:text-sm font-extrabold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
-                  E-Posta Adresiniz Henüz Doğrulanmadı
+                  {currentUser.email ? 'E-Posta Adresiniz Henüz Doğrulanmadı' : 'E-Posta Adresiniz Tanımlı Değil'}
                   <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-800 dark:text-amber-300 font-bold">
                     {currentUser.email || 'E-posta tanımlanmamış'}
                   </span>
                 </h4>
                 <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5">
-                  Yasal bildirimler, sözleşme kopyaları ve hesap kurtarma işlemleri için lütfen e-postanızı doğrulayınız. (Platform kuralı: 1 e-postaya bağlı yılda en fazla 2 doğrulanmış hesap açılabilir).
+                  {currentUser.email
+                    ? 'Yasal bildirimler, sözleşme kopyaları ve hesap kurtarma işlemleri için lütfen e-postanızı doğrulayınız. (Platform kuralı: 1 e-postaya bağlı yılda en fazla 2 doğrulanmış hesap açılabilir).'
+                    : 'Hesabınızda kayıtlı bir e-posta adresi bulunmuyor. Doğrulama kodu alabilmek ve hesap güvenliğinizi sağlamak için lütfen profilinizden geçerli bir e-posta adresi tanımlayınız.'}
                 </p>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={handleSendVerificationEmail}
-              disabled={sendingEmailNotice}
-              className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-extrabold shadow-md shadow-amber-600/20 whitespace-nowrap cursor-pointer transition-all active:scale-95 shrink-0 disabled:opacity-50 flex items-center gap-1.5"
-            >
-              <Mail size={14} />
-              <span>{sendingEmailNotice ? 'Gönderiliyor...' : 'Doğrulama Kodu Gönder'}</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setVerifyModalChangeMode(false);
+                  setShowVerifyModal(true);
+                }}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white rounded-xl text-xs font-extrabold shadow-md shadow-amber-600/20 whitespace-nowrap cursor-pointer transition-all flex items-center gap-1.5"
+              >
+                <ShieldCheck size={14} />
+                <span>E-Postayı Doğrula</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setVerifyModalChangeMode(true);
+                  setShowVerifyModal(true);
+                }}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded-xl text-xs font-extrabold shadow-md shadow-indigo-600/20 whitespace-nowrap cursor-pointer transition-all flex items-center gap-1.5"
+              >
+                <Mail size={14} />
+                <span>E-Postayı Değiştir ve Doğrula</span>
+              </button>
+            </div>
           </div>
+        )}
+
+        {/* E-POSTA DOĞRULAMA & DEĞİŞTİRME MODALI */}
+        {showVerifyModal && (
+          <EmailVerificationModal
+            isOpen={showVerifyModal}
+            currentUser={currentUser}
+            startInChangeMode={verifyModalChangeMode}
+            onClose={() => setShowVerifyModal(false)}
+            onLogout={() => setShowVerifyModal(false)}
+            onUpdateEmail={async (newEmail: string) => {
+              await onUpdateProfile({ email: newEmail });
+              setEmail(newEmail);
+            }}
+            onVerified={async () => {
+              await onUpdateProfile({ isEmailVerified: true, emailVerifiedAt: new Date().toISOString() });
+              setShowVerifyModal(false);
+            }}
+          />
         )}
 
         {/* EMAIL UNLOCKED SUCCESS BANNER */}
@@ -834,16 +876,16 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
                     <input
                       id="profile-email-input"
                       type="email" required
-                      disabled={!emailUnlocked && !editing}
+                      disabled={currentUser.email ? (!emailUnlocked && !editing) : false}
                       className={`mt-1 w-full p-2.5 border rounded-xl text-xs sm:text-sm font-semibold outline-none transition-all ${
-                        emailUnlocked
+                        emailUnlocked || !currentUser.email
                           ? 'border-emerald-500 dark:border-emerald-500 bg-white dark:bg-slate-800 text-slate-900 dark:text-white ring-2 ring-emerald-400/30'
                           : 'border-slate-200 dark:border-slate-700 bg-slate-50/50 hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-900 dark:text-white disabled:opacity-60 placeholder-slate-400 dark:placeholder-slate-500 disabled:cursor-not-allowed'
                       }`}
                       value={email} onChange={e => setEmail(e.target.value)}
                     />
 
-                    {!emailUnlocked && (
+                    {currentUser.email && !emailUnlocked && (
                       <div className="mt-1.5 p-2 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-[11px] text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
                         <Lock size={12} className="text-amber-600 shrink-0" />
                         <span>E-postanızı değiştirmek için aşağıdaki <strong>"Güncelleme Linki İstet / Kilidi Aç"</strong> butonuna tıklayınız.</span>

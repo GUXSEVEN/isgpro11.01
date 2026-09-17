@@ -45,7 +45,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 
 export interface ActivityLog {
   userId: string;
-  action: 'login' | 'license_purchase' | 'profile_update';
+  action: 'login' | 'license_purchase' | 'profile_update' | 'login_2fa_success';
   timestamp: string;
   details: Record<string, any>;
 }
@@ -55,7 +55,7 @@ export interface ActivityLog {
  */
 export async function logActivity(
   userId: string,
-  action: 'login' | 'license_purchase' | 'profile_update',
+  action: 'login' | 'license_purchase' | 'profile_update' | 'login_2fa_success',
   details: Record<string, any>
 ): Promise<void> {
   if (!db) {
