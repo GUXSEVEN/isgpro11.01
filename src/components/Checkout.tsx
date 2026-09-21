@@ -278,8 +278,8 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
   };
 
   return (
-    <div className="min-h-screen py-10 px-4 sm:px-6 lg:px-8 bg-slate-50 dark:bg-slate-900 flex flex-col justify-center transition-colors duration-300">
-      <div className="max-w-4xl mx-auto w-full">
+    <div className="min-h-screen w-full py-10 px-4 sm:px-6 lg:px-8 bg-slate-50 dark:bg-slate-900 flex flex-col justify-start transition-colors duration-300 overflow-y-auto" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y pinch-zoom' }}>
+      <div className="max-w-4xl mx-auto w-full my-auto">
         
         {/* Header toolbar */}
         <div className="flex justify-between items-center mb-8 border-b border-slate-200 dark:border-slate-800 pb-5">

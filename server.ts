@@ -5,6 +5,7 @@
 
 import express from 'express';
 import http from 'http';
+import https from 'https';
 import compression from 'compression';
 import path from 'path';
 import fs from 'fs';
@@ -866,7 +867,7 @@ interface UniversalEmailOptions {
   config?: any;
 }
 
-const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ success: boolean; method: string; message: string; details?: string }> => {
+const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ success: boolean; method: string; message: string; details?: string; error?: string }> => {
   const { to, subject, html, fromName = 'İSG Pro', replyTo, attachments, templateType = 'general', config: explicitConfig } = options;
   const recipients = Array.isArray(to) ? to : [to];
   const targetEmail = recipients[0] || 'infoisgpro@gmail.com';
@@ -1093,6 +1094,7 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
     return {
       success: false,
       method: 'delivery_failed',
+      message: 'Doğrulama kodu e-posta servisleri üzerinden alıcıya ulaştırılamadı.',
       error: 'Doğrulama kodu e-posta servisleri üzerinden alıcıya ulaştırılamadı. Lütfen SMTP veya Google Apps Script ayarlarını kontrol ediniz.'
     };
   }
@@ -4758,6 +4760,18 @@ app.all(['/api/paytr/token', '/paytr/token', '/paytr/pay-direct', '/api/paytr/pa
 
     console.log(`[PayTR API Request] Requesting token for order: ${merchantOid}, amount: ${paymentAmount} kuruş, test_mode: ${test_mode}`);
 
+    // PayTR için telefon numarasının en az 10 haneli ve geçerli formatta olmasını garanti et
+    let cleanPhone = (phone || '').toString().replace(/\D/g, '');
+    if (cleanPhone.startsWith('90') && cleanPhone.length === 12) {
+      cleanPhone = cleanPhone.slice(2);
+    }
+    if (cleanPhone.length === 10 && !cleanPhone.startsWith('0')) {
+      cleanPhone = '0' + cleanPhone;
+    }
+    if (cleanPhone.length < 10) {
+      cleanPhone = '05555555555';
+    }
+
     const paytrParams = new URLSearchParams({
       merchant_id: PAYTR_MERCHANT_ID,
       user_ip: clean_ip,
@@ -4771,7 +4785,7 @@ app.all(['/api/paytr/token', '/paytr/token', '/paytr/pay-direct', '/api/paytr/pa
       max_installment: max_installment.toString(),
       user_name: name,
       user_address: address || 'Türkiye',
-      user_phone: phone || '05555555555',
+      user_phone: cleanPhone,
       merchant_ok_url: merchant_ok_url,
       merchant_fail_url: merchant_fail_url,
       timeout_limit: '30',
@@ -6248,7 +6262,49 @@ async function startServer() {
     return result.sort((a, b) => (b.isWifi ? 1 : 0) - (a.isWifi ? 1 : 0));
   };
 
-  httpServer.listen(PORT, '0.0.0.0', () => {
+  // Graceful HTTPS error handling if a mobile browser attempts HTTPS on HTTP port 3000
+  httpServer.on('clientError', (err: any, socket) => {
+    if (err?.code === 'HPE_INVALID_METHOD' || err?.code === 'ECONNRESET' || (err?.message && (err.message.includes('SSL') || err.message.includes('HPE')))) {
+      const networkInfoList = getNetworkIpAddresses();
+      const primaryLan = networkInfoList[0]?.ip || '192.168.1.100';
+      const redirectHtml = `<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>İSG Pro - Yerel Ağ Bağlantısı</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8fafc; color: #1e293b; margin: 0; padding: 24px; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .card { background: #ffffff; max-width: 440px; width: 100%; padding: 28px; border-radius: 20px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); border: 1px solid #e2e8f0; text-align: center; }
+    .icon { font-size: 40px; margin-bottom: 12px; }
+    h2 { margin: 0 0 8px; font-size: 20px; font-weight: 800; color: #0f172a; }
+    p { margin: 0 0 16px; font-size: 13px; color: #64748b; line-height: 1.5; }
+    .btn { display: block; width: 100%; padding: 14px 0; background: linear-gradient(135deg, #4f46e5, #7c3aed); color: #fff; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 14px; box-sizing: border-box; }
+    .btn-secondary { display: block; width: 100%; margin-top: 8px; padding: 12px 0; background: #f1f5f9; color: #475569; text-decoration: none; border-radius: 12px; font-weight: 600; font-size: 13px; box-sizing: border-box; }
+    .tip { margin-top: 16px; padding: 10px 14px; background: #eff6ff; border-radius: 10px; border: 1px solid #bfdbfe; font-size: 11px; color: #1d4ed8; text-align: left; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">📱</div>
+    <h2>İSG Pro Mobil Ağ Bağlantısı</h2>
+    <p>Telefonunuz siteyi otomatik olarak HTTPS ile açmaya çalıştı. Yerel ağda siteye doğrudan bağlanmak için lütfen aşağıdaki butona dokunun:</p>
+    <a class="btn" href="http://${primaryLan}:${PORT}/panel/">👉 İSG Uygulama Paneline Giriş Yap</a>
+    <a class="btn-secondary" href="http://${primaryLan}:${PORT}/">Ana Tanıtım Sayfasına Git</a>
+    <div class="tip">
+      💡 <strong>İpucu:</strong> Telefonunuzun adres çubuğuna yazarken başına <code>http://</code> eklemeyi unutmayınız: <br>
+      <code>http://${primaryLan}:${PORT}/panel/</code>
+    </div>
+  </div>
+</body>
+</html>`;
+      socket.end(`HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Length: ${Buffer.byteLength(redirectHtml)}\r\nConnection: close\r\n\r\n${redirectHtml}`);
+      return;
+    }
+    socket.destroy(err);
+  });
+
+  httpServer.listen(PORT, '0.0.0.0', async () => {
     const networkInfoList = getNetworkIpAddresses();
     const primaryLan = networkInfoList[0]?.ip || '127.0.0.1';
 
@@ -6261,11 +6317,42 @@ async function startServer() {
       console.log(`  ➜  Ağ (${item.name}${badge}): http://${item.ip}:${PORT}`);
       console.log(`  ➜  İSG Uygulama Paneli (${item.name}): http://${item.ip}:${PORT}/panel/`);
     });
+
+    // Automatically generate self-signed SSL cert and start HTTPS server on port 3443
+    try {
+      const selfsignedPkg: any = (await import('selfsigned')).default || (await import('selfsigned'));
+      const pems: any = await selfsignedPkg.generate([
+        { name: 'commonName', value: primaryLan }
+      ], {
+        days: 365,
+        algorithm: 'sha256',
+        extensions: [
+          {
+            name: 'subjectAltName',
+            altNames: [
+              { type: 2, value: 'localhost' },
+              { type: 7, ip: '127.0.0.1' },
+              { type: 7, ip: primaryLan }
+            ]
+          }
+        ]
+      } as any);
+
+      if (pems && (pems.private || pems.key) && pems.cert) {
+        const httpsServer = https.createServer({ key: pems.private || pems.key, cert: pems.cert }, app);
+        httpsServer.listen(3443, '0.0.0.0', () => {
+          console.log(`  ➜  🔒 Mobil Güvenli (HTTPS): https://${primaryLan}:3443/panel/`);
+        });
+      }
+    } catch (e: any) {
+      // Optional HTTPS fallback
+    }
+
     console.log('-------------------------------------------------------------');
     console.log('  📱 AĞDAKİ DİĞER CİHAZLAR (Telefon, Tablet, Laptop):');
     console.log(`     Aynı Wi-Fi ağına bağlı cihazlardan siteye girmek için:`);
-    console.log(`     👉 http://${primaryLan}:${PORT}`);
-    console.log(`     yazarak doğrudan siteye ve alt paneline erişebilirsiniz.`);
+    console.log(`     👉 http://${primaryLan}:${PORT}/panel/`);
+    console.log(`     (veya HTTPS zorunlu cihazlar için: https://${primaryLan}:3443/panel/)`);
     console.log('=============================================================\n');
   });
 
