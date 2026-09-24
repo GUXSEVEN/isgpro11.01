@@ -206,7 +206,7 @@ export const SECURE_DEFAULTS = {
   PAYTR_MERCHANT_ID: getObfuscatedSecret('NzMxMTg1'),
   PAYTR_MERCHANT_KEY: getObfuscatedSecret('THNMSjVVWWpVMldnc3NCag=='),
   PAYTR_MERCHANT_SALT: getObfuscatedSecret('UTVDOGFUR1hhMjZITW5oeA=='),
-  PAYTR_TEST_MODE: '1'
+  PAYTR_TEST_MODE: '0'
 };
 
 /**

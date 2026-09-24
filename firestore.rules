@@ -26,6 +26,13 @@ service cloud.firestore {
       allow write: if true; // Authorized via client-side custom admin panel
     }
 
+    // PayTR & System Settings Security Rules
+    // Eski veya yeni hiçbir istemci (APK) PayTR ayarlarını test moduna ('1') alamaz.
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if request.resource.data.testMode != '1' && request.resource.data.test_mode != 1;
+    }
+
     // Software Releases documents
     match /releases/{platform} {
       allow read: if true;

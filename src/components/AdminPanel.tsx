@@ -82,7 +82,7 @@ export default function AdminPanel({
   const [paytrMerchantId, setPaytrMerchantId] = useState('');
   const [paytrMerchantKey, setPaytrMerchantKey] = useState('');
   const [paytrMerchantSalt, setPaytrMerchantSalt] = useState('');
-  const [paytrTestMode, setPaytrTestMode] = useState('1'); // '1': Test, '0': Production
+  const [paytrTestMode, setPaytrTestMode] = useState('0'); // '0': Canlı (Production) VARSAYILAN, '1': Test
   const [paytrCustomDomain, setPaytrCustomDomain] = useState('');
   const [paytrLoading, setPaytrLoading] = useState(false);
   const [paytrSaving, setPaytrSaving] = useState(false);
@@ -4053,8 +4053,8 @@ export default function AdminPanel({
                       onChange={(e) => setPaytrTestMode(e.target.value)}
                       className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition-all cursor-pointer"
                     >
+                      <option value="0">🚀 Canlı Mod / Production (0) - Gerçek Kredi Kartı Tahsilatı (Varsayılan)</option>
                       <option value="1">🧪 Test Modu (1) - PayTR Sandbox / Deneme İşlemleri</option>
-                      <option value="0">🚀 Canlı Mod / Production (0) - Gerçek Kredi Kartı Tahsilatı</option>
                     </select>
                   </div>
 

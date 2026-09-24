@@ -1065,7 +1065,7 @@ export default function App() {
     setCheckoutPlan(planId);
   };
 
-  const handleCheckoutSuccess = (licenseKey: string) => {
+  const handleCheckoutSuccess = (licenseKey: string, checkoutMeta?: any) => {
     if (!currentUser) return;
 
     const purchaseDate = new Date().toISOString();
@@ -1083,43 +1083,60 @@ export default function App() {
 
     handleUpdateProfile(upgradeFields);
 
+    // Fallback stored checkout details
+    let savedOrderDetails: any = null;
+    try {
+      const stored = localStorage.getItem('isg_checkout_order_details');
+      if (stored) savedOrderDetails = JSON.parse(stored);
+    } catch (_) {}
+
+    const targetEmail = checkoutMeta?.email || savedOrderDetails?.email || currentUser.email;
+    const targetName = checkoutMeta?.name || savedOrderDetails?.name || currentUser.name || currentUser.username;
+    const targetPhone = checkoutMeta?.phone || savedOrderDetails?.phone;
+    const targetAddress = checkoutMeta?.address || savedOrderDetails?.address;
+    const targetOrderId = checkoutMeta?.orderId || savedOrderDetails?.orderId || `ISG-TR-${Date.now()}`;
+    const targetPlanName = checkoutMeta?.planName || savedOrderDetails?.planName || (checkoutPlan === 'yearly' ? 'Yıllık Premium Plan' : 'Aylık Standart Plan');
+    const targetPrice = checkoutMeta?.price || savedOrderDetails?.price || (checkoutPlan === 'yearly' ? '₺2.990,00' : '₺299,00');
+    const savedSig = checkoutMeta?.userSignature || savedOrderDetails?.userSignature || (typeof window !== 'undefined' ? localStorage.getItem('isg_user_signature') || '' : '');
+
     // Log successful license purchase
     logActivity(currentUser.username, 'license_purchase', {
-      planName: checkoutPlan === 'yearly' ? 'Yıllık Premium Plan' : 'Aylık Standart Plan',
+      planName: targetPlanName,
       licenseKey: licenseKey.substring(0, 8) + '-XXXX-XXXX', // Mask full key for privacy/security
-      price: checkoutPlan === 'yearly' ? '₺2.990' : '₺299',
+      price: targetPrice,
       purchaseDate,
       expiryDate: expiryDate.toISOString()
     }).catch(e => console.error("Error logging purchase activity:", e));
 
     // Send license confirmation email via secure server API proxy
-    if (currentUser.email) {
+    if (targetEmail) {
       fetch('/api/send-email-license', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: currentUser.email,
-          name: currentUser.name || currentUser.username,
+          email: targetEmail,
+          name: targetName,
           licenseKey,
-          planName: checkoutPlan === 'yearly' ? 'Yıllık Premium Plan' : 'Aylık Standart Plan',
+          planName: targetPlanName,
           planType: checkoutPlan === 'yearly' ? 'Yıllık' : 'Aylık',
-          price: checkoutPlan === 'yearly' ? '₺2.990' : '₺299',
+          price: targetPrice,
           purchaseDate,
           expiryDate: expiryDate.toISOString()
         })
       }).catch(err => console.warn('Could not send license email:', err));
 
-      // Send approved contract copies to user email AND infoisgpro@gmail.com
-      const savedSig = typeof window !== 'undefined' ? localStorage.getItem('isg_user_signature') || '' : '';
+      // SADECE TAM SÜRÜME GEÇİLDİĞİNDE (Ödeme sonrası): 6 Nüsha onaylı sözleşmeleri ilet
       fetch('/api/send-email-contracts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: currentUser.email,
-          name: currentUser.name || currentUser.username,
-          orderId: `ISG-TR-${Date.now()}`,
-          planName: checkoutPlan === 'yearly' ? 'Yıllık Premium Plan' : 'Aylık Standart Plan',
-          price: checkoutPlan === 'yearly' ? '₺2.990,00' : '₺299,00',
+          email: targetEmail,
+          name: targetName,
+          phone: targetPhone,
+          address: targetAddress,
+          orderId: targetOrderId,
+          planName: targetPlanName,
+          price: targetPrice,
           approvalDate: new Date().toLocaleString('tr-TR'),
           userSignature: savedSig,
           customerSignature: savedSig

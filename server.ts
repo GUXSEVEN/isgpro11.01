@@ -30,7 +30,7 @@ import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, doc, getDoc, setDoc, getDocs, collection } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, setDoc, getDocs, collection, onSnapshot } from 'firebase/firestore';
 import nodemailer from 'nodemailer';
 import PDFDocument from 'pdfkit';
 import { generateLicenseKey, registerGeneratedLicense, validateLicenseAgainstDb, requestTrialLicense, LicenseType, getLicenseTypeFromKey, getLicenseDurationDays, getLicensePlanName } from './src/lib/licenseUtils.ts';
@@ -3521,6 +3521,9 @@ app.post('/api/send-email-license', async (req, res) => {
   return res.json({ success: true, method: 'emailjs_or_queue' });
 });
 
+// Memory deduplication map to prevent double-dispatch of contracts
+const sentContractsMap = new Map<string, number>();
+
 // Shared handler function for approved contracts PDF sending
 const handleSendContractsEmail = async (req: express.Request, res: express.Response) => {
   const { email, name, planName, price, orderId, purchaseDate, phone, address, userSignature, customerSignature } = req.body;
@@ -3533,6 +3536,15 @@ const handleSendContractsEmail = async (req: express.Request, res: express.Respo
   const cleanPrice = price || '₺2.990,00';
   const cleanOrderId = orderId || `ISG-${Date.now().toString().slice(-6)}`;
   const cleanDate = purchaseDate || new Date().toLocaleString('tr-TR');
+
+  // Prevent sending duplicate contract emails within a 5-minute window for the same orderId & email
+  const cacheKey = `${cleanOrderId}_${email.toLowerCase().trim()}`;
+  const lastSent = sentContractsMap.get(cacheKey);
+  if (lastSent && (Date.now() - lastSent < 5 * 60 * 1000)) {
+    console.log(`[Email Contracts Deduplication] Contracts already dispatched recently for order: ${cleanOrderId} (${maskEmail(email)}). Skipping.`);
+    return res.json({ success: true, message: 'Onaylı sözleşme nüshaları zaten başarıyla iletildi.' });
+  }
+  sentContractsMap.set(cacheKey, Date.now());
 
   const orderInDb = paytrOrders[cleanOrderId];
   const activeSignature = userSignature || customerSignature || orderInDb?.userSignature || (email ? signaturesByEmail[email.toLowerCase().trim()] : undefined) || globalLatestCustomerSignature;
@@ -4251,22 +4263,52 @@ app.post('/api/seller-signature', async (req, res) => {
   }
 });
 
-// PayTR Dynamic Config Storage
+// PayTR Dynamic Config Storage - CANLI MOD KESİNLİKLE VARSAYILAN (0)
 interface PayTRConfig {
   merchantId: string;
   merchantKey: string;
   merchantSalt: string;
   testMode: string;
   customDomain?: string;
+  adminExplicitTestMode?: boolean;
 }
 
 let cachedPayTRConfig: PayTRConfig = {
-  merchantId: process.env.PAYTR_MERCHANT_ID || '',
-  merchantKey: process.env.PAYTR_MERCHANT_KEY || '',
-  merchantSalt: process.env.PAYTR_MERCHANT_SALT || '',
-  testMode: process.env.PAYTR_TEST_MODE || '1',
-  customDomain: process.env.PAYTR_CUSTOM_DOMAIN || ''
+  merchantId: process.env.PAYTR_MERCHANT_ID || '731185',
+  merchantKey: process.env.PAYTR_MERCHANT_KEY || 'LsLJ5UYjU2WgssBj',
+  merchantSalt: process.env.PAYTR_MERCHANT_SALT || 'Q5C8aTGXa26HMnhx',
+  testMode: '0', // CANLI MOD (0) KESİNLİKLE KİLİTLİ VARSAYILAN
+  customDomain: process.env.PAYTR_CUSTOM_DOMAIN || 'https://isgpro.com',
+  adminExplicitTestMode: false
 };
+
+// PayTR Gerçek Zamanlı Canlı Mod Koruyucu (Real-time Live-Mode Guardian)
+// Eski APK'lar veya yetkisiz istemciler Firestore'a 'testMode: 1' yazsa dahi anında 0'a çevirir
+if (db) {
+  try {
+    const paytrGuardianRef = doc(db, 'settings', 'paytr');
+    onSnapshot(paytrGuardianRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        // Eğer admin panelinden açıkça 'adminExplicitTestMode: true' ayarlanmamışsa ve testMode=1 olmuşsa derhal CANLI MODA al
+        if ((String(data.testMode) === '1' || data.test_mode === 1) && data.adminExplicitTestMode !== true) {
+          console.warn('[PayTR Guardian] Yetkisiz istemci/eski APK tarafından testMode=1 yazıldı! Anında CANLI MODA (0) geri alınıyor...');
+          setDoc(paytrGuardianRef, {
+            testMode: '0',
+            test_mode: 0,
+            adminExplicitTestMode: false,
+            updatedAt: new Date().toISOString()
+          }, { merge: true }).catch(() => {});
+          cachedPayTRConfig.testMode = '0';
+          cachedPayTRConfig.adminExplicitTestMode = false;
+        }
+      }
+    });
+    console.log('[PayTR Guardian] Canlı Mod Gerçek Zamanlı Koruyucusu Devrede.');
+  } catch (err) {
+    console.warn('[PayTR Guardian Başlatma Uyarısı]:', err);
+  }
+}
 
 function resolvePublicAppUrl(req: express.Request, customDomain?: string): string {
   if (customDomain && customDomain.trim()) {
@@ -4338,41 +4380,58 @@ function getPublicUserIp(req: express.Request): string {
   return cleanIp;
 }
 
+let lastPayTRFetchTime = 0;
 async function getPayTRConfig(): Promise<PayTRConfig> {
-  if (db && (!cachedPayTRConfig.merchantId || !cachedPayTRConfig.merchantKey)) {
+  const now = Date.now();
+  if (db && (now - lastPayTRFetchTime > 5000 || !cachedPayTRConfig.merchantId || !cachedPayTRConfig.merchantKey)) {
     try {
       const docRef = doc(db, 'settings', 'paytr');
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         const data = docSnap.data();
-        if (data.merchantId) cachedPayTRConfig.merchantId = decryptData(data.merchantId);
-        if (data.merchantKey) cachedPayTRConfig.merchantKey = decryptData(data.merchantKey);
-        if (data.merchantSalt) cachedPayTRConfig.merchantSalt = decryptData(data.merchantSalt);
-        if (data.testMode !== undefined) cachedPayTRConfig.testMode = String(data.testMode);
-        if (data.customDomain !== undefined) cachedPayTRConfig.customDomain = String(data.customDomain);
+        const mId = (data.merchantId && decryptData(data.merchantId)) || data.merchant_id || data.merchantId;
+        const mKey = (data.merchantKey && decryptData(data.merchantKey)) || data.merchant_key || data.merchantKey;
+        const mSalt = (data.merchantSalt && decryptData(data.merchantSalt)) || data.merchant_salt || data.merchantSalt;
 
-        // Restore readable plaintext format in Firestore if it was previously encrypted
-        if (data.merchantKey && (String(data.merchantKey).startsWith('ISGSEC:') || String(data.merchantKey).startsWith('ENC:v1:'))) {
-          setDoc(docRef, {
-            merchantId: cachedPayTRConfig.merchantId,
-            merchantKey: cachedPayTRConfig.merchantKey,
-            merchantSalt: cachedPayTRConfig.merchantSalt,
-            testMode: cachedPayTRConfig.testMode,
-            customDomain: cachedPayTRConfig.customDomain,
-            updatedAt: new Date().toISOString()
-          }, { merge: true }).catch(err => console.warn('PayTR restore warning:', err));
+        if (mId) cachedPayTRConfig.merchantId = String(mId).trim();
+        if (mKey) cachedPayTRConfig.merchantKey = String(mKey).trim();
+        if (mSalt) cachedPayTRConfig.merchantSalt = String(mSalt).trim();
+
+        // KESİNTİSİZ CANLI MOD KORUMASI:
+        // Yalnızca Yönetici Admin Panelinden açıkça 'adminExplicitTestMode: true' seçilmişse test moduna izin ver
+        const isExplicitAdminTest = data.adminExplicitTestMode === true && (String(data.testMode) === '1' || data.test_mode === 1);
+        if (isExplicitAdminTest) {
+          cachedPayTRConfig.testMode = '1';
+          cachedPayTRConfig.adminExplicitTestMode = true;
+        } else {
+          cachedPayTRConfig.testMode = '0'; // KESİNLİKLE CANLI MOD (0)
+          cachedPayTRConfig.adminExplicitTestMode = false;
+
+          // Eğer eski bir APK Firestore'a testMode=1 yazmışsa anında düzelt
+          if ((String(data.testMode) === '1' || data.test_mode === 1) && !data.adminExplicitTestMode) {
+            setDoc(docRef, {
+              testMode: '0',
+              test_mode: 0,
+              adminExplicitTestMode: false,
+              updatedAt: new Date().toISOString()
+            }, { merge: true }).catch(() => {});
+          }
         }
+
+        if (data.customDomain !== undefined) cachedPayTRConfig.customDomain = String(data.customDomain).trim();
+        lastPayTRFetchTime = now;
       }
     } catch (e) {
       console.warn('[PayTR Config] Failed to fetch from Firestore:', e);
     }
   }
   return {
-    merchantId: cachedPayTRConfig.merchantId || process.env.PAYTR_MERCHANT_ID || '',
-    merchantKey: cachedPayTRConfig.merchantKey || process.env.PAYTR_MERCHANT_KEY || '',
-    merchantSalt: cachedPayTRConfig.merchantSalt || process.env.PAYTR_MERCHANT_SALT || '',
-    testMode: cachedPayTRConfig.testMode || process.env.PAYTR_TEST_MODE || '1',
-    customDomain: cachedPayTRConfig.customDomain || process.env.PAYTR_CUSTOM_DOMAIN || ''
+    merchantId: cachedPayTRConfig.merchantId || process.env.PAYTR_MERCHANT_ID || '731185',
+    merchantKey: cachedPayTRConfig.merchantKey || process.env.PAYTR_MERCHANT_KEY || 'LsLJ5UYjU2WgssBj',
+    merchantSalt: cachedPayTRConfig.merchantSalt || process.env.PAYTR_MERCHANT_SALT || 'Q5C8aTGXa26HMnhx',
+    testMode: cachedPayTRConfig.adminExplicitTestMode === true ? '1' : '0', // Kesinlikle Canlı Mod (0)
+    customDomain: cachedPayTRConfig.customDomain || process.env.PAYTR_CUSTOM_DOMAIN || 'https://isgpro.com',
+    adminExplicitTestMode: cachedPayTRConfig.adminExplicitTestMode
   };
 }
 
@@ -4414,12 +4473,15 @@ app.post('/api/paytr/config', async (req, res) => {
       }
     }
 
+    const isAdminChoosingTest = testMode === '1';
+
     const updated: PayTRConfig = {
       merchantId: (merchantId || '').trim(),
       merchantKey: finalKey,
       merchantSalt: finalSalt,
-      testMode: testMode === '0' ? '0' : '1',
-      customDomain: (customDomain || '').trim()
+      testMode: isAdminChoosingTest ? '1' : '0',
+      customDomain: (customDomain || '').trim(),
+      adminExplicitTestMode: isAdminChoosingTest
     };
 
     cachedPayTRConfig = updated;
@@ -4430,13 +4492,18 @@ app.post('/api/paytr/config', async (req, res) => {
         merchantId: updated.merchantId,
         merchantKey: updated.merchantKey,
         merchantSalt: updated.merchantSalt,
+        merchant_id: updated.merchantId,
+        merchant_key: updated.merchantKey,
+        merchant_salt: updated.merchantSalt,
         testMode: updated.testMode,
+        test_mode: isAdminChoosingTest ? 1 : 0,
+        adminExplicitTestMode: isAdminChoosingTest,
         customDomain: updated.customDomain,
         updatedAt: new Date().toISOString()
       }, { merge: true });
     }
 
-    console.log(`[PayTR Config Updated] Merchant ID: ${updated.merchantId}, Test Mode: ${updated.testMode}`);
+    console.log(`[PayTR Config Updated] Merchant ID: ${updated.merchantId}, Test Mode: ${updated.testMode}, AdminExplicit: ${isAdminChoosingTest}`);
     return res.json({
       success: true,
       message: 'PayTR Mağaza SanalPOS bilgileri başarıyla kaydedildi.',
@@ -4583,42 +4650,50 @@ async function activateAndNotifyOrder(merchantOid: string): Promise<boolean> {
 
   // Also send approved contracts copy to user and admin email (infoisgpro@gmail.com) with PDF attachment
   try {
-    const contractHtml = getContractsApprovalHtmlTemplate({
-      customerName: order.name || 'Değerli İSG Pro Kullanıcısı',
-      customerEmail: order.email,
-      planName,
-      price: priceStr,
-      orderId: merchantOid,
-      approvalDate: purchaseDateStr
-    });
+    const cacheKey = `${merchantOid}_${order.email.toLowerCase().trim()}`;
+    const lastSent = sentContractsMap.get(cacheKey);
+    if (!lastSent || (Date.now() - lastSent >= 5 * 60 * 1000)) {
+      sentContractsMap.set(cacheKey, Date.now());
 
-    let pdfAttachments: Array<{ filename: string; content: Buffer; contentType: string }> = [];
-    try {
-      pdfAttachments = await generateAllContractsPDFAttachments({
+      const contractHtml = getContractsApprovalHtmlTemplate({
         customerName: order.name || 'Değerli İSG Pro Kullanıcısı',
         customerEmail: order.email,
-        customerPhone: order.phone,
-        customerAddress: order.address,
-        orderId: merchantOid,
         planName,
         price: priceStr,
-        approvalDate: purchaseDateStr,
-        customerSignature: order.userSignature,
-        sellerSignature: '',
-        sellerName: 'İbrahim Coşkun'
+        orderId: merchantOid,
+        approvalDate: purchaseDateStr
       });
-    } catch (pdfErr) {
-      console.error('[PayTR PDF Generation Error]:', pdfErr);
-    }
 
-    await sendEmailUniversal({
-      to: [order.email, 'infoisgpro@gmail.com'],
-      subject: `İSG Pro Onaylı Mesafeli Satış Sözleşmesi ve Evrakları`,
-      html: contractHtml,
-      attachments: pdfAttachments,
-      templateType: 'contracts'
-    });
-    console.log(`[HTTPS REST 443 Activation] Contracts and PDFs dispatched via Port 443: ${maskEmail(order.email)}`);
+      let pdfAttachments: Array<{ filename: string; content: Buffer; contentType: string }> = [];
+      try {
+        pdfAttachments = await generateAllContractsPDFAttachments({
+          customerName: order.name || 'Değerli İSG Pro Kullanıcısı',
+          customerEmail: order.email,
+          customerPhone: order.phone,
+          customerAddress: order.address,
+          orderId: merchantOid,
+          planName,
+          price: priceStr,
+          approvalDate: purchaseDateStr,
+          customerSignature: order.userSignature,
+          sellerSignature: '',
+          sellerName: 'İbrahim Coşkun'
+        });
+      } catch (pdfErr) {
+        console.error('[PayTR PDF Generation Error]:', pdfErr);
+      }
+
+      await sendEmailUniversal({
+        to: [order.email, 'infoisgpro@gmail.com'],
+        subject: `İSG Pro Onaylı Mesafeli Satış Sözleşmesi ve Evrakları`,
+        html: contractHtml,
+        attachments: pdfAttachments,
+        templateType: 'contracts'
+      });
+      console.log(`[HTTPS REST 443 Activation] Contracts and PDFs dispatched via Port 443: ${maskEmail(order.email)}`);
+    } else {
+      console.log(`[Activation Contracts] Contracts already dispatched recently for ${merchantOid}, skipping.`);
+    }
   } catch (contractErr) {
     console.error('[HTTPS REST 443 Contract Delivery Error]:', contractErr);
   }
@@ -4673,7 +4748,7 @@ app.all(['/api/paytr/token', '/paytr/token', '/paytr/pay-direct', '/api/paytr/pa
   const PAYTR_MERCHANT_ID = paytrConfig.merchantId;
   const PAYTR_MERCHANT_KEY = paytrConfig.merchantKey;
   const PAYTR_MERCHANT_SALT = paytrConfig.merchantSalt;
-  const test_mode = paytrConfig.testMode || '1';
+  const test_mode = paytrConfig.testMode === '1' ? '1' : '0';
 
   const isConfigured = !!(PAYTR_MERCHANT_ID && PAYTR_MERCHANT_KEY && PAYTR_MERCHANT_SALT);
 
@@ -4840,13 +4915,14 @@ app.all(['/api/paytr/token', '/paytr/token', '/paytr/pay-direct', '/api/paytr/pa
 // PayTR step 2: Postback notification callback url (PayTR hits this asynchronously)
 app.all(['/api/paytr/callback', '/paytr/callback'], express.urlencoded({ extended: true }), express.json(), async (req, res) => {
   if (req.method === 'OPTIONS') return res.sendStatus(200);
+  const paytrConfig = await getPayTRConfig();
   const merchant_oid = req.body.merchant_oid || req.body.merchantOid;
   const status = req.body.status;
   const total_amount = req.body.total_amount || req.body.totalAmount;
   const hash = req.body.hash;
   const failed_reason_code = req.body.failed_reason_code || req.body.failedReasonCode || '';
   const failed_reason_msg = req.body.failed_reason_msg || req.body.failedReasonMsg || '';
-  const test_mode = req.body.test_mode || req.body.testMode || '1';
+  const test_mode = req.body.test_mode || req.body.testMode || paytrConfig.testMode || '0';
   const payment_type = req.body.payment_type || req.body.paymentType || 'card';
   const currency = req.body.currency || 'TL';
 
@@ -4857,7 +4933,6 @@ app.all(['/api/paytr/callback', '/paytr/callback'], express.urlencoded({ extende
     return res.status(400).send('BAD REQUEST');
   }
 
-  const paytrConfig = await getPayTRConfig();
   const PAYTR_MERCHANT_KEY = paytrConfig.merchantKey;
   const PAYTR_MERCHANT_SALT = paytrConfig.merchantSalt;
 
@@ -4943,7 +5018,7 @@ app.post('/api/paytr/test-callback', async (req, res) => {
       planId: planId as any,
       licenseKey,
       status: 'pending',
-      testMode: '1',
+      testMode: paytrConfig.testMode || '0',
       createdAt: Date.now()
     };
 
@@ -4975,7 +5050,7 @@ app.post('/api/paytr/test-callback', async (req, res) => {
       message: '2. Aşama (Bildirim URL Callback) test modunda başarıyla doğrulandı!',
       testDetails: {
         merchantOid,
-        testMode: '1',
+        testMode: paytrConfig.testMode || '0',
         status: testStatus,
         totalAmount: `${amountStr} TL (${totalAmount} Kuruş)`,
         merchantKeyConfigured: !!paytrConfig.merchantKey,

@@ -30,7 +30,7 @@ import { generateLicenseKey, registerGeneratedLicense } from '../lib/licenseUtil
 
 interface CheckoutProps {
   planId: 'monthly' | 'yearly';
-  onSubmitSuccess: (licenseKey: string) => void;
+  onSubmitSuccess: (licenseKey: string, checkoutMeta?: any) => void;
   onCancel: () => void;
 }
 
@@ -87,10 +87,24 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
       if (event.data.type === 'PAYTR_SUCCESS') {
         const lic = event.data.licenseKey || generatedLicense;
         if (lic) setGeneratedLicense(lic);
-        if (event.data.oid) setMerchantOid(event.data.oid);
+        const activeOid = event.data.oid || merchantOid;
+        if (activeOid) setMerchantOid(activeOid);
         setStep('success');
+
+        const activeSig = userSignatureRef.current || userSignature || (typeof window !== 'undefined' ? localStorage.getItem('isg_user_signature') || '' : '');
+        const checkoutMeta = {
+          orderId: activeOid || `ISG-${Date.now().toString().slice(-6)}`,
+          email,
+          name: fullName,
+          phone,
+          address,
+          planName: activePlan.name,
+          price: activePlan.price,
+          userSignature: activeSig
+        };
+
         setTimeout(() => {
-          onSubmitSuccess(lic || generatedLicense);
+          onSubmitSuccess(lic || generatedLicense, checkoutMeta);
         }, 3500);
       } else if (event.data.type === 'PAYTR_FAIL') {
         setPaytrErrorMsg('Ödeme işlemi onaylanmadı veya kullanıcı tarafından iptal edildi.');
@@ -100,7 +114,7 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [generatedLicense, onSubmitSuccess]);
+  }, [generatedLicense, onSubmitSuccess, merchantOid, email, fullName, phone, address, userSignature, activePlan]);
 
   // Load PayTR iFrame Resizer Helper Script dynamically
   useEffect(() => {
@@ -176,22 +190,22 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
         setMerchantOid(oid);
         setGeneratedLicense(lic);
 
-        // Pre-send PDF contracts & signature record
-        fetch('/api/send-email-contracts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        // İmzayı ve sipariş bilgilerini tam sürüme geçiş için yerel depolamaya güvenle kaydet.
+        // DİKKAT: 2. aşama ödeme ekranına geçildiğinde (ödeme yapılmadan önce) ASLA sözleşme e-postası gönderilmez!
+        // Sözleşmeler ancak PayTR ödemesi başarıyla tamamlanıp tam sürüme geçildiğinde iletilir.
+        try {
+          localStorage.setItem('isg_user_signature', activeSig);
+          localStorage.setItem('isg_checkout_order_details', JSON.stringify({
+            orderId: oid,
             email,
             name: fullName,
             phone,
             address,
-            orderId: oid,
             planName: activePlan.name,
             price: activePlan.price,
-            userSignature: activeSig,
-            customerSignature: activeSig
-          })
-        }).catch(e => console.error("Contract delivery pre-send note:", e));
+            userSignature: activeSig
+          }));
+        } catch (_) {}
 
         // Construct PayTR iframe URL according to 1. ADIM specification
         let targetIframeUrl = '';
@@ -221,25 +235,9 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
     try {
       if (status === 'success') {
         const activeSig = userSignatureRef.current || userSignature || (typeof window !== 'undefined' ? localStorage.getItem('isg_user_signature') || '' : '');
-        
-        console.log(`[Simulated Payment] Sending contract email with active signature length: ${activeSig.length}`);
-
-        // Automatically send contract email with signature attachment for test simulation
-        await fetch('/api/send-email-contracts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email,
-            name: fullName,
-            phone,
-            address,
-            orderId: merchantOid,
-            planName: activePlan.name,
-            price: activePlan.price,
-            userSignature: activeSig,
-            customerSignature: activeSig
-          })
-        }).catch(e => console.error("Simulated contract delivery error:", e));
+        try {
+          localStorage.setItem('isg_user_signature', activeSig);
+        } catch (_) {}
 
         const tempLicenseKey = generateLicenseKey(planId);
         try {
