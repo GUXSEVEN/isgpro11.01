@@ -206,7 +206,7 @@ export default function AdminPanel({
   const [testTemplateType, setTestTemplateType] = useState<
     'general' | 'otp' | 'admin_2fa' | 'verification' | 'verified_user' | 'verified_admin' | 'new_user' |
     'license' | 'trial_license' | 'trial_reminder' | 'contracts' | 'registration_consent' |
-    'update' | 'contact'
+    'update' | 'contact' | 'billing_notification'
   >('general');
   const [templatePreviewOpen, setTemplatePreviewOpen] = useState(false);
   const [templatePreviewLoading, setTemplatePreviewLoading] = useState(false);
@@ -3792,7 +3792,7 @@ export default function AdminPanel({
                       <div>
                         <div className="flex items-center justify-between mb-1">
                           <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">E-Posta Şablon Tipi</label>
-                          <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded">12 Şablon Hazır</span>
+                          <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded">13 Şablon Hazır</span>
                         </div>
                         <select
                           value={testTemplateType}
@@ -3816,6 +3816,7 @@ export default function AdminPanel({
                           </optgroup>
                           <optgroup label="Resmi Sözleşmeler & Müşteri İletişimi">
                             <option value="contracts">📜 Satın Alma Onaylı Sözleşmeler (6 Belge + PDF Ekli)</option>
+                            <option value="billing_notification">🧾 Yeni Sipariş & Fatura Kesim Bildirimi (infoisgpro@gmail.com)</option>
                             <option value="registration_consent">✍️ Kayıt Öncesi Yasal Metinler & Islak İmza (3 Belge + PDF)</option>
                             <option value="contact">💬 Yeni Destek & İletişim Talebi Mesajı</option>
                           </optgroup>

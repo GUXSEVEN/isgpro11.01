@@ -44,7 +44,7 @@ PayTR Mağaza Panelinize girip **Ayarlar -> Bilgi -> Bildirim URL (Callback URL)
 ```
 https://PROJE-ADINIZ.vercel.app/api/paytr/callback
 ```
-*(veya özel alan adınız: `https://isgpro.com/api/paytr/callback`)*
+*(veya özel alan adınız: `https://isgprotech.com/api/paytr/callback`)*
 
 ---
 

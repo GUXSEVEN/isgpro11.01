@@ -9,7 +9,7 @@ import { Check, ShieldCheck, HelpCircle, Star, Sparkles } from 'lucide-react';
 import { Plan } from '../types';
 
 interface PricingProps {
-  onSelectPlan: (planId: 'monthly' | 'yearly') => void;
+  onSelectPlan: (planId: 'monthly' | 'yearly' | 'test') => void;
   onOpenTrialModal?: () => void;
 }
 
@@ -65,6 +65,42 @@ export default function Pricing({ onSelectPlan, onOpenTrialModal }: PricingProps
             Bireysel uzmanlardan çok şubeli ortak sağlık güvenlik birimlerine kadar her ihtiyaca uygun lisans seçenekleri.
           </p>
         </div>
+
+        {/* Canlı Ödeme Modu Geçici 1 TL Test Lisansı Banner */}
+        <motion.div
+          initial={{ opacity: 0, y: 15 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          className="max-w-4xl mx-auto mb-6 p-4 sm:p-5 bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 rounded-2xl text-white shadow-lg flex flex-col sm:flex-row items-center justify-between gap-4 border border-emerald-400/30"
+        >
+          <div className="flex items-center gap-3.5 text-center sm:text-left">
+            <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur-md flex items-center justify-center shrink-0">
+              <span className="text-xl">🧪</span>
+            </div>
+            <div>
+              <div className="flex items-center justify-center sm:justify-start gap-2">
+                <span className="text-[10px] font-black uppercase tracking-wider bg-white/20 px-2 py-0.5 rounded-full">
+                  Canlı Ödeme Testi (Geçici)
+                </span>
+                <span className="text-xs font-extrabold text-emerald-200">₺1</span>
+              </div>
+              <h5 className="font-extrabold text-sm sm:text-base tracking-tight text-white mt-0.5">
+                PayTR Canlı Sanal POS & Fatura Bildirim Testi
+              </h5>
+              <p className="text-[11px] text-emerald-100 font-medium leading-snug">
+                Gerçek kredi kartı ile 1 TL canlı çekim yaparak ödeme, lisans aktivasyonu ve muhasebe fatura e-postasını anında test edin.
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => onSelectPlan('test')}
+            className="shrink-0 px-5 py-2.5 bg-white text-emerald-700 hover:bg-emerald-50 font-black text-xs rounded-xl shadow-md transition-all active:scale-95 cursor-pointer flex items-center gap-1.5"
+          >
+            <span>1 TL ile Canlı Test Satın Al</span>
+            <span className="text-sm">→</span>
+          </button>
+        </motion.div>
 
         {/* 7-Day Free Trial Callout Banner */}
         {onOpenTrialModal && (

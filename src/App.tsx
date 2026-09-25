@@ -359,34 +359,157 @@ export default function App() {
       return;
     }
 
-    const paytrSuccess = params.get('paytr_success');
-    const license = params.get('license');
+    const paytrSuccess = params.get('paytr_success') === 'true' || params.get('paytr_status') === 'success';
+    const rawLicense = params.get('license');
+    const license = (rawLicense && rawLicense !== 'ISG-PRO-MOCK-LICENSE') ? rawLicense : '';
+    const urlUsername = params.get('username');
+
     if (paytrSuccess) {
-      if (currentUser) {
+      // 1. Ödeme yapan kullanıcıyı KESİNLİKLE tespit et:
+      // Eğer URL'de bir kullanıcı adı gelmişse (urlUsername), ASLA admin ile karıştırma ve bu kullanıcıyı bul
+      let targetUser: UserType | null = null;
+      if (urlUsername && urlUsername.trim()) {
+        const cleanTarget = urlUsername.trim().toLowerCase();
+        targetUser = users.find(u => u.username.toLowerCase() === cleanTarget) || null;
+      }
+
+      if (!targetUser && currentUser) {
+        // Eğer urlUsername admin değilse ve currentUser admin ise, admin'e devretme!
+        if (!urlUsername || currentUser.username.toLowerCase() === urlUsername.trim().toLowerCase() || currentUser.username !== 'admin') {
+          targetUser = currentUser;
+        }
+      }
+
+      if (!targetUser) {
+        try {
+          const stored = localStorage.getItem(STORAGE_KEYS.CURRENT_USER) || localStorage.getItem('isg_active_user') || localStorage.getItem('currentUser');
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            if (parsed && (!urlUsername || parsed.username?.toLowerCase() === urlUsername.trim().toLowerCase())) {
+              targetUser = parsed;
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (targetUser && license) {
         const planType = getLicenseTypeFromKey(license);
         const durationDays = getLicenseDurationDays(planType);
         const now = new Date();
         const expiresAt = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
-        handleUpdateProfile({
+
+        const updatedTarget: UserType = {
+          ...targetUser,
           isPremium: true,
-          licenseKey: license || 'ISG-PRO-SUCCESS-LICENSE',
+          licenseKey: license,
           licensePurchasedAt: now.toISOString(),
           licenseExpiresAt: expiresAt.toISOString(),
           licenseType: planType
-        });
+        };
+
+        // Update in users array
+        const updatedUsers = users.map(u => 
+          u.username.toLowerCase() === targetUser!.username.toLowerCase() ? updatedTarget : u
+        );
+        setUsers(updatedUsers);
+        try {
+          localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+          localStorage.setItem('isg_users_db', JSON.stringify(updatedUsers));
+        } catch (_) {}
+
+        // Set active user session to targetUser
+        setCurrentUser(updatedTarget);
+        try {
+          localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(updatedTarget));
+          localStorage.setItem('isg_active_user', JSON.stringify(updatedTarget));
+          localStorage.setItem('currentUser', JSON.stringify(updatedTarget));
+        } catch (_) {}
+
+        // Persist to Firestore
+        saveUserToFirestore(updatedTarget).catch(e => console.warn('Save user Firestore error:', e));
+
+        // Direct server sync
+        fetch('/api/sync-user', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user: updatedTarget })
+        }).catch(err => console.warn('Server sync user call warning:', err));
       }
-      alert(`Tebrikler, ödemeniz onaylandı ve lisansınız başarıyla aktive edildi! Lisans kodunuz: ${license}`);
+
+      // Fatura bildirim e-postasını infoisgpro@gmail.com'a anında ve doğrudan ilet
+      try {
+        const savedOrderDetails = localStorage.getItem('isg_checkout_order_details');
+        const parsedOrder = savedOrderDetails ? JSON.parse(savedOrderDetails) : {};
+        const activeOid = params.get('oid') || parsedOrder.orderId || `ISG-${Date.now().toString().slice(-6)}`;
+        const activePlanId = params.get('plan') || parsedOrder.planId || 'yearly';
+        const activePlanName = activePlanId === 'yearly' ? 'Yıllık Pro Lisans' : (activePlanId === 'test' ? 'Canlı Test Lisansı' : 'Aylık Pro Lisans');
+        const activePrice = activePlanId === 'yearly' ? '₺2.990,00' : (activePlanId === 'test' ? '₺1,00' : '₺299,00');
+
+        const billingData = {
+          orderId: activeOid,
+          planName: parsedOrder.planName || activePlanName,
+          price: parsedOrder.price || activePrice,
+          billingType: parsedOrder.billingType || (parsedOrder.companyName ? 'corporate' : 'individual'),
+          customerName: parsedOrder.name || parsedOrder.fullName || targetUser?.name || targetUser?.username || 'Değerli Müşterimiz',
+          customerEmail: parsedOrder.email || targetUser?.email || 'infoisgpro@gmail.com',
+          customerPhone: parsedOrder.phone || '',
+          customerAddress: parsedOrder.address || parsedOrder.fullAddress || '',
+          city: parsedOrder.city || '',
+          district: parsedOrder.district || '',
+          tcNo: parsedOrder.tcNo || '',
+          companyName: parsedOrder.companyName || '',
+          taxNumber: parsedOrder.taxNumber || '',
+          taxOffice: parsedOrder.taxOffice || '',
+          licenseKey: license || parsedOrder.licenseKey || '',
+          customerSignature: parsedOrder.userSignature || ''
+        };
+
+        // Hem onaylı sözleşmeleri (fatura kartı gömülü) hem de fatura bildirimini eş zamanlı ve garanti gönder
+        fetch('/api/send-email-contracts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...billingData,
+            email: billingData.customerEmail,
+            name: billingData.customerName,
+            phone: billingData.customerPhone,
+            address: billingData.customerAddress,
+            approvalDate: new Date().toLocaleString('tr-TR')
+          })
+        }).catch(err => console.warn('[App.tsx paytrSuccess] Contracts fetch error:', err));
+
+        fetch('/api/send-email-billing', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(billingData)
+        }).then(r => r.json()).then(res => {
+          console.log('[App.tsx paytrSuccess] Billing sent successfully:', res);
+        }).catch(err => {
+          console.warn('[App.tsx paytrSuccess] Billing fetch error:', err);
+        });
+      } catch (err) {
+        console.warn('[App.tsx paytrSuccess catch]:', err);
+      }
+
+      // Yönlendirme: Kullanıcı admin değilse ASLA admin paneline yönlendirme, kullanıcının profiline/dashboard'una yönlendir
+      if (targetUser && (targetUser.username === 'admin' || targetUser.role === 'admin') && urlUsername === 'admin') {
+        setActiveSection('admin');
+      } else {
+        setActiveSection('dashboard');
+      }
+
+      alert(`Tebrikler, ödemeniz onaylandı ve lisansınız başarıyla aktive edildi!${license ? ` Lisans kodunuz: ${license}` : ''}`);
       window.history.replaceState({}, document.title, window.location.pathname);
       return;
     }
 
-    const paytrFail = params.get('paytr_fail');
+    const paytrFail = params.get('paytr_fail') === 'true' || params.get('paytr_status') === 'failed';
     if (paytrFail) {
       alert('Ödeme alınamadı. İşleminiz banka provizyon hatası veya kullanıcı iptali sebebiyle tamamlanamadı. Lütfen tekrar deneyiniz.');
       window.history.replaceState({}, document.title, window.location.pathname);
     }
-  }, [currentUser]);
-  const [checkoutPlan, setCheckoutPlan] = useState<'monthly' | 'yearly' | null>(null);
+  }, [currentUser, users]);
+  const [checkoutPlan, setCheckoutPlan] = useState<'monthly' | 'yearly' | 'test' | null>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
 
   // Dynamic Site Administration states
@@ -1056,7 +1179,7 @@ export default function App() {
     return { success: true };
   };
 
-  const handlePurchaseSelect = (planId: 'monthly' | 'yearly') => {
+  const handlePurchaseSelect = (planId: 'monthly' | 'yearly' | 'test') => {
     if (!currentUser) {
       setAuthModalOpen(true);
       alert('Lisans satın alma işlemlerini tamamlamak için lütfen önce üye olun veya giriş yapın.');
@@ -1071,6 +1194,7 @@ export default function App() {
     const purchaseDate = new Date().toISOString();
     const expiryDate = new Date();
     if (checkoutPlan === 'yearly') expiryDate.setFullYear(expiryDate.getFullYear() + 1);
+    else if (checkoutPlan === 'test') expiryDate.setDate(expiryDate.getDate() + 30);
     else expiryDate.setMonth(expiryDate.getMonth() + 1);
 
     const upgradeFields: Partial<UserType> = { 
@@ -1080,6 +1204,13 @@ export default function App() {
       licenseExpiresAt: expiryDate.toISOString(),
       licenseType: checkoutPlan as any
     };
+
+    if (checkoutMeta?.tcNo && !currentUser.tcNo) {
+      upgradeFields.tcNo = checkoutMeta.tcNo;
+    }
+    if (checkoutMeta?.phone && !currentUser.phone) {
+      upgradeFields.phone = checkoutMeta.phone;
+    }
 
     handleUpdateProfile(upgradeFields);
 
@@ -1093,10 +1224,10 @@ export default function App() {
     const targetEmail = checkoutMeta?.email || savedOrderDetails?.email || currentUser.email;
     const targetName = checkoutMeta?.name || savedOrderDetails?.name || currentUser.name || currentUser.username;
     const targetPhone = checkoutMeta?.phone || savedOrderDetails?.phone;
-    const targetAddress = checkoutMeta?.address || savedOrderDetails?.address;
+    const targetAddress = checkoutMeta?.fullAddress || checkoutMeta?.address || savedOrderDetails?.fullAddress || savedOrderDetails?.address;
     const targetOrderId = checkoutMeta?.orderId || savedOrderDetails?.orderId || `ISG-TR-${Date.now()}`;
-    const targetPlanName = checkoutMeta?.planName || savedOrderDetails?.planName || (checkoutPlan === 'yearly' ? 'Yıllık Premium Plan' : 'Aylık Standart Plan');
-    const targetPrice = checkoutMeta?.price || savedOrderDetails?.price || (checkoutPlan === 'yearly' ? '₺2.990,00' : '₺299,00');
+    const targetPlanName = checkoutMeta?.planName || savedOrderDetails?.planName || (checkoutPlan === 'yearly' ? 'Yıllık Premium Plan' : (checkoutPlan === 'test' ? '1 TL Canlı Test Lisansı' : 'Aylık Standart Plan'));
+    const targetPrice = checkoutMeta?.price || savedOrderDetails?.price || (checkoutPlan === 'yearly' ? '₺2.990,00' : (checkoutPlan === 'test' ? '₺1,00' : '₺299,00'));
     const savedSig = checkoutMeta?.userSignature || savedOrderDetails?.userSignature || (typeof window !== 'undefined' ? localStorage.getItem('isg_user_signature') || '' : '');
 
     // Log successful license purchase
@@ -1105,7 +1236,12 @@ export default function App() {
       licenseKey: licenseKey.substring(0, 8) + '-XXXX-XXXX', // Mask full key for privacy/security
       price: targetPrice,
       purchaseDate,
-      expiryDate: expiryDate.toISOString()
+      expiryDate: expiryDate.toISOString(),
+      billingType: checkoutMeta?.billingType || savedOrderDetails?.billingType || 'individual',
+      tcNo: checkoutMeta?.tcNo || savedOrderDetails?.tcNo || '',
+      companyName: checkoutMeta?.companyName || savedOrderDetails?.companyName || '',
+      taxNumber: checkoutMeta?.taxNumber || savedOrderDetails?.taxNumber || '',
+      taxOffice: checkoutMeta?.taxOffice || savedOrderDetails?.taxOffice || ''
     }).catch(e => console.error("Error logging purchase activity:", e));
 
     // Send license confirmation email via secure server API proxy
@@ -1118,7 +1254,7 @@ export default function App() {
           name: targetName,
           licenseKey,
           planName: targetPlanName,
-          planType: checkoutPlan === 'yearly' ? 'Yıllık' : 'Aylık',
+          planType: checkoutPlan === 'yearly' ? 'Yıllık' : (checkoutPlan === 'test' ? 'Canlı Test' : 'Aylık'),
           price: targetPrice,
           purchaseDate,
           expiryDate: expiryDate.toISOString()
@@ -1134,6 +1270,13 @@ export default function App() {
           name: targetName,
           phone: targetPhone,
           address: targetAddress,
+          city: checkoutMeta?.city || savedOrderDetails?.city || '',
+          district: checkoutMeta?.district || savedOrderDetails?.district || '',
+          billingType: checkoutMeta?.billingType || savedOrderDetails?.billingType || 'individual',
+          tcNo: checkoutMeta?.tcNo || savedOrderDetails?.tcNo || '',
+          companyName: checkoutMeta?.companyName || savedOrderDetails?.companyName || '',
+          taxNumber: checkoutMeta?.taxNumber || savedOrderDetails?.taxNumber || '',
+          taxOffice: checkoutMeta?.taxOffice || savedOrderDetails?.taxOffice || '',
           orderId: targetOrderId,
           planName: targetPlanName,
           price: targetPrice,
@@ -1142,6 +1285,30 @@ export default function App() {
           customerSignature: savedSig
         })
       }).catch(err => console.warn('Could not send contracts email:', err));
+
+      // SADECE TAM SÜRÜME GEÇİLDİĞİNDE: Fatura ve yeni sipariş bildirimini anında ilet
+      fetch('/api/send-email-billing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderId: targetOrderId,
+          planName: targetPlanName,
+          price: targetPrice,
+          billingType: checkoutMeta?.billingType || savedOrderDetails?.billingType || 'individual',
+          customerName: targetName,
+          customerEmail: targetEmail,
+          customerPhone: targetPhone,
+          customerAddress: targetAddress,
+          city: checkoutMeta?.city || savedOrderDetails?.city || '',
+          district: checkoutMeta?.district || savedOrderDetails?.district || '',
+          tcNo: checkoutMeta?.tcNo || savedOrderDetails?.tcNo || '',
+          companyName: checkoutMeta?.companyName || savedOrderDetails?.companyName || '',
+          taxNumber: checkoutMeta?.taxNumber || savedOrderDetails?.taxNumber || '',
+          taxOffice: checkoutMeta?.taxOffice || savedOrderDetails?.taxOffice || '',
+          licenseKey,
+          customerSignature: savedSig
+        })
+      }).catch(err => console.warn('Could not send billing email:', err));
     } else {
       // User email missing or invalid -> Send email update link and verification email
       const targetEmail = currentUser.email || (currentUser.username.includes('@') ? currentUser.username : 'infoisgpro@gmail.com');
@@ -1213,6 +1380,7 @@ export default function App() {
                 planId={checkoutPlan}
                 onSubmitSuccess={handleCheckoutSuccess}
                 onCancel={() => setCheckoutPlan(null)}
+                currentUser={currentUser}
               />
             </motion.div>
           ) : activeSection === 'dashboard' && currentUser ? (

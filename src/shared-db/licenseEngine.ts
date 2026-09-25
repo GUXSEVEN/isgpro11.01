@@ -6,7 +6,7 @@
 import { db } from './firebaseConfig';
 import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 
-export type LicenseType = 'monthly' | 'yearly' | 'trial' | 'demo';
+export type LicenseType = 'monthly' | 'yearly' | 'trial' | 'demo' | 'test';
 
 export interface LicenseRecord {
   licenseKey: string;
@@ -47,6 +47,7 @@ export function getLicenseTypeFromKey(rawKey?: string | null): LicenseType {
 export function getLicenseDurationDays(type: LicenseType): number {
   switch (type) {
     case 'trial': return 7;
+    case 'test': return 30;
     case 'monthly': return 30;
     case 'demo': return 0.007; // ~10 dakika
     case 'yearly': default: return 365;
@@ -59,6 +60,7 @@ export function getLicenseDurationDays(type: LicenseType): number {
 export function getLicensePlanName(type?: LicenseType | null): string {
   switch (type) {
     case 'trial': return '7 Günlük Ücretsiz Deneme';
+    case 'test': return '1 TL Canlı Test Lisansı';
     case 'monthly': return 'Aylık Pro Plan';
     case 'demo': return '10 Dakikalık Demo Test';
     case 'yearly': default: return 'Yıllık Pro Plan';

@@ -19,47 +19,157 @@ import {
   Phone, 
   User, 
   MapPin, 
-  ExternalLink,
-  Check,
-  AlertCircle,
-  PenTool
+  ExternalLink, 
+  Check, 
+  AlertCircle, 
+  PenTool,
+  Building2,
+  Building,
+  Hash,
+  FileText
 } from 'lucide-react';
 import { LEGAL_TEXTS } from '../data/legal';
 import SignatureCanvas from './SignatureCanvas';
 import { generateLicenseKey, registerGeneratedLicense } from '../lib/licenseUtils';
+import { TURKEY_PROVINCES } from '../data/provinces';
+import { decryptUser } from '../lib/crypto';
 
 interface CheckoutProps {
-  planId: 'monthly' | 'yearly';
+  planId: 'monthly' | 'yearly' | 'test';
   onSubmitSuccess: (licenseKey: string, checkoutMeta?: any) => void;
   onCancel: () => void;
+  currentUser?: any;
 }
 
-export default function Checkout({ planId, onSubmitSuccess, onCancel }: CheckoutProps) {
-  // Try to pre-populate billing details from logged in user if exists
-  const [email, setEmail] = useState(() => {
+export default function Checkout({ planId, onSubmitSuccess, onCancel, currentUser }: CheckoutProps) {
+  // Try to resolve current user from props or localStorage
+  const resolvedUser = currentUser || (() => {
     try {
-      const stored = localStorage.getItem('isg_landing_current_user_v1');
-      if (stored) {
-        const u = JSON.parse(stored);
-        return u.email || '';
+      const storedLanding = localStorage.getItem('isg_landing_current_user_v1');
+      if (storedLanding) {
+        const parsed = JSON.parse(storedLanding);
+        return decryptUser(parsed);
+      }
+      const storedPanel = localStorage.getItem('currentUser') || localStorage.getItem('isg_current_user') || localStorage.getItem('isg_active_user') || localStorage.getItem('user');
+      if (storedPanel) {
+        const parsed = JSON.parse(storedPanel);
+        return decryptUser(parsed);
       }
     } catch (_) {}
-    return '';
+    return null;
+  })();
+
+  const effectiveUsername = resolvedUser?.username || currentUser?.username || '';
+  useEffect(() => {
+    if (effectiveUsername) {
+      try {
+        sessionStorage.setItem('isg_checkout_active_username', effectiveUsername);
+        localStorage.setItem('isg_checkout_active_username', effectiveUsername);
+      } catch (_) {}
+    }
+  }, [effectiveUsername]);
+
+  // Billing Type: 'individual' (Bireysel) | 'corporate' (Kurumsal)
+  const [billingType, setBillingType] = useState<'individual' | 'corporate'>(() => {
+    try {
+      const saved = localStorage.getItem('isg_checkout_billing_type');
+      if (saved === 'corporate' || saved === 'individual') return saved;
+    } catch (_) {}
+    return 'individual';
   });
 
+  // 1) Individual fields
   const [fullName, setFullName] = useState(() => {
+    if (resolvedUser?.name) return resolvedUser.name;
+    if (resolvedUser?.username) return resolvedUser.username;
     try {
-      const stored = localStorage.getItem('isg_landing_current_user_v1');
-      if (stored) {
-        const u = JSON.parse(stored);
-        return u.name || '';
-      }
+      const saved = localStorage.getItem('isg_checkout_name');
+      if (saved) return saved;
     } catch (_) {}
     return '';
   });
 
-  const [phone, setPhone] = useState('05555555555');
-  const [address, setAddress] = useState('İstanbul, Türkiye');
+  const [tcNo, setTcNo] = useState(() => {
+    if (resolvedUser?.tcNo) return resolvedUser.tcNo;
+    try {
+      const saved = localStorage.getItem('isg_checkout_tc') || localStorage.getItem('isg_user_tc');
+      if (saved) return saved;
+    } catch (_) {}
+    return '';
+  });
+
+  // Shared contact & address fields
+  const [email, setEmail] = useState(() => {
+    if (resolvedUser?.email && resolvedUser.email.includes('@')) return resolvedUser.email;
+    try {
+      const saved = localStorage.getItem('isg_checkout_email');
+      if (saved && saved.includes('@')) return saved;
+    } catch (_) {}
+    return '';
+  });
+
+  const [phone, setPhone] = useState(() => {
+    if (resolvedUser?.phone) {
+      const digits = resolvedUser.phone.replace(/\D/g, '');
+      if (digits.length >= 10) return digits.startsWith('0') ? digits : '0' + digits;
+    }
+    try {
+      const saved = localStorage.getItem('isg_checkout_phone');
+      if (saved) return saved;
+    } catch (_) {}
+    return '';
+  });
+
+  const [city, setCity] = useState(() => {
+    try {
+      const saved = localStorage.getItem('isg_checkout_city');
+      if (saved && TURKEY_PROVINCES.includes(saved)) return saved;
+    } catch (_) {}
+    return 'İstanbul';
+  });
+
+  const [district, setDistrict] = useState(() => {
+    try {
+      const saved = localStorage.getItem('isg_checkout_district');
+      if (saved) return saved;
+    } catch (_) {}
+    return '';
+  });
+
+  const [address, setAddress] = useState(() => {
+    try {
+      const saved = localStorage.getItem('isg_checkout_address');
+      if (saved) return saved;
+    } catch (_) {}
+    return '';
+  });
+
+  // 2) Corporate fields
+  const [companyName, setCompanyName] = useState(() => {
+    if (resolvedUser?.managedOsgbName) return resolvedUser.managedOsgbName;
+    try {
+      const saved = localStorage.getItem('isg_checkout_company_name');
+      if (saved) return saved;
+    } catch (_) {}
+    return '';
+  });
+
+  const [taxNumber, setTaxNumber] = useState(() => {
+    try {
+      const saved = localStorage.getItem('isg_checkout_tax_number');
+      if (saved) return saved;
+    } catch (_) {}
+    return '';
+  });
+
+  const [taxOffice, setTaxOffice] = useState(() => {
+    try {
+      const saved = localStorage.getItem('isg_checkout_tax_office');
+      if (saved) return saved;
+    } catch (_) {}
+    return '';
+  });
+
   const [step, setStep] = useState<'input' | 'processing' | 'paytr_iframe' | 'success' | 'paytr_error'>('input');
   const [iframeUrl, setIframeUrl] = useState<string>('');
   
@@ -73,35 +183,82 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
   const [loadingMsg, setLoadingMsg] = useState('Siparişiniz işleniyor...');
   const [paytrErrorMsg, setPaytrErrorMsg] = useState<string>('');
 
+  const [selectedPlanId, setSelectedPlanId] = useState<'monthly' | 'yearly' | 'test'>(planId || 'yearly');
+
   const plansMeta = {
+    test: { name: '1 TL Canlı Test Lisansı', price: '₺1', rawPrice: '1.00', label: ' / tek seferlik (Canlı Test)' },
     monthly: { name: 'Aylık Plan', price: '₺299', rawPrice: '299.00', label: '/ Ay' },
     yearly: { name: 'Yıllık Plan', price: '₺2.990', rawPrice: '2990.00', label: '/ Yıl (En İyi Teklif)' }
   };
 
-  const activePlan = plansMeta[planId];
+  const activePlan = plansMeta[selectedPlanId] || plansMeta[planId] || plansMeta.yearly;
 
   // PayTR iFrame Callback & Result Message Listener
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (!event.data) return;
       if (event.data.type === 'PAYTR_SUCCESS') {
-        const lic = event.data.licenseKey || generatedLicense;
+        const receivedLic = event.data.licenseKey;
+        const lic = (receivedLic && receivedLic !== 'ISG-PRO-MOCK-LICENSE') ? receivedLic : generatedLicense;
         if (lic) setGeneratedLicense(lic);
         const activeOid = event.data.oid || merchantOid;
         if (activeOid) setMerchantOid(activeOid);
         setStep('success');
 
         const activeSig = userSignatureRef.current || userSignature || (typeof window !== 'undefined' ? localStorage.getItem('isg_user_signature') || '' : '');
+        const targetDisplayName = billingType === 'individual' ? fullName.trim() : companyName.trim();
+        const fullAddress = `${address.trim()}, ${district.trim()} / ${city.trim()}`;
+
         const checkoutMeta = {
           orderId: activeOid || `ISG-${Date.now().toString().slice(-6)}`,
-          email,
-          name: fullName,
-          phone,
-          address,
+          email: email.trim(),
+          name: targetDisplayName,
+          fullName: fullName.trim(),
+          billingType,
+          tcNo: billingType === 'individual' ? tcNo.trim() : '',
+          companyName: billingType === 'corporate' ? companyName.trim() : '',
+          taxNumber: billingType === 'corporate' ? taxNumber.trim() : '',
+          taxOffice: billingType === 'corporate' ? taxOffice.trim() : '',
+          phone: phone.trim(),
+          address: address.trim(),
+          city: city.trim(),
+          district: district.trim(),
+          fullAddress,
           planName: activePlan.name,
           price: activePlan.price,
           userSignature: activeSig
         };
+
+        // Arka planda fatura bildirim e-postasını infoisgpro@gmail.com'a ilet
+        // Önce production sunucusuna dene, olmassa relative URL ile fallback yap
+        const billingPayload = JSON.stringify({
+          orderId: checkoutMeta.orderId,
+          planName: activePlan.name,
+          price: activePlan.price,
+          billingType,
+          customerName: targetDisplayName,
+          customerEmail: email.trim(),
+          customerPhone: phone.trim(),
+          customerAddress: fullAddress,
+          city: city.trim(),
+          district: district.trim(),
+          tcNo: billingType === 'individual' ? tcNo.trim() : '',
+          companyName: billingType === 'corporate' ? companyName.trim() : '',
+          taxNumber: billingType === 'corporate' ? taxNumber.trim() : '',
+          taxOffice: billingType === 'corporate' ? taxOffice.trim() : '',
+          licenseKey: lic || generatedLicense,
+          customerSignature: activeSig
+        });
+        const billingHeaders = { 'Content-Type': 'application/json' };
+        fetch('/api/send-email-billing', {
+          method: 'POST',
+          headers: billingHeaders,
+          body: billingPayload
+        }).then(r => r.json()).then(d => {
+          console.log('[Checkout Billing] Sent successfully via /api/send-email-billing:', d);
+        }).catch(e => {
+          console.warn('[Checkout Billing] Failed to send billing email:', e);
+        });
 
         setTimeout(() => {
           onSubmitSuccess(lic || generatedLicense, checkoutMeta);
@@ -114,7 +271,7 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [generatedLicense, onSubmitSuccess, merchantOid, email, fullName, phone, address, userSignature, activePlan]);
+  }, [generatedLicense, onSubmitSuccess, merchantOid, email, fullName, phone, address, city, district, billingType, tcNo, companyName, taxNumber, taxOffice, userSignature, activePlan]);
 
   // Load PayTR iFrame Resizer Helper Script dynamically
   useEffect(() => {
@@ -131,16 +288,87 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
     }
   }, [step]);
 
+  // Form submit & strict billing validation
   const handleOpenSignatureModal = (e: React.FormEvent) => {
     e.preventDefault();
     if (!acceptedAgreements) {
       alert('Lütfen devam etmek için satış sözleşmesini ve diğer yasal koşulları onaylayın.');
       return;
     }
-    if (!fullName.trim() || !email.trim() || !phone.trim() || !address.trim()) {
-      alert('Lütfen fatura ve iletişim bilgilerini eksiksiz doldurun.');
+
+    const cleanEmail = email.trim();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!cleanEmail || !emailRegex.test(cleanEmail)) {
+      alert('Lütfen lisans kodunuzun ve faturanızın iletileceği geçerli bir e-posta adresi giriniz.');
       return;
     }
+
+    const cleanPhone = phone.replace(/\D/g, '');
+    if (!cleanPhone || cleanPhone.length < 10) {
+      alert('Lütfen en az 10 haneli geçerli bir cep telefonu numarası giriniz.');
+      return;
+    }
+
+    if (!city.trim()) {
+      alert('Lütfen fatura adresiniz için il seçiniz.');
+      return;
+    }
+
+    if (!district.trim()) {
+      alert('Lütfen fatura adresiniz için ilçe bilgisini giriniz.');
+      return;
+    }
+
+    if (!address.trim()) {
+      alert('Lütfen açık fatura adresinizi (cadde, mahalle, bina/kapı no) eksiksiz giriniz.');
+      return;
+    }
+
+    if (billingType === 'individual') {
+      if (!fullName.trim()) {
+        alert('Lütfen Bireysel Fatura için Ad Soyad bilginizi giriniz.');
+        return;
+      }
+      const cleanTc = tcNo.replace(/\D/g, '');
+      if (cleanTc.length !== 11) {
+        alert('Lütfen 11 haneli T.C. Kimlik Numaranızı eksiksiz olarak giriniz.');
+        return;
+      }
+    } else {
+      // corporate
+      if (!companyName.trim()) {
+        alert('Lütfen Kurumsal Fatura için Ticari Şirket Unvanını eksiksiz giriniz.');
+        return;
+      }
+      const cleanTax = taxNumber.replace(/\D/g, '');
+      if (cleanTax.length < 10) {
+        alert('Lütfen en az 10 haneli Vergi Kimlik Numaranızı (VKN) eksiksiz giriniz.');
+        return;
+      }
+      if (!taxOffice.trim()) {
+        alert('Lütfen bağlı olduğunuz Vergi Dairesi adını giriniz.');
+        return;
+      }
+    }
+
+    // Persist values in localStorage for user convenience
+    try {
+      localStorage.setItem('isg_checkout_billing_type', billingType);
+      localStorage.setItem('isg_checkout_email', cleanEmail);
+      localStorage.setItem('isg_checkout_phone', cleanPhone);
+      localStorage.setItem('isg_checkout_address', address.trim());
+      localStorage.setItem('isg_checkout_city', city.trim());
+      localStorage.setItem('isg_checkout_district', district.trim());
+      if (billingType === 'individual') {
+        localStorage.setItem('isg_checkout_name', fullName.trim());
+        localStorage.setItem('isg_checkout_tc', tcNo.trim());
+      } else {
+        localStorage.setItem('isg_checkout_company_name', companyName.trim());
+        localStorage.setItem('isg_checkout_tax_number', taxNumber.trim());
+        localStorage.setItem('isg_checkout_tax_office', taxOffice.trim());
+      }
+    } catch (_) {}
+
     setShowSignatureModal(true);
   };
 
@@ -159,17 +387,29 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
     setLoadingMsg('PayTR 256-Bit SSL Güvenli Ödeme Ekranı Hazırlanıyor...');
 
     const activeSig = sigUrl || userSignatureRef.current || userSignature || (typeof window !== 'undefined' ? localStorage.getItem('isg_user_signature') || '' : '');
+    const targetDisplayName = billingType === 'individual' ? fullName.trim() : companyName.trim();
+    const fullAddress = `${address.trim()}, ${district.trim()} / ${city.trim()}`;
 
     try {
       const response = await fetch('/api/paytr/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          planId,
-          name: fullName,
-          email,
-          phone,
-          address,
+          planId: selectedPlanId,
+          name: targetDisplayName,
+          fullName: fullName.trim(),
+          billingType,
+          tcNo: billingType === 'individual' ? tcNo.trim() : '',
+          companyName: billingType === 'corporate' ? companyName.trim() : '',
+          taxNumber: billingType === 'corporate' ? taxNumber.trim() : '',
+          taxOffice: billingType === 'corporate' ? taxOffice.trim() : '',
+          email: email.trim(),
+          username: resolvedUser?.username || currentUser?.username || '',
+          origin: typeof window !== 'undefined' ? window.location.origin : '',
+          phone: phone.trim(),
+          address: fullAddress,
+          city: city.trim(),
+          district: district.trim(),
           userSignature: activeSig,
           customerSignature: activeSig
         })
@@ -190,17 +430,23 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
         setMerchantOid(oid);
         setGeneratedLicense(lic);
 
-        // İmzayı ve sipariş bilgilerini tam sürüme geçiş için yerel depolamaya güvenle kaydet.
-        // DİKKAT: 2. aşama ödeme ekranına geçildiğinde (ödeme yapılmadan önce) ASLA sözleşme e-postası gönderilmez!
-        // Sözleşmeler ancak PayTR ödemesi başarıyla tamamlanıp tam sürüme geçildiğinde iletilir.
         try {
           localStorage.setItem('isg_user_signature', activeSig);
           localStorage.setItem('isg_checkout_order_details', JSON.stringify({
             orderId: oid,
-            email,
-            name: fullName,
-            phone,
-            address,
+            email: email.trim(),
+            name: targetDisplayName,
+            fullName: fullName.trim(),
+            billingType,
+            tcNo: billingType === 'individual' ? tcNo.trim() : '',
+            companyName: billingType === 'corporate' ? companyName.trim() : '',
+            taxNumber: billingType === 'corporate' ? taxNumber.trim() : '',
+            taxOffice: billingType === 'corporate' ? taxOffice.trim() : '',
+            phone: phone.trim(),
+            address: address.trim(),
+            city: city.trim(),
+            district: district.trim(),
+            fullAddress,
             planName: activePlan.name,
             price: activePlan.price,
             userSignature: activeSig
@@ -210,7 +456,7 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
         // Construct PayTR iframe URL according to 1. ADIM specification
         let targetIframeUrl = '';
         if (isDemo || !token || token.startsWith('mock_')) {
-          targetIframeUrl = `/api/paytr/demo-iframe?oid=${encodeURIComponent(oid)}&amount=${encodeURIComponent(activePlan.rawPrice)}&email=${encodeURIComponent(email)}&name=${encodeURIComponent(fullName)}`;
+          targetIframeUrl = `/api/paytr/demo-iframe?oid=${encodeURIComponent(oid)}&amount=${encodeURIComponent(activePlan.rawPrice)}&email=${encodeURIComponent(email)}&name=${encodeURIComponent(targetDisplayName)}`;
         } else {
           targetIframeUrl = `https://www.paytr.com/odeme/guvenli/${token}`;
         }
@@ -239,9 +485,9 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
           localStorage.setItem('isg_user_signature', activeSig);
         } catch (_) {}
 
-        const tempLicenseKey = generateLicenseKey(planId);
+        const tempLicenseKey = generateLicenseKey(selectedPlanId === 'test' ? 'demo' : (selectedPlanId as any));
         try {
-          await registerGeneratedLicense(tempLicenseKey, planId, email);
+          await registerGeneratedLicense(tempLicenseKey, selectedPlanId === 'test' ? 'demo' : (selectedPlanId as any), email);
         } catch (regErr) {
           console.warn('Could not auto-register temp license:', regErr);
         }
@@ -483,11 +729,68 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
                   <p className="text-xs text-slate-500 dark:text-slate-400 font-semibold">Seçtiğiniz plana ilişkin ayrıntılar ve PayTR güvenli fatura formu.</p>
                 </div>
 
+                {/* Plan Seçim Butonları (1 TL Test / Aylık / Yıllık) */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
+                      Paket Seçimi
+                    </label>
+                    <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded-full">
+                      Tıklayarak değiştirebilirsiniz
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPlanId('test')}
+                      className={`p-2.5 rounded-xl border-2 text-left transition-all cursor-pointer ${
+                        selectedPlanId === 'test'
+                          ? 'border-emerald-600 bg-emerald-50/80 dark:bg-emerald-950/50 ring-2 ring-emerald-500/20'
+                          : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="text-[9px] font-black text-emerald-600 uppercase">🧪 Canlı Test</div>
+                      <div className="text-xs font-black text-slate-900 dark:text-white mt-0.5">₺1</div>
+                      <div className="text-[9px] text-slate-400 font-bold">1 TL Çekim</div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPlanId('monthly')}
+                      className={`p-2.5 rounded-xl border-2 text-left transition-all cursor-pointer ${
+                        selectedPlanId === 'monthly'
+                          ? 'border-blue-600 bg-blue-50/80 dark:bg-blue-950/50 ring-2 ring-blue-500/20'
+                          : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="text-[9px] font-black text-blue-600 uppercase">⚡ Aylık</div>
+                      <div className="text-xs font-black text-slate-900 dark:text-white mt-0.5">₺299</div>
+                      <div className="text-[9px] text-slate-400 font-bold">/ Ay</div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPlanId('yearly')}
+                      className={`p-2.5 rounded-xl border-2 text-left transition-all cursor-pointer ${
+                        selectedPlanId === 'yearly'
+                          ? 'border-indigo-600 bg-indigo-50/80 dark:bg-indigo-950/50 ring-2 ring-indigo-500/20'
+                          : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="text-[9px] font-black text-indigo-600 uppercase">👑 Yıllık</div>
+                      <div className="text-xs font-black text-slate-900 dark:text-white mt-0.5">₺2.990</div>
+                      <div className="text-[9px] text-slate-400 font-bold">/ Yıl</div>
+                    </button>
+                  </div>
+                </div>
+
                 <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-2xl p-6 shadow-sm space-y-4">
                   <div className="flex justify-between items-center border-b border-slate-200 dark:border-slate-800 pb-4">
                     <div>
                       <h4 className="font-bold text-slate-900 dark:text-white text-sm">{activePlan.name}</h4>
-                      <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 font-semibold">Sınırsız yapay zeka & rapor çıktıları</p>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 font-semibold">
+                        {selectedPlanId === 'test' ? 'PayTR gerçek kart çekim ve fatura doğrulama' : 'Sınırsız yapay zeka & rapor çıktıları'}
+                      </p>
                     </div>
                     <div className="text-right">
                       <span className="text-xl font-extrabold text-indigo-600 dark:text-indigo-400 block">{activePlan.price}</span>
@@ -521,25 +824,176 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
                   </div>
                 </div>
 
+                {/* FATURA TÜRÜ SEÇİMİ (BİREYSEL / KURUMSAL) */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-extrabold uppercase text-slate-500 dark:text-slate-400 tracking-wider block">
+                    Fatura Tipi Seçimi *
+                  </label>
+                  <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl">
+                    <button
+                      type="button"
+                      onClick={() => setBillingType('individual')}
+                      className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        billingType === 'individual'
+                          ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-sm border border-slate-200 dark:border-slate-700'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                      }`}
+                    >
+                      <User size={15} />
+                      <span>Bireysel Fatura</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBillingType('corporate')}
+                      className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        billingType === 'corporate'
+                          ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-sm border border-slate-200 dark:border-slate-700'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                      }`}
+                    >
+                      <Building2 size={15} />
+                      <span>Kurumsal Fatura</span>
+                    </button>
+                  </div>
+                </div>
+
                 {/* FORM INPUTS */}
                 <form onSubmit={handleOpenSignatureModal} className="space-y-4">
-                  <div>
-                    <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider block mb-1">Ad Soyad</label>
-                    <div className="relative">
-                      <User className="absolute left-3.5 top-3.5 text-slate-400" size={16} />
-                      <input
-                        type="text"
-                        required
-                        value={fullName}
-                        onChange={(e) => setFullName(e.target.value)}
-                        placeholder="Örn: İbrahim Coşkun"
-                        className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-semibold"
-                      />
-                    </div>
-                  </div>
+                  {billingType === 'individual' ? (
+                    /* ================= BİREYSEL FATURA ALANLARI ================= */
+                    <>
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider">
+                            Ad Soyad *
+                          </label>
+                          {(resolvedUser?.name || resolvedUser?.username) && (
+                            <span className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded">
+                              ✓ Profilinizden Alındı
+                            </span>
+                          )}
+                        </div>
+                        <div className="relative">
+                          <User className="absolute left-3.5 top-3.5 text-slate-400" size={16} />
+                          <input
+                            type="text"
+                            required
+                            value={fullName}
+                            onChange={(e) => setFullName(e.target.value)}
+                            placeholder="Örn: İbrahim Coşkun"
+                            className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-semibold"
+                          />
+                        </div>
+                      </div>
 
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider">
+                            T.C. Kimlik Numarası (Zorunlu) *
+                          </label>
+                          {resolvedUser?.tcNo ? (
+                            <span className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded">
+                              ✓ Profilde Kayıtlı
+                            </span>
+                          ) : (
+                            <span className="text-[9px] font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-1.5 py-0.5 rounded">
+                              ! Fatura İçin Zorunlu
+                            </span>
+                          )}
+                        </div>
+                        <div className="relative">
+                          <Hash className="absolute left-3.5 top-3.5 text-slate-400" size={16} />
+                          <input
+                            type="text"
+                            required
+                            maxLength={11}
+                            value={tcNo}
+                            onChange={(e) => setTcNo(e.target.value.replace(/\D/g, '').slice(0, 11))}
+                            placeholder="11 Haneli T.C. Kimlik Numaranız"
+                            className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-semibold font-mono"
+                          />
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    /* ================= KURUMSAL FATURA ALANLARI ================= */
+                    <>
+                      <div>
+                        <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider block mb-1">
+                          Ticari Şirket Unvanı *
+                        </label>
+                        <div className="relative">
+                          <Building2 className="absolute left-3.5 top-3.5 text-slate-400" size={16} />
+                          <input
+                            type="text"
+                            required
+                            value={companyName}
+                            onChange={(e) => setCompanyName(e.target.value)}
+                            placeholder="Örn: ABC İş Sağlığı ve Güvenliği Hizmetleri Ltd. Şti."
+                            className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-semibold"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider block mb-1">
+                            Vergi Numarası (VKN) *
+                          </label>
+                          <div className="relative">
+                            <Hash className="absolute left-3.5 top-3.5 text-slate-400" size={16} />
+                            <input
+                              type="text"
+                              required
+                              maxLength={11}
+                              value={taxNumber}
+                              onChange={(e) => setTaxNumber(e.target.value.replace(/\D/g, '').slice(0, 11))}
+                              placeholder="10 Haneli Vergi No"
+                              className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-semibold font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider block mb-1">
+                            Vergi Dairesi *
+                          </label>
+                          <div className="relative">
+                            <Building className="absolute left-3.5 top-3.5 text-slate-400" size={16} />
+                            <input
+                              type="text"
+                              required
+                              value={taxOffice}
+                              onChange={(e) => setTaxOffice(e.target.value)}
+                              placeholder="Örn: Beşiktaş V.D."
+                              className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-semibold"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {/* ================= ORTAK İLETİŞİM VE ADRES ALANLARI ================= */}
                   <div>
-                    <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider block mb-1">E-Posta Adresi</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider">
+                        E-Posta Adresi (Fatura ve Lisans İletimi) *
+                      </label>
+                      {resolvedUser?.isEmailVerified ? (
+                        <span className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded">
+                          ✓ Doğrulanmış Hesap
+                        </span>
+                      ) : (resolvedUser?.email || email) ? (
+                        <span className="text-[9px] font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 px-1.5 py-0.5 rounded">
+                          ✓ Kayıtlı E-Posta
+                        </span>
+                      ) : (
+                        <span className="text-[9px] font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-1.5 py-0.5 rounded">
+                          ! Zorunlu
+                        </span>
+                      )}
+                    </div>
                     <div className="relative">
                       <Mail className="absolute left-3.5 top-3.5 text-slate-400" size={16} />
                       <input
@@ -547,14 +1001,27 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
                         required
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
-                        placeholder="Örn: ibrahim@isgpro.com"
+                        placeholder="Örn: iletisim@sirketiniz.com"
                         className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-semibold"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider block mb-1">Telefon Numarası</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider">
+                        Telefon Numarası (PayTR Doğrulama) *
+                      </label>
+                      {resolvedUser?.phone ? (
+                        <span className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded">
+                          ✓ Profilinizden Alındı
+                        </span>
+                      ) : (
+                        <span className="text-[9px] font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-1.5 py-0.5 rounded">
+                          ! Zorunlu
+                        </span>
+                      )}
+                    </div>
                     <div className="relative">
                       <Phone className="absolute left-3.5 top-3.5 text-slate-400" size={16} />
                       <input
@@ -562,14 +1029,57 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
                         required
                         value={phone}
                         onChange={(e) => setPhone(e.target.value)}
-                        placeholder="Örn: 05555555555"
+                        placeholder="05XXXXXXXXX"
                         className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-semibold font-mono"
                       />
                     </div>
                   </div>
 
+                  {/* İL VE İLÇE (YAN YANA) */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider block mb-1">
+                        İl (Şehir) *
+                      </label>
+                      <div className="relative">
+                        <MapPin className="absolute left-3.5 top-3.5 text-slate-400" size={16} />
+                        <select
+                          required
+                          value={city}
+                          onChange={(e) => setCity(e.target.value)}
+                          className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-semibold cursor-pointer appearance-none"
+                        >
+                          {TURKEY_PROVINCES.map((p) => (
+                            <option key={p} value={p}>
+                              {p}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider block mb-1">
+                        İlçe *
+                      </label>
+                      <div className="relative">
+                        <MapPin className="absolute left-3.5 top-3.5 text-slate-400" size={16} />
+                        <input
+                          type="text"
+                          required
+                          value={district}
+                          onChange={(e) => setDistrict(e.target.value)}
+                          placeholder="Örn: Kadıköy / Çankaya"
+                          className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-semibold"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
                   <div>
-                    <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider block mb-1">Fatura Adresi</label>
+                    <label className="text-[10px] font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider block mb-1">
+                      Açık Fatura Adresi (Cadde, Mahalle, Kapı No) *
+                    </label>
                     <div className="relative">
                       <MapPin className="absolute left-3.5 top-3.5 text-slate-400" size={16} />
                       <input
@@ -577,7 +1087,7 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel }: Checkout
                         required
                         value={address}
                         onChange={(e) => setAddress(e.target.value)}
-                        placeholder="Örn: Kadıköy, İstanbul"
+                        placeholder="Örn: Atatürk Mah. İnönü Cad. No: 12 D: 4"
                         className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-semibold"
                       />
                     </div>

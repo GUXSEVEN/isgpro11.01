@@ -1,7 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 
-const isgProjesiDir = 'C:\\Users\\İBRAHİM\\Desktop\\isg-projesi - Copy';
+const candidateDirs = [
+  'C:\\Users\\İBRAHİM\\Desktop\\isg-projesi - mobile',
+  'C:\\Users\\İBRAHİM\\Desktop\\isg-projesi - Copy'
+];
+const isgProjesiDir = candidateDirs.find(d => fs.existsSync(d)) || candidateDirs[0];
 const appJsxPath = path.join(isgProjesiDir, 'src', 'App.jsx');
 
 console.log('>>> Starting safe user-isolation patch for isg-projesi...');

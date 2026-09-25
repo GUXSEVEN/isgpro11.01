@@ -40,7 +40,7 @@ export interface User {
   licenseKey?: string | null;
   licensePurchasedAt?: string | null;
   licenseExpiresAt?: string | null;
-  licenseType?: 'monthly' | 'yearly' | 'trial' | 'demo' | null;
+  licenseType?: 'monthly' | 'yearly' | 'trial' | 'demo' | 'test' | null;
   isEmailVerified?: boolean;
   emailVerifiedAt?: string | null;
   hasAcceptedLegalTerms?: boolean;
@@ -119,7 +119,7 @@ export interface ContactMessage {
 }
 
 export interface Plan {
-  id: 'monthly' | 'yearly';
+  id: 'monthly' | 'yearly' | 'test';
   name: string;
   price: number;
   period: string;
