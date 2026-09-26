@@ -35,7 +35,7 @@ import { TURKEY_PROVINCES } from '../data/provinces';
 import { decryptUser } from '../lib/crypto';
 
 interface CheckoutProps {
-  planId: 'monthly' | 'yearly' | 'test';
+  planId: 'monthly' | 'yearly';
   onSubmitSuccess: (licenseKey: string, checkoutMeta?: any) => void;
   onCancel: () => void;
   currentUser?: any;
@@ -183,10 +183,9 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel, currentUse
   const [loadingMsg, setLoadingMsg] = useState('Siparişiniz işleniyor...');
   const [paytrErrorMsg, setPaytrErrorMsg] = useState<string>('');
 
-  const [selectedPlanId, setSelectedPlanId] = useState<'monthly' | 'yearly' | 'test'>(planId || 'yearly');
+  const [selectedPlanId, setSelectedPlanId] = useState<'monthly' | 'yearly'>(planId === 'monthly' ? 'monthly' : 'yearly');
 
   const plansMeta = {
-    test: { name: '1 TL Canlı Test Lisansı', price: '₺1', rawPrice: '1.00', label: ' / tek seferlik (Canlı Test)' },
     monthly: { name: 'Aylık Plan', price: '₺299', rawPrice: '299.00', label: '/ Ay' },
     yearly: { name: 'Yıllık Plan', price: '₺2.990', rawPrice: '2990.00', label: '/ Yıl (En İyi Teklif)' }
   };
@@ -228,41 +227,9 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel, currentUse
           price: activePlan.price,
           userSignature: activeSig
         };
-
-        // Arka planda fatura bildirim e-postasını infoisgpro@gmail.com'a ilet
-        // Önce production sunucusuna dene, olmassa relative URL ile fallback yap
-        const billingPayload = JSON.stringify({
-          orderId: checkoutMeta.orderId,
-          planName: activePlan.name,
-          price: activePlan.price,
-          billingType,
-          customerName: targetDisplayName,
-          customerEmail: email.trim(),
-          customerPhone: phone.trim(),
-          customerAddress: fullAddress,
-          city: city.trim(),
-          district: district.trim(),
-          tcNo: billingType === 'individual' ? tcNo.trim() : '',
-          companyName: billingType === 'corporate' ? companyName.trim() : '',
-          taxNumber: billingType === 'corporate' ? taxNumber.trim() : '',
-          taxOffice: billingType === 'corporate' ? taxOffice.trim() : '',
-          licenseKey: lic || generatedLicense,
-          customerSignature: activeSig
-        });
-        const billingHeaders = { 'Content-Type': 'application/json' };
-        fetch('/api/send-email-billing', {
-          method: 'POST',
-          headers: billingHeaders,
-          body: billingPayload
-        }).then(r => r.json()).then(d => {
-          console.log('[Checkout Billing] Sent successfully via /api/send-email-billing:', d);
-        }).catch(e => {
-          console.warn('[Checkout Billing] Failed to send billing email:', e);
-        });
-
         setTimeout(() => {
           onSubmitSuccess(lic || generatedLicense, checkoutMeta);
-        }, 3500);
+        }, 1500);
       } else if (event.data.type === 'PAYTR_FAIL') {
         setPaytrErrorMsg('Ödeme işlemi onaylanmadı veya kullanıcı tarafından iptal edildi.');
         setStep('paytr_error');
@@ -485,9 +452,9 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel, currentUse
           localStorage.setItem('isg_user_signature', activeSig);
         } catch (_) {}
 
-        const tempLicenseKey = generateLicenseKey(selectedPlanId === 'test' ? 'demo' : (selectedPlanId as any));
+        const tempLicenseKey = generateLicenseKey(selectedPlanId as any);
         try {
-          await registerGeneratedLicense(tempLicenseKey, selectedPlanId === 'test' ? 'demo' : (selectedPlanId as any), email);
+          await registerGeneratedLicense(tempLicenseKey, selectedPlanId as any, email);
         } catch (regErr) {
           console.warn('Could not auto-register temp license:', regErr);
         }
@@ -729,7 +696,7 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel, currentUse
                   <p className="text-xs text-slate-500 dark:text-slate-400 font-semibold">Seçtiğiniz plana ilişkin ayrıntılar ve PayTR güvenli fatura formu.</p>
                 </div>
 
-                {/* Plan Seçim Butonları (1 TL Test / Aylık / Yıllık) */}
+                {/* Plan Seçim Butonları (Aylık / Yıllık) */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
@@ -739,47 +706,33 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel, currentUse
                       Tıklayarak değiştirebilirsiniz
                     </span>
                   </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedPlanId('test')}
-                      className={`p-2.5 rounded-xl border-2 text-left transition-all cursor-pointer ${
-                        selectedPlanId === 'test'
-                          ? 'border-emerald-600 bg-emerald-50/80 dark:bg-emerald-950/50 ring-2 ring-emerald-500/20'
-                          : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300'
-                      }`}
-                    >
-                      <div className="text-[9px] font-black text-emerald-600 uppercase">🧪 Canlı Test</div>
-                      <div className="text-xs font-black text-slate-900 dark:text-white mt-0.5">₺1</div>
-                      <div className="text-[9px] text-slate-400 font-bold">1 TL Çekim</div>
-                    </button>
-
+                  <div className="grid grid-cols-2 gap-3">
                     <button
                       type="button"
                       onClick={() => setSelectedPlanId('monthly')}
-                      className={`p-2.5 rounded-xl border-2 text-left transition-all cursor-pointer ${
+                      className={`p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${
                         selectedPlanId === 'monthly'
                           ? 'border-blue-600 bg-blue-50/80 dark:bg-blue-950/50 ring-2 ring-blue-500/20'
                           : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300'
                       }`}
                     >
-                      <div className="text-[9px] font-black text-blue-600 uppercase">⚡ Aylık</div>
-                      <div className="text-xs font-black text-slate-900 dark:text-white mt-0.5">₺299</div>
-                      <div className="text-[9px] text-slate-400 font-bold">/ Ay</div>
+                      <div className="text-[10px] font-black text-blue-600 uppercase">⚡ Aylık</div>
+                      <div className="text-sm font-black text-slate-900 dark:text-white mt-0.5">₺299</div>
+                      <div className="text-[10px] text-slate-400 font-bold">/ Ay</div>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => setSelectedPlanId('yearly')}
-                      className={`p-2.5 rounded-xl border-2 text-left transition-all cursor-pointer ${
+                      className={`p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${
                         selectedPlanId === 'yearly'
                           ? 'border-indigo-600 bg-indigo-50/80 dark:bg-indigo-950/50 ring-2 ring-indigo-500/20'
                           : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300'
                       }`}
                     >
-                      <div className="text-[9px] font-black text-indigo-600 uppercase">👑 Yıllık</div>
-                      <div className="text-xs font-black text-slate-900 dark:text-white mt-0.5">₺2.990</div>
-                      <div className="text-[9px] text-slate-400 font-bold">/ Yıl</div>
+                      <div className="text-[10px] font-black text-indigo-600 uppercase">👑 Yıllık</div>
+                      <div className="text-sm font-black text-slate-900 dark:text-white mt-0.5">₺2.990</div>
+                      <div className="text-[10px] text-slate-400 font-bold">/ Yıl</div>
                     </button>
                   </div>
                 </div>
@@ -789,7 +742,7 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel, currentUse
                     <div>
                       <h4 className="font-bold text-slate-900 dark:text-white text-sm">{activePlan.name}</h4>
                       <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 font-semibold">
-                        {selectedPlanId === 'test' ? 'PayTR gerçek kart çekim ve fatura doğrulama' : 'Sınırsız yapay zeka & rapor çıktıları'}
+                        Sınırsız yapay zeka & rapor çıktıları
                       </p>
                     </div>
                     <div className="text-right">

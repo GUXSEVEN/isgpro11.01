@@ -119,7 +119,7 @@ export interface ContactMessage {
 }
 
 export interface Plan {
-  id: 'monthly' | 'yearly' | 'test';
+  id: 'monthly' | 'yearly';
   name: string;
   price: number;
   period: string;

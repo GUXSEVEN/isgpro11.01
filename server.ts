@@ -966,16 +966,6 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
 
       if (isSuccess) {
         console.log(`[Google Apps Script REST 443 Success] Delivered via Google Cloud Webhook (${templateType}) to ${targetEmail}`);
-        // Dual delivery: Also trigger direct SMTP in background to guarantee instant arrival
-        if (smtpConfig.user && smtpConfig.pass) {
-          sendEmailWithGoogleFallback({
-            config: smtpConfig,
-            to: [targetEmail],
-            subject,
-            html,
-            replyTo
-          }).catch(e => console.warn('[SMTP Dual Delivery Backup Note]:', e?.message));
-        }
         return { 
           success: true, 
           method: 'google_apps_script_443', 
@@ -1675,98 +1665,17 @@ const getContractsApprovalHtmlTemplate = (options: {
           </td>
         </tr>
       </table>
-      <div style="color: #ffffff; font-size: 18px; font-weight: 600; opacity: 0.95; margin-top: 10px;">Onaylı Sözleşmeler & Fatura Bildirimi</div>
+      <div style="color: #ffffff; font-size: 18px; font-weight: 600; opacity: 0.95; margin-top: 10px;">Onaylı Sözleşmeler</div>
     </div>
     
     <div class="content">
       <div class="greeting">Sayın ${options.customerName || 'Değerli Müşterimiz'},</div>
       <p class="intro">
-        İSG Pro dijital yazılım lisansı satın alım işleminiz sırasında onaylamış olduğunuz <strong>Onaylı Sözleşmeler</strong>'in (Mesafeli Satış Sözleşmesi, Ön Bilgilendirme Formu, İptal ve İade Koşulları, Teslimat ve Kargo Koşulları, Gizlilik Politikası ve KVKK Aydınlatma Metni) onaylanmış nüshaları ile resmi <strong>Fatura Bilgileriniz</strong> aşağıda ve e-posta ekinde PDF formatında bilginize sunulmuştur.
+        İSG Pro dijital yazılım lisansı satın alım işleminiz sırasında onaylamış olduğunuz <strong>Onaylı Sözleşmeler</strong>'in (Mesafeli Satış Sözleşmesi, Ön Bilgilendirme Formu, İptal ve İade Koşulları, Teslimat ve Kargo Koşulları, Gizlilik Politikası ve KVKK Aydınlatma Metni) onaylanmış nüshaları aşağıda ve e-posta ekinde PDF formatında bilginize sunulmuştur.
       </p>
 
       <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px 14px; margin: 15px 0; font-size: 12px; color: #1e40af; line-height: 1.5;">
         <strong>🛡️ Hesap Güvenlik Kuralı:</strong> Platform güvenliği gereğince; <strong>aynı e-posta adresine bağlı olarak son 1 yıl içerisinde en fazla 2 adet doğrulanmış hesap açılabilmektedir</strong>.
-      </div>
-
-      <!-- 🧾 RESMİ FATURA VE MUHASEBE BİLGİLERİ (ONAYLI SÖZLEŞMELERLE BİRLİKTE & EŞ ZAMANLI) -->
-      <div style="background: linear-gradient(135deg, #f0fdf4 0%, #e0f2fe 100%); border: 2px solid #0284c7; border-radius: 12px; padding: 20px; margin-bottom: 24px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
-        <table border="0" cellpadding="0" cellspacing="0" style="width: 100%; border-bottom: 2px solid #bae6fd; padding-bottom: 8px; margin-bottom: 12px;">
-          <tr>
-            <td style="text-align: left; vertical-align: middle;">
-              <span style="font-size: 11px; font-weight: 800; color: #0284c7; text-transform: uppercase; letter-spacing: 1px; display: block;">MUHASEBE & FATURALANDIRMA DEPARTMANI İÇİN</span>
-              <span style="font-size: 16px; font-weight: 800; color: #0f172a; display: block; margin-top: 2px;">🧾 RESMİ FATURA VE YENİ SİPARİŞ BİLGİLERİ</span>
-            </td>
-            <td style="text-align: right; vertical-align: middle;">
-              <span style="background: ${options.billingType === 'corporate' || options.companyName ? '#4338ca' : '#15803d'}; color: #ffffff; font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 6px; text-transform: uppercase; display: inline-block;">
-                ${options.billingType === 'corporate' || options.companyName ? '🏢 KURUMSAL FATURA' : '👤 BİREYSEL FATURA'}
-              </span>
-            </td>
-          </tr>
-        </table>
-
-        <table class="details-table" border="0" cellpadding="0" cellspacing="0">
-          <tr>
-            <td class="label">Fatura Türü:</td>
-            <td class="value"><strong>${options.billingType === 'corporate' || options.companyName ? 'Kurumsal Fatura (Şirket / Tüzel Kişi)' : 'Bireysel Fatura (Şahıs)'}</strong></td>
-          </tr>
-          ${(options.billingType === 'corporate' || options.companyName) ? `
-          <tr>
-            <td class="label">Şirket / Ticari Unvan:</td>
-            <td class="value" style="color: #1e1b4b; font-weight: 800;">${options.companyName || options.customerName}</td>
-          </tr>
-          <tr>
-            <td class="label">Vergi Dairesi:</td>
-            <td class="value">${options.taxOffice || '-'}</td>
-          </tr>
-          <tr>
-            <td class="label">Vergi Kimlik No (VKN):</td>
-            <td class="value" style="font-family: monospace; font-size: 14px; font-weight: 800; color: #4338ca;">${options.taxNumber || '-'}</td>
-          </tr>
-          ` : `
-          <tr>
-            <td class="label">Fatura Sahibi (Ad Soyad):</td>
-            <td class="value"><strong>${options.customerName}</strong></td>
-          </tr>
-          <tr>
-            <td class="label">T.C. Kimlik Numarası:</td>
-            <td class="value" style="font-family: monospace; font-size: 14px; font-weight: 800; color: #4338ca;">${options.tcNo || '-'}</td>
-          </tr>
-          `}
-          <tr>
-            <td class="label">Fatura / Tebligat Adresi:</td>
-            <td class="value" style="word-break: break-word;">${options.customerAddress || '-'}</td>
-          </tr>
-          <tr>
-            <td class="label">İlçe / İl:</td>
-            <td class="value"><strong>${[options.district, options.city].filter(Boolean).join(' / ') || '-'}</strong></td>
-          </tr>
-          <tr>
-            <td class="label">Fatura İletişim Telefonu:</td>
-            <td class="value">${options.customerPhone || '-'}</td>
-          </tr>
-          <tr>
-            <td class="label">Fatura Alıcı E-Postası:</td>
-            <td class="value"><a href="mailto:${options.customerEmail}" style="color: #0284c7; font-weight: 700; text-decoration: none;">${options.customerEmail}</a></td>
-          </tr>
-          ${options.licenseKey ? `
-          <tr>
-            <td class="label">Teslim Edilen Lisans:</td>
-            <td class="value" style="font-family: monospace; font-weight: 800; color: #15803d;">${options.licenseKey}</td>
-          </tr>
-          ` : ''}
-          <tr>
-            <td class="label">Fatura Tutarı:</td>
-            <td class="value"><strong style="color: #15803d; font-size: 15px;">${options.price} (KDV Dahil)</strong></td>
-          </tr>
-          <tr>
-            <td class="label">Tahsilat Durumu:</td>
-            <td class="value"><span style="background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 11px;">✅ ÖDENDİ (PayTR Sanal POS)</span></td>
-          </tr>
-        </table>
-        
-        <div style="margin-top: 14px; padding: 10px 14px; background: #ffffff; border-radius: 8px; border: 1px solid #bfdbfe; font-size: 11px; color: #1e40af; line-height: 1.4;">
-          📌 <strong>Muhasebe Departmanı Notu:</strong> Bu siparişin bedeli PayTR Sanal POS üzerinden eksiksiz tahsil edilmiştir. Müşterinin yukarıda beyan ettiği resmi fatura bilgilerine uygun olarak <strong>e-Arşiv / e-Fatura</strong> düzenlenmesi ve kesilen faturanın müşterinin kayıtlı e-posta adresine (<a href="mailto:${options.customerEmail}" style="color: #1d4ed8; font-weight: 700;">${options.customerEmail}</a>) iletilmesi rica olunur.
-        </div>
       </div>
 
       <div class="box">
@@ -3689,6 +3598,20 @@ app.post('/api/auth/admin-2fa/send-code', async (req: express.Request, res: expr
     cleanExpiredAdmin2FASessions();
     const adminEmail = 'infoisgpro@gmail.com';
 
+    // 15 saniye içinde zaten kod üretilmiş ve gönderilmişse, mükerrer mail atılmasını KESİNLİKLE engelle
+    const now = Date.now();
+    const last2FASendTime = (global as any).__last_admin_2fa_sent_time || 0;
+    const last2FAChallenge = (global as any).__last_admin_2fa_challenge_id;
+    if (now - last2FASendTime < 15000 && last2FAChallenge && admin2FASessions.has(last2FAChallenge)) {
+      console.log(`[Admin 2FA Rate-Limit 🛡️] 2FA kodu ${Math.round((now - last2FASendTime) / 1000)}s önce gönderildi. Mükerrer mail engellendi, mevcut aktif oturum döndürülüyor: ${last2FAChallenge}`);
+      return res.json({
+        success: true,
+        challengeId: last2FAChallenge,
+        message: `Yönetici güvenlik kodu ${adminEmail} adresine iletildi.`,
+        cached: true
+      });
+    }
+
     // 6 haneli yüksek güvenlikli rastgele nümerik kod üretimi
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const challengeId = crypto.randomUUID ? crypto.randomUUID() : `2fa_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
@@ -3702,6 +3625,9 @@ app.post('/api/auth/admin-2fa/send-code', async (req: express.Request, res: expr
       attempts: 0,
       verified: false
     });
+
+    (global as any).__last_admin_2fa_sent_time = now;
+    (global as any).__last_admin_2fa_challenge_id = challengeId;
 
     const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '';
     console.log(`[Admin 2FA Security] Generated 2FA code (${code}) for admin login. ChallengeId: ${challengeId}. Dispatching to: ${adminEmail}`);
@@ -3802,6 +3728,67 @@ app.all('/api/check-email-account-limit', async (req: express.Request, res: expr
   }
 });
 
+// ============================================================
+// GLOBAL EMAIL DEDUPLICATION REGISTRY
+// Her e-postanın (Lisans, Sözleşmeler, Fatura, Kayıt) KESİNLİKLE EN FAZLA 1 KEZ gitmesini garanti eder.
+// Çoklu sekmeler, webhook tekrarları veya istemci yönlendirmeleri asla mükerrer e-posta tetikleyemez.
+// ============================================================
+const emailDedupeMap = new Map<string, number>();
+const emailInFlightLocks = new Set<string>();
+const DEDUPE_TTL_MS = 60 * 60 * 1000; // 60 dakika mükerrerlik engeli
+
+function shouldSkipDuplicateEmail(keys: (string | undefined | null)[]): boolean {
+  const now = Date.now();
+  const validKeys = keys
+    .filter((k): k is string => !!k && k.trim().length >= 3)
+    .map(k => k.trim().toLowerCase());
+
+  for (const k of validKeys) {
+    if (emailInFlightLocks.has(k)) {
+      return true;
+    }
+  }
+
+  for (const k of validKeys) {
+    const lastSent = emailDedupeMap.get(k);
+    if (lastSent && (now - lastSent < DEDUPE_TTL_MS)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function lockEmailKeys(keys: (string | undefined | null)[]): () => void {
+  const now = Date.now();
+  const validKeys = keys
+    .filter((k): k is string => !!k && k.trim().length >= 3)
+    .map(k => k.trim().toLowerCase());
+
+  for (const k of validKeys) {
+    emailInFlightLocks.add(k);
+    emailDedupeMap.set(k, now);
+  }
+
+  return () => {
+    for (const k of validKeys) {
+      emailInFlightLocks.delete(k);
+    }
+  };
+}
+
+const formatDateTR = (dateVal?: string) => {
+  if (!dateVal) return '—';
+  try {
+    return new Date(dateVal).toLocaleDateString('tr-TR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    });
+  } catch {
+    return '—';
+  }
+};
+
 // Endpoint: Kullanıcı E-Posta Doğrulamasını Başarıyla Tamamladığında Hem Kullanıcıya Hem Admin'e Teyit E-postası Gönderimi
 app.post('/api/send-email-verified-success', async (req: express.Request, res: express.Response) => {
   const { email, name, username } = req.body;
@@ -3812,6 +3799,12 @@ app.post('/api/send-email-verified-success', async (req: express.Request, res: e
   const cleanEmail = email.trim().toLowerCase();
   const cleanName = name || username || 'Değerli Kullanıcı';
   const cleanUsername = username || '';
+
+  const dedupeKeys = [`verified_success_${cleanEmail}`];
+  if (shouldSkipDuplicateEmail(dedupeKeys)) {
+    console.log(`[Email Verified Deduplication ✅] Teyit e-postaları zaten iletildi: ${cleanEmail}. Mükerrer gönderim engellendi.`);
+    return res.json({ success: true, alreadySent: true, message: 'Doğrulama teyit e-postası zaten iletildi.' });
+  }
 
   // Veritabanından yıllık en fazla 2 doğrulanmış hesap limitini teyit et
   const limitCheck = await checkEmailAccountLimit(cleanEmail, cleanUsername);
@@ -3824,6 +3817,8 @@ app.post('/api/send-email-verified-success', async (req: express.Request, res: e
       limit: limitCheck.limit
     });
   }
+
+  const releaseLock = lockEmailKeys(dedupeKeys);
 
   console.log(`[Email Verified Success] Dispatching verification confirmations for: ${maskEmail(cleanEmail)}`);
 
@@ -3864,234 +3859,440 @@ app.post('/api/send-email-verified-success', async (req: express.Request, res: e
       error: 'Doğrulama bildirim e-postası gönderilirken hata oluştu.',
       details: error.message
     });
+  } finally {
+    releaseLock();
   }
 });
 
-// Proxy endpoint for License email
+// 1. LİSANS E-POSTASI MERKEZİ TEKİL GÖNDERİM FONKSİYONU
+interface DispatchLicenseOptions {
+  email: string;
+  name?: string;
+  licenseKey: string;
+  planName?: string;
+  planType?: string;
+  price?: string;
+  purchaseDate?: string;
+  expiryDate?: string;
+  orderId?: string;
+}
+
+async function dispatchLicenseEmail(params: DispatchLicenseOptions): Promise<{ success: boolean; alreadySent?: boolean; message?: string }> {
+  const cleanEmail = (params.email || '').trim().toLowerCase();
+  const rawLicense = (params.licenseKey || '').trim();
+  const normLicense = rawLicense.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+  const rawOrderId = (params.orderId || '').trim();
+  const rawDigits = rawOrderId.replace(/\D/g, '');
+  const normOrderId = rawOrderId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+
+  if (!cleanEmail || !normLicense) {
+    return { success: false, message: 'E-posta ve lisans anahtarı zorunludur.' };
+  }
+
+  const dedupeKeys = [
+    normLicense.length >= 6 ? `lic_key_${normLicense}` : null,
+    normOrderId.length >= 4 ? `lic_oid_${normOrderId}` : null,
+    rawDigits.length >= 6 ? `lic_num_${rawDigits}` : null,
+    `lic_mail_${cleanEmail}`
+  ];
+
+  if (shouldSkipDuplicateEmail(dedupeKeys)) {
+    console.log(`[License Deduplication ✅] Lisans e-postası zaten iletildi: ${maskEmail(cleanEmail)} (lic: ${rawLicense || 'N/A'}, oid: ${rawOrderId || 'N/A'}). Mükerrer gönderim engellendi.`);
+    return { success: true, alreadySent: true, message: 'Lisans e-postası zaten iletildi.' };
+  }
+
+  const releaseLock = lockEmailKeys(dedupeKeys);
+
+  try {
+    const cleanName = params.name || cleanEmail;
+    const cleanPlan = params.planName || 'İSG Pro Lisans Paketi';
+    const cleanType = params.planType || 'Premium';
+    const cleanPrice = params.price || '₺2.990,00';
+    const formattedPurchaseDate = formatDateTR(params.purchaseDate || new Date().toISOString());
+    const formattedExpiryDate = formatDateTR(params.expiryDate || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString());
+
+    console.log(`[License Dispatch] Sending License Key email to: ${maskEmail(cleanEmail)}, Plan: ${cleanPlan}`);
+
+    const htmlContent = getLicenseHtmlTemplate({
+      name: cleanName,
+      licenseKey: rawLicense,
+      planName: cleanPlan,
+      planType: cleanType,
+      price: cleanPrice,
+      purchaseDate: formattedPurchaseDate,
+      expiryDate: formattedExpiryDate
+    });
+
+    const smtpConfig = await getSMTPConfig();
+    const resSMTP = await sendEmailWithGoogleFallback({
+      config: smtpConfig,
+      to: cleanEmail,
+      subject: `Tebrikler, İSG Pro Lisansınız Hazır!`,
+      html: htmlContent
+    });
+
+    if (resSMTP.success) {
+      console.log(`[SMTP License ✅] Lisans e-postası başarıyla gönderildi: ${maskEmail(cleanEmail)}`);
+      return { success: true, message: 'Lisans e-postası başarıyla gönderildi.' };
+    }
+
+    console.log(`[EmailJS License Fallback] Dispatching EmailJS license email to: ${maskEmail(cleanEmail)}`);
+    await sendEmailViaEmailJS(EMAILJS_LICENSE_TEMPLATE_ID, {
+      to_email: cleanEmail,
+      email: cleanEmail,
+      to: cleanEmail,
+      user_name: cleanName,
+      licenseKey: rawLicense,
+      plan_name: cleanPlan,
+      plan_type: cleanType,
+      price: cleanPrice,
+      licensePurchasedAt: formattedPurchaseDate,
+      licenseExpiresAt: formattedExpiryDate
+    });
+
+    return { success: true, message: 'Lisans e-postası başarıyla gönderildi.' };
+  } finally {
+    releaseLock();
+  }
+}
+
+// Proxy endpoint for License email (güvenli tekil gönderim korumalı)
 app.post('/api/send-email-license', async (req, res) => {
-  const { email, name, licenseKey, planName, planType, price, purchaseDate, expiryDate } = req.body;
+  const { email, name, licenseKey, planName, planType, price, purchaseDate, expiryDate, orderId } = req.body;
   if (!email || !licenseKey) {
     return res.status(400).json({ error: 'Email and licenseKey are required.' });
   }
 
-  console.log(`[Email Dispatch] Sending License Key email to: ${maskEmail(email)}, Plan: ${planName}`);
-
-  const formatDateTR = (dateVal: string) => {
-    if (!dateVal) return '—';
-    try {
-      return new Date(dateVal).toLocaleDateString('tr-TR', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric'
-      });
-    } catch {
-      return '—';
-    }
-  };
-
-  const formattedPurchaseDate = formatDateTR(purchaseDate);
-  const formattedExpiryDate = formatDateTR(expiryDate);
-  const htmlContent = getLicenseHtmlTemplate({
-    name: name || email,
+  const result = await dispatchLicenseEmail({
+    email,
+    name,
     licenseKey,
     planName,
     planType,
     price,
-    purchaseDate: formattedPurchaseDate,
-    expiryDate: formattedExpiryDate
+    purchaseDate,
+    expiryDate,
+    orderId
   });
 
-  const smtpConfig = await getSMTPConfig();
-  const resSMTP = await sendEmailWithGoogleFallback({
-    config: smtpConfig,
-    to: email,
-    subject: `Tebrikler, İSG Pro Lisansınız Hazır!`,
-    html: htmlContent
-  });
-
-  if (resSMTP.success) {
-    console.log(`[SMTP License] Lisans e-postası başarıyla gönderildi: ${maskEmail(email)}`);
-    return res.json({ success: true, method: 'google_smtp' });
-  }
-
-  console.log(`[EmailJS License] Dispatching EmailJS license email to: ${maskEmail(email)}`);
-  await sendEmailViaEmailJS(EMAILJS_LICENSE_TEMPLATE_ID, {
-    to_email: email,
-    email: email,
-    to: email,
-    user_name: name || email,
-    licenseKey: licenseKey,
-    plan_name: planName,
-    plan_type: planType,
-    price: price,
-    licensePurchasedAt: formattedPurchaseDate,
-    licenseExpiresAt: formattedExpiryDate
-  });
-
-  return res.json({ success: true, method: 'emailjs_or_queue' });
+  return res.json(result);
 });
 
-// Memory deduplication map to prevent double-dispatch of contracts
-const sentContractsMap = new Map<string, number>();
-const sentBillingNotificationsMap = new Map<string, number>();
+// 2. RESMİ FATURA BİLDİRİMİ MERKEZİ TEKİL GÖNDERİM FONKSİYONU (infoisgpro@gmail.com)
+interface DispatchBillingOptions {
+  orderId: string;
+  planName?: string;
+  price?: string;
+  purchaseDate?: string;
+  billingType?: string;
+  customerName?: string;
+  customerEmail?: string;
+  customerPhone?: string;
+  customerAddress?: string;
+  city?: string;
+  district?: string;
+  tcNo?: string;
+  companyName?: string;
+  taxNumber?: string;
+  taxOffice?: string;
+  licenseKey?: string;
+  customerSignature?: string;
+}
 
-// Shared handler function for approved contracts PDF sending
+async function dispatchBillingEmail(params: DispatchBillingOptions): Promise<{ success: boolean; alreadySent?: boolean; message?: string }> {
+  const rawOrderId = (params.orderId || '').trim();
+  const rawDigits = rawOrderId.replace(/\D/g, '');
+  const normOrderId = rawOrderId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+  const rawLicense = (params.licenseKey || '').trim();
+  const normLicense = rawLicense.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+  const cleanCustomerEmail = (params.customerEmail || '').trim().toLowerCase();
+  const rawPhone = (params.customerPhone || '').replace(/\D/g, '');
+
+  const dedupeKeys = [
+    normOrderId.length >= 4 ? `billing_oid_${normOrderId}` : null,
+    rawDigits.length >= 6 ? `billing_num_${rawDigits}` : null,
+    normLicense.length >= 6 ? `billing_lic_${normLicense}` : null,
+    cleanCustomerEmail && cleanCustomerEmail.includes('@') ? `billing_mail_${cleanCustomerEmail}` : null,
+    rawPhone.length >= 10 ? `billing_phone_${rawPhone}` : null
+  ];
+
+  if (shouldSkipDuplicateEmail(dedupeKeys)) {
+    console.log(`[Billing Deduplication ✅] Fatura bildirimi zaten admin adresine iletildi: oid: ${rawOrderId || 'N/A'}. Mükerrer gönderim engellendi.`);
+    return { success: true, alreadySent: true, message: 'Fatura bildirimi zaten iletildi.' };
+  }
+
+  // Ekstra güvenlik: Kısa süre önce aynı sipariş veya müşteri için fatura maili tetiklendiyse mükerrerliği engelle
+  const now = Date.now();
+  const lastBillingTime = (global as any).__last_billing_sent_time || 0;
+  const lastBillingOid = (global as any).__last_billing_order_id || '';
+  const lastBillingEmail = (global as any).__last_billing_email || '';
+
+  const isRecentDuplicate = (now - lastBillingTime < 25000) && (
+    (lastBillingOid && (lastBillingOid === normOrderId || (rawDigits.length >= 6 && lastBillingOid.includes(rawDigits)))) ||
+    (cleanCustomerEmail && lastBillingEmail && cleanCustomerEmail === lastBillingEmail) ||
+    (now - lastBillingTime < 8000)
+  );
+
+  if (isRecentDuplicate) {
+    console.log(`[Billing Throttle 🛡️] Fatura bildirimi kısa süre önce zaten gönderildi (${Math.round((now - lastBillingTime) / 1000)}s önce). Mükerrer gönderim engellendi.`);
+    return { success: true, alreadySent: true, message: 'Fatura bildirimi zaten başarıyla iletildi.' };
+  }
+
+  (global as any).__last_billing_sent_time = now;
+  (global as any).__last_billing_order_id = normOrderId;
+  (global as any).__last_billing_email = cleanCustomerEmail;
+
+  const releaseLock = lockEmailKeys(dedupeKeys);
+
+  try {
+    const displayOrderId = rawOrderId || `ISG-${Date.now().toString().slice(-6)}`;
+    const cleanPlan = params.planName || 'İSG Pro Lisans Paketi';
+    const cleanPrice = params.price || '₺2.990,00';
+    const cleanDate = params.purchaseDate || new Date().toLocaleDateString('tr-TR');
+    const finalBillingType = params.billingType || (params.companyName ? 'corporate' : 'individual');
+    const finalName = params.companyName || params.customerName || 'Değerli Müşterimiz';
+
+    const billingHtml = getBillingNotificationHtmlTemplate({
+      orderId: displayOrderId,
+      planName: cleanPlan,
+      price: cleanPrice,
+      purchaseDate: cleanDate,
+      billingType: finalBillingType,
+      customerName: finalName,
+      customerEmail: cleanCustomerEmail || 'infoisgpro@gmail.com',
+      customerPhone: params.customerPhone,
+      customerAddress: params.customerAddress,
+      city: params.city,
+      district: params.district,
+      tcNo: params.tcNo,
+      companyName: params.companyName,
+      taxNumber: params.taxNumber,
+      taxOffice: params.taxOffice,
+      licenseKey: rawLicense,
+      customerSignature: params.customerSignature
+    });
+
+    const billingSubject = `🧾 [Yeni Sipariş & Fatura Bilgisi] ${finalName} (${displayOrderId})`;
+
+    const smtpConfig = await getSMTPConfig();
+    const result = await sendEmailWithGoogleFallback({
+      config: { ...smtpConfig, fromName: 'İSG Pro Fatura & Muhasebe' },
+      to: 'infoisgpro@gmail.com',
+      replyTo: cleanCustomerEmail || undefined,
+      subject: billingSubject,
+      html: billingHtml
+    });
+
+    console.log(`[Billing Dispatch ✅] Fatura e-postası infoisgpro@gmail.com'a ulaştırıldı | ${displayOrderId} | Başarı: ${result.success}`);
+    return { success: true, message: 'Fatura bilgileri admin e-postasına iletildi.' };
+  } finally {
+    releaseLock();
+  }
+}
+
+// 3. 6 PDF ONAYLI SÖZLEŞMELER MERKEZİ TEKİL GÖNDERİM FONKSİYONU
+interface DispatchContractsOptions {
+  email: string;
+  name?: string;
+  planName?: string;
+  price?: string;
+  orderId?: string;
+  purchaseDate?: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+  district?: string;
+  tcNo?: string;
+  companyName?: string;
+  taxNumber?: string;
+  taxOffice?: string;
+  licenseKey?: string;
+  userSignature?: string;
+  customerSignature?: string;
+  sellerSignature?: string;
+  billingType?: string;
+}
+
+/**
+ * 6 PDF Onaylı Sözleşmeleri Merkezi Olarak TEK BİR KEZ Gönderen Fonksiyon.
+ * Kullanıcıya ve infoisgpro@gmail.com'a aynı PDF'lerin mükerrer olarak iki kez gitmesini KESİNLİKLE engeller.
+ */
+async function dispatchContractsEmail(params: DispatchContractsOptions): Promise<{ success: boolean; alreadySent?: boolean; message?: string }> {
+  const cleanEmail = (params.email || '').trim().toLowerCase();
+  if (!cleanEmail || !cleanEmail.includes('@')) {
+    return { success: false, message: 'Geçersiz e-posta adresi.' };
+  }
+
+  const rawOrderId = (params.orderId || '').trim();
+  const rawDigits = rawOrderId.replace(/\D/g, '');
+  const normOrderId = rawOrderId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+  const rawLicense = (params.licenseKey || '').trim();
+  const normLicense = rawLicense.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+
+  const dedupeKeys = [
+    normOrderId.length >= 4 ? `contracts_oid_${normOrderId}` : null,
+    rawDigits.length >= 6 ? `contracts_num_${rawDigits}` : null,
+    normLicense.length >= 6 ? `contracts_lic_${normLicense}` : null,
+    `contracts_mail_${cleanEmail}`
+  ];
+
+  if (shouldSkipDuplicateEmail(dedupeKeys)) {
+    console.log(`[Contracts Deduplication ✅] 6 PDF onaylı sözleşmeler zaten iletildi: ${maskEmail(cleanEmail)} (oid: ${rawOrderId || 'N/A'}, lic: ${rawLicense || 'N/A'}). Mükerrer gönderim engellendi.`);
+    return { success: true, alreadySent: true, message: 'Onaylı sözleşme nüshaları zaten başarıyla iletildi.' };
+  }
+
+  // Ekstra güvenlik: Son 25 saniye içinde aynı sipariş veya e-posta için sözleşme iletildiyse engelle
+  const contractsNow = Date.now();
+  const lastContractsTime = (global as any).__last_contracts_sent_time || 0;
+  const lastContractsOid = (global as any).__last_contracts_order_id || '';
+  const lastContractsEmail = (global as any).__last_contracts_email || '';
+
+  const isRecentContractsDup = (contractsNow - lastContractsTime < 25000) && (
+    (lastContractsOid && (lastContractsOid === normOrderId || (rawDigits.length >= 6 && lastContractsOid.includes(rawDigits)))) ||
+    (cleanEmail && lastContractsEmail && cleanEmail === lastContractsEmail) ||
+    (contractsNow - lastContractsTime < 6000)
+  );
+
+  if (isRecentContractsDup) {
+    console.log(`[Contracts Throttle 🛡️] 6 PDF onaylı sözleşmeler kısa süre önce zaten gönderildi (${Math.round((contractsNow - lastContractsTime) / 1000)}s önce). Mükerrer gönderim engellendi.`);
+    return { success: true, alreadySent: true, message: 'Onaylı sözleşmeler zaten başarıyla iletildi.' };
+  }
+
+  (global as any).__last_contracts_sent_time = contractsNow;
+  (global as any).__last_contracts_order_id = normOrderId;
+  (global as any).__last_contracts_email = cleanEmail;
+
+  const releaseLock = lockEmailKeys(dedupeKeys);
+
+  try {
+    const cleanName = params.name || 'Değerli İSG Pro Kullanıcısı';
+    const cleanPlan = params.planName || 'Pro Lisans Paketi';
+    const cleanPrice = params.price || '₺2.990,00';
+    const displayOrderId = rawOrderId || `ISG-${Date.now().toString().slice(-6)}`;
+    const cleanDate = params.purchaseDate || new Date().toLocaleString('tr-TR');
+
+    const orderInDb = paytrOrders[displayOrderId] || paytrOrders[rawOrderId];
+    const activeSignature = params.userSignature || params.customerSignature || orderInDb?.userSignature || (signaturesByEmail[cleanEmail] || globalLatestCustomerSignature || '');
+    if (activeSignature) {
+      signaturesByEmail[cleanEmail] = activeSignature;
+      globalLatestCustomerSignature = activeSignature;
+    }
+
+    const finalBillingType = params.billingType || orderInDb?.billingType || (params.companyName || orderInDb?.companyName ? 'corporate' : 'individual');
+    const finalTcNo = params.tcNo || orderInDb?.tcNo || '';
+    const finalCompanyName = params.companyName || orderInDb?.companyName || '';
+    const finalTaxNumber = params.taxNumber || orderInDb?.taxNumber || '';
+    const finalTaxOffice = params.taxOffice || orderInDb?.taxOffice || '';
+    const finalCity = params.city || orderInDb?.city || '';
+    const finalDistrict = params.district || orderInDb?.district || '';
+    const finalPhone = params.phone || orderInDb?.phone || '';
+    const finalAddress = params.address || orderInDb?.address || '';
+    const finalLicenseKey = params.licenseKey || orderInDb?.licenseKey || '';
+
+    // HTML Şablonunu Hazırla (Sadece Onaylı Sözleşmeler)
+    const htmlContent = getContractsApprovalHtmlTemplate({
+      customerName: cleanName,
+      customerEmail: cleanEmail,
+      customerPhone: finalPhone,
+      customerAddress: finalAddress,
+      planName: cleanPlan,
+      price: cleanPrice,
+      orderId: displayOrderId,
+      approvalDate: cleanDate,
+      customerSignature: activeSignature
+    });
+
+    // 6 adet sözleşme PDF'ini oluştur
+    let pdfAttachments: Array<{ filename: string; content: Buffer; contentType: string }> = [];
+    try {
+      pdfAttachments = await generateAllContractsPDFAttachments({
+        customerName: cleanName,
+        customerEmail: cleanEmail,
+        customerPhone: finalPhone,
+        customerAddress: finalAddress,
+        orderId: displayOrderId,
+        planName: cleanPlan,
+        price: cleanPrice,
+        approvalDate: cleanDate,
+        customerSignature: activeSignature,
+        sellerSignature: params.sellerSignature || ''
+      });
+    } catch (pdfErr) {
+      console.error('[PDF Generation Error]:', pdfErr);
+    }
+
+    // Onaylı sözleşmeler SADECE 1 kullanıcı ve 1 infoisgpro@gmail.com adresine gider
+    const recipients = Array.from(new Set([cleanEmail, 'infoisgpro@gmail.com'])).filter(e => e && e.includes('@'));
+    const smtpConfig = await getSMTPConfig();
+
+    console.log(`[SMTP Dispatch] 6 PDF onaylı sözleşme nüshası tek seferde iletiliyor: ${recipients.join(', ')} | Sipariş: ${displayOrderId}`);
+
+    // SADECE onaylı sözleşmeleri gönder (Fatura bildirimi ASLA buradan tetiklenmez, bağımsızdır)
+    const resSMTPContracts = await sendEmailWithGoogleFallback({
+      config: smtpConfig,
+      to: recipients,
+      subject: `İSG Pro - Onaylanmış Mesafeli Satış ve Hizmet Sözleşmeleri (${displayOrderId})`,
+      html: htmlContent,
+      attachments: pdfAttachments
+    });
+
+    if (resSMTPContracts && resSMTPContracts.success) {
+      console.log(`[SMTP Contracts ✅] 6 PDF onaylı sözleşme tek seferde ${recipients.join(', ')} adresine ulaştırıldı | ${displayOrderId}`);
+      return { success: true, message: 'Onaylı sözleşmeler tek seferde başarıyla iletildi.' };
+    }
+
+    // Fallback to EmailJS for contracts notification if SMTP failed
+    await sendEmailViaEmailJS(EMAILJS_CONTACT_TEMPLATE_ID, {
+      name: cleanName,
+      from_name: cleanName,
+      email: cleanEmail,
+      from_email: cleanEmail,
+      reply_to: cleanEmail,
+      to_email: cleanEmail,
+      subject: `İSG Pro - Onaylanmış Sözleşmeniz (${displayOrderId})`,
+      message: `Sayın ${cleanName}, ${displayOrderId} numaralı siparişinize ait mesafeli satış ve hizmet sözleşmeleriniz dijital olarak imzalanmış ve onaylanmıştır.`,
+      project_name: "İSG Pro"
+    });
+
+    return { success: true, message: 'Sözleşme bildirimi kullanıcıya başarıyla iletildi.' };
+  } finally {
+    releaseLock();
+  }
+}
+
+// Alias for backward compatibility
+const dispatchContractsAndBillingEmail = dispatchContractsEmail;
+
+// Shared handler function for approved contracts PDF sending (Kullanıcıya ve infoisgpro@gmail.com'a birer kez)
 const handleSendContractsEmail = async (req: express.Request, res: express.Response) => {
-  const { email, name, planName, price, orderId, purchaseDate, phone, address, userSignature, customerSignature } = req.body;
+  const { email, name, planName, price, orderId, purchaseDate, phone, address, userSignature, customerSignature, billingType, tcNo, companyName, taxNumber, taxOffice, city, district, licenseKey, sellerSignature } = req.body;
   if (!email) {
     return res.status(400).json({ error: 'Kayıtlı e-posta adresi zorunludur.' });
   }
 
-  const cleanName = name || 'Değerli İSG Pro Kullanıcısı';
-  const cleanPlan = planName || 'Pro Lisans Paketi';
-  const cleanPrice = price || '₺2.990,00';
-  const cleanOrderId = orderId || `ISG-${Date.now().toString().slice(-6)}`;
-  const cleanDate = purchaseDate || new Date().toLocaleString('tr-TR');
-
-  // Prevent sending duplicate contract emails within a 5-minute window for the same orderId & email
-  const cacheKey = `${cleanOrderId}_${email.toLowerCase().trim()}`;
-  const lastSent = sentContractsMap.get(cacheKey);
-  if (lastSent && (Date.now() - lastSent < 15 * 1000)) {
-    console.log(`[Email Contracts Deduplication] Contracts already dispatched recently for order: ${cleanOrderId} (${maskEmail(email)}). Skipping.`);
-    return res.json({ success: true, message: 'Onaylı sözleşme nüshaları zaten başarıyla iletildi.' });
-  }
-  sentContractsMap.set(cacheKey, Date.now());
-
-  const orderInDb = paytrOrders[cleanOrderId];
-  const activeSignature = userSignature || customerSignature || orderInDb?.userSignature || (email ? signaturesByEmail[email.toLowerCase().trim()] : undefined) || globalLatestCustomerSignature;
-
-  if (activeSignature) {
-    if (email) signaturesByEmail[email.toLowerCase().trim()] = activeSignature;
-    globalLatestCustomerSignature = activeSignature;
-  }
-
-  // Onaylı sözleşmeler ile fatura bildirimini EŞ ZAMANLI (aynı anda, birebir aynı SMTP motoru ile) hazırla
-  const finalBillingType = req.body.billingType || orderInDb?.billingType || (req.body.companyName || orderInDb?.companyName ? 'corporate' : 'individual');
-  const finalTcNo = req.body.tcNo || orderInDb?.tcNo || '';
-  const finalCompanyName = req.body.companyName || orderInDb?.companyName || '';
-  const finalTaxNumber = req.body.taxNumber || orderInDb?.taxNumber || '';
-  const finalTaxOffice = req.body.taxOffice || orderInDb?.taxOffice || '';
-  const finalCity = req.body.city || orderInDb?.city || '';
-  const finalDistrict = req.body.district || orderInDb?.district || '';
-  const finalPhone = req.body.phone || orderInDb?.phone || phone || '';
-  const finalAddress = req.body.address || orderInDb?.address || address || '';
-  const finalLicenseKey = req.body.licenseKey || orderInDb?.licenseKey || '';
-
-  console.log(`[Email Contracts] Sending approved contracts PDF copy to: ${maskEmail(email)} and infoisgpro@gmail.com.`);
-
-  // Onaylı sözleşmeler şablonu (Fatura bilgileri doğrudan bu şablonun içine gömülerek %100 eş zamanlı ulaşması garanti edilir)
-  const htmlContent = getContractsApprovalHtmlTemplate({
-    customerName: cleanName,
-    customerEmail: email,
-    customerPhone: finalPhone,
-    customerAddress: finalAddress,
-    planName: cleanPlan,
-    price: cleanPrice,
-    orderId: cleanOrderId,
-    approvalDate: cleanDate,
-    billingType: finalBillingType,
-    tcNo: finalTcNo,
-    companyName: finalCompanyName,
-    taxNumber: finalTaxNumber,
-    taxOffice: finalTaxOffice,
-    city: finalCity,
-    district: finalDistrict,
-    licenseKey: finalLicenseKey,
-    customerSignature: activeSignature
+  const result = await dispatchContractsEmail({
+    email,
+    name,
+    planName,
+    price,
+    orderId,
+    purchaseDate,
+    phone,
+    address,
+    city,
+    district,
+    tcNo,
+    companyName,
+    taxNumber,
+    taxOffice,
+    licenseKey,
+    userSignature,
+    customerSignature,
+    sellerSignature,
+    billingType
   });
 
-  let pdfAttachments: Array<{ filename: string; content: Buffer; contentType: string }> = [];
-  try {
-    pdfAttachments = await generateAllContractsPDFAttachments({
-      customerName: cleanName,
-      customerEmail: email,
-      customerPhone: finalPhone,
-      customerAddress: finalAddress,
-      orderId: cleanOrderId,
-      planName: cleanPlan,
-      price: cleanPrice,
-      approvalDate: cleanDate,
-      customerSignature: activeSignature
-    });
-  } catch (pdfErr) {
-    console.error('[PDF Generation Error]:', pdfErr);
-  }
-
-  const recipients = Array.from(new Set([email, 'infoisgpro@gmail.com']));
-  const smtpConfig = await getSMTPConfig();
-
-  const billingHtml = getBillingNotificationHtmlTemplate({
-    orderId: cleanOrderId,
-    planName: cleanPlan,
-    price: cleanPrice,
-    purchaseDate: cleanDate,
-    billingType: finalBillingType,
-    customerName: cleanName,
-    customerEmail: email,
-    customerPhone: finalPhone,
-    customerAddress: finalAddress,
-    city: finalCity,
-    district: finalDistrict,
-    tcNo: finalTcNo,
-    companyName: finalCompanyName,
-    taxNumber: finalTaxNumber,
-    taxOffice: finalTaxOffice,
-    licenseKey: finalLicenseKey,
-    customerSignature: activeSignature
-  });
-
-  const billingSubject = `🧾 [Yeni Sipariş & Fatura Bilgisi] ${finalCompanyName || cleanName} (${cleanOrderId})`;
-
-  console.log(`[SMTP Contracts & Billing] Onaylı sözleşmeler ve fatura bildirimleri eş zamanlı gönderiliyor: ${cleanOrderId}`);
-
-  // EŞ ZAMANLI İLETİM: Her iki e-posta aynı anda Promise.all ile doğrudan Google SMTP (Port 465 SSL, IPv4) üzerinden çıkar
-  const [resSMTPContracts, resSMTPBilling] = await Promise.all([
-    sendEmailWithGoogleFallback({
-      config: smtpConfig,
-      to: recipients,
-      subject: `İSG Pro - Onaylanmış Mesafeli Satış ve Hizmet Sözleşmeleri (${cleanOrderId})`,
-      html: htmlContent,
-      attachments: pdfAttachments
-    }),
-    sendEmailWithGoogleFallback({
-      config: { ...smtpConfig, fromName: 'İSG Pro Fatura & Muhasebe' },
-      to: 'infoisgpro@gmail.com',
-      replyTo: email,
-      subject: billingSubject,
-      html: billingHtml
-    })
-  ]);
-
-  if (resSMTPBilling.success) {
-    console.log(`[SMTP Billing ✅] Fatura e-postası eş zamanlı olarak infoisgpro@gmail.com'a ulaştırıldı | ${cleanOrderId}`);
-  } else {
-    console.warn(`[SMTP Billing ⚠️] Fatura gönderimi uyarısı:`, resSMTPBilling.error);
-  }
-
-  if (resSMTPContracts.success) {
-    console.log(`[SMTP Contracts ✅] Sözleşme e-postası (PDF'li) ${recipients.join(', ')} adresine ulaştırıldı | ${cleanOrderId}`);
-    return res.json({ 
-      success: true, 
-      message: 'Onaylı sözleşme nüshaları ve fatura bilgileri eş zamanlı olarak başarıyla gönderildi.',
-      contractsDelivered: true,
-      billingDelivered: resSMTPBilling.success
-    });
-  }
-
-  // Fallback to EmailJS for contracts notification
-  await sendEmailViaEmailJS(EMAILJS_CONTACT_TEMPLATE_ID, {
-    name: cleanName,
-    from_name: cleanName,
-    email: email,
-    from_email: email,
-    reply_to: email,
-    to_email: email,
-    subject: `İSG Pro - Onaylanmış Sözleşmeniz (${cleanOrderId})`,
-    message: `Sayın ${cleanName}, ${cleanOrderId} numaralı siparişinize ait mesafeli satış ve hizmet sözleşmeleriniz dijital olarak imzalanmış ve onaylanmıştır.`,
-    project_name: "İSG Pro"
-  });
-
-  return res.json({ success: true, message: 'Sözleşme bildirimi kullanıcıya başarıyla iletildi.' });
+  return res.json(result);
 };
 
 // SADECE VE SADECE İLK KAYIT YASAL ONAY EKRANI İÇİN: 3 Sözleşme PDF'i ile iletilen özel servis
@@ -4103,88 +4304,106 @@ const handleSendRegistrationContracts = async (req: express.Request, res: expres
 
   const cleanCustomerEmail = email.trim().toLowerCase();
   const cleanOrderId = (orderId || `KAYIT-${Date.now().toString().slice(-6)}`).trim();
-  const cleanName = name || 'Değerli İSG Pro Kullanıcısı';
-  const cleanDate = purchaseDate || new Date().toLocaleString('tr-TR');
+  const normOrderId = cleanOrderId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
 
-  const activeSignature = userSignature || customerSignature || (email ? signaturesByEmail[cleanCustomerEmail] : undefined);
-  if (activeSignature && cleanCustomerEmail) {
-    signaturesByEmail[cleanCustomerEmail] = activeSignature;
+  const dedupeKeys = [
+    `reg_contracts_mail_${cleanCustomerEmail}`,
+    normOrderId.length >= 4 ? `reg_contracts_oid_${normOrderId}` : null
+  ];
+
+  if (shouldSkipDuplicateEmail(dedupeKeys)) {
+    console.log(`[Registration Contracts Deduplication ✅] 3 yasal metin PDF e-postası zaten iletildi: ${cleanCustomerEmail}. Mükerrer gönderim engellendi.`);
+    return res.json({ success: true, alreadySent: true, message: 'Yasal bilgilendirme nüshaları zaten başarıyla iletildi.' });
   }
 
-  console.log(`[Registration Contracts] Sending 3 legal contracts PDF copy to: ${cleanCustomerEmail} and infoisgpro@gmail.com. Signature present: ${!!activeSignature}`);
+  const releaseLock = lockEmailKeys(dedupeKeys);
 
-  const emailSubject = `✅ İSG Pro - Onaylanmış Yasal Bilgilendirme ve KVKK Metinleri (Ön Bilgilendirme, Gizlilik, KVKK) (${cleanOrderId})`;
-
-  const htmlContent = getRegistrationConsentHtmlTemplate({
-    customerName: cleanName,
-    customerEmail: cleanCustomerEmail,
-    customerPhone: phone,
-    customerAddress: address,
-    orderId: cleanOrderId,
-    approvalDate: cleanDate,
-    customerSignature: activeSignature
-  });
-
-  let pdfAttachments: Array<{ filename: string; content: Buffer; contentType: string }> = [];
   try {
-    pdfAttachments = await generateRegistrationConsentPDFAttachments({
+    const cleanName = name || 'Değerli İSG Pro Kullanıcısı';
+    const cleanDate = purchaseDate || new Date().toLocaleString('tr-TR');
+
+    const activeSignature = userSignature || customerSignature || (email ? signaturesByEmail[cleanCustomerEmail] : undefined);
+    if (activeSignature && cleanCustomerEmail) {
+      signaturesByEmail[cleanCustomerEmail] = activeSignature;
+    }
+
+    console.log(`[Registration Contracts] Sending 3 legal contracts PDF copy to: ${cleanCustomerEmail} and infoisgpro@gmail.com. Signature present: ${!!activeSignature}`);
+
+    const emailSubject = `✅ İSG Pro - Onaylanmış Yasal Bilgilendirme ve KVKK Metinleri (Ön Bilgilendirme, Gizlilik, KVKK) (${cleanOrderId})`;
+
+    const htmlContent = getRegistrationConsentHtmlTemplate({
       customerName: cleanName,
       customerEmail: cleanCustomerEmail,
       customerPhone: phone,
       customerAddress: address,
       orderId: cleanOrderId,
-      planName: 'İSG Pro Dijital Hizmet',
-      price: '0,00 TL',
       approvalDate: cleanDate,
       customerSignature: activeSignature
     });
-  } catch (pdfErr) {
-    console.error('[Registration PDF Generation Error]:', pdfErr);
-  }
 
-  const recipients = Array.from(new Set([cleanCustomerEmail, 'infoisgpro@gmail.com'])).filter(e => e && e.includes('@'));
-  const mailAttachments = pdfAttachments;
+    let pdfAttachments: Array<{ filename: string; content: Buffer; contentType: string }> = [];
+    try {
+      pdfAttachments = await generateRegistrationConsentPDFAttachments({
+        customerName: cleanName,
+        customerEmail: cleanCustomerEmail,
+        customerPhone: phone,
+        customerAddress: address,
+        orderId: cleanOrderId,
+        planName: 'İSG Pro Dijital Hizmet',
+        price: '0,00 TL',
+        approvalDate: cleanDate,
+        customerSignature: activeSignature
+      });
+    } catch (pdfErr) {
+      console.error('[Registration PDF Generation Error]:', pdfErr);
+    }
 
-  const smtpConfig = await getSMTPConfig();
-  const resSMTP = await sendEmailWithGoogleFallback({
-    config: smtpConfig,
-    to: recipients,
-    subject: emailSubject,
-    html: htmlContent,
-    attachments: mailAttachments
-  });
+    const recipients = Array.from(new Set([cleanCustomerEmail, 'infoisgpro@gmail.com'])).filter(e => e && e.includes('@'));
+    const mailAttachments = pdfAttachments;
 
-  if (resSMTP.success) {
-    console.log(`[SMTP Registration Contracts] 3 adet yasal metin PDF'i başarıyla gönderildi: ${recipients.join(', ')}`);
-    return res.json({ success: true, message: 'Yasal bilgilendirme nüshaları 3 PDF olarak başarıyla gönderildi.', recipients });
-  }
-
-  // Fallback SMTP
-  try {
-    const fallbackConfig = {
-      host: process.env.SMTP_HOST || "smtp.gmail.com",
-      port: Number(process.env.SMTP_PORT) || 465,
-      user: process.env.SMTP_USER || "infoisgpro@gmail.com",
-      pass: process.env.SMTP_PASS || "cwgrgysnukzzvrnr",
-      fromName: "İSG Pro Teknolojileri",
-      active: true
-    };
-    const resFallback = await sendEmailWithGoogleFallback({
-      config: fallbackConfig,
+    const smtpConfig = await getSMTPConfig();
+    const resSMTP = await sendEmailWithGoogleFallback({
+      config: smtpConfig,
       to: recipients,
       subject: emailSubject,
       html: htmlContent,
       attachments: mailAttachments
     });
-    if (resFallback.success) {
-      console.log(`[Fallback SMTP Registration Contracts] Delivered to ${recipients.join(', ')}`);
-      return res.json({ success: true, method: 'fallback_smtp', message: 'Yasal bilgilendirmeler 3 PDF olarak iletildi.' });
-    }
-  } catch (err: any) {
-    console.error('Registration Contract Email Fallback Error:', err);
-  }
 
-  return res.status(500).json({ error: 'Yasal bilgilendirme e-postası gönderilirken hata oluştu.', details: resSMTP.error });
+    if (resSMTP.success) {
+      console.log(`[SMTP Registration Contracts ✅] 3 adet yasal metin PDF'i başarıyla gönderildi: ${recipients.join(', ')}`);
+      return res.json({ success: true, message: 'Yasal bilgilendirme nüshaları 3 PDF olarak başarıyla gönderildi.', recipients });
+    }
+
+    // Fallback SMTP
+    try {
+      const fallbackConfig = {
+        host: process.env.SMTP_HOST || "smtp.gmail.com",
+        port: Number(process.env.SMTP_PORT) || 465,
+        user: process.env.SMTP_USER || "infoisgpro@gmail.com",
+        pass: process.env.SMTP_PASS || "cwgrgysnukzzvrnr",
+        fromName: "İSG Pro Teknolojileri",
+        active: true
+      };
+      const resFallback = await sendEmailWithGoogleFallback({
+        config: fallbackConfig,
+        to: recipients,
+        subject: emailSubject,
+        html: htmlContent,
+        attachments: mailAttachments
+      });
+      if (resFallback.success) {
+        console.log(`[Fallback SMTP Registration Contracts ✅] Delivered to ${recipients.join(', ')}`);
+        return res.json({ success: true, method: 'fallback_smtp', message: 'Yasal bilgilendirmeler 3 PDF olarak iletildi.' });
+      }
+    } catch (err: any) {
+      console.error('Registration Contract Email Fallback Error:', err);
+    }
+
+    return res.status(500).json({ error: 'Yasal bilgilendirme e-postası gönderilirken hata oluştu.', details: resSMTP.error });
+  } finally {
+    releaseLock();
+  }
 };
 
 app.post('/api/send-registration-contracts', handleSendRegistrationContracts);
@@ -4226,7 +4445,22 @@ app.post('/api/send-new-user-notification', async (req, res) => {
     return res.status(400).json({ error: 'Kullanıcı bilgisi eksik.' });
   }
 
-  // 0. Ensure user is also persisted directly into Firestore 'users' collection on server
+  const cleanUsername = normalizeUsername(newUser.username || '');
+  const cleanUserEmail = (newUser.email || '').trim().toLowerCase();
+  const dedupeKeys = [
+    cleanUsername ? `new_user_notif_${cleanUsername}` : null,
+    cleanUserEmail.length >= 5 ? `new_user_notif_${cleanUserEmail}` : null
+  ];
+
+  if (shouldSkipDuplicateEmail(dedupeKeys)) {
+    console.log(`[New User Notification Deduplication ✅] Bildirim zaten iletildi: @${cleanUsername}. Mükerrer gönderim engellendi.`);
+    return res.json({ success: true, alreadySent: true, message: 'Kullanıcı bildirimi zaten iletildi.' });
+  }
+
+  const releaseLock = lockEmailKeys(dedupeKeys);
+
+  try {
+    // 0. Ensure user is also persisted directly into Firestore 'users' collection on server
   if (db && newUser && newUser.username) {
     try {
       const uKey = normalizeUsername(newUser.username || '');
@@ -4423,7 +4657,10 @@ app.post('/api/send-new-user-notification', async (req, res) => {
     console.error("[EmailJS Error]:", emailjsErr);
   }
 
-  return res.json({ success: true, method: 'queued' });
+    return res.json({ success: true, method: 'queued' });
+  } finally {
+    releaseLock();
+  }
 });
 
 // Proxy endpoint for Email Update Link
@@ -5050,20 +5287,11 @@ async function activateAndNotifyOrder(merchantOid: string): Promise<boolean> {
 
   const alreadyActive = order.status === 'success';
   if (alreadyActive) {
-    console.log(`[Activation] Order ${merchantOid} is already active. Checking if billing email was sent...`);
-    // Sipariş zaten aktif olsa bile fatura e-postasının gönderilip gönderilmediğini kontrol et
-    const billingCacheKey = `${merchantOid}_billing`;
-    const lastBillingSent = sentBillingNotificationsMap.get(billingCacheKey);
-    if (lastBillingSent) {
-      console.log(`[Activation] Billing email already sent for ${merchantOid}. Skipping.`);
-      return true;
-    }
-    // Fatura e-postası henüz gönderilmemiş - gönder ve dön
-    console.log(`[Activation] Billing email NOT sent yet for already-active order ${merchantOid}. Dispatching now...`);
-  } else {
-    order.status = 'success';
-    console.log(`[Activation Success] Activating order: ${merchantOid} for ${order.email}`);
+    console.log(`[Activation] Order ${merchantOid} is already active. Skipping duplicate activation.`);
+    return true;
   }
+  order.status = 'success';
+  console.log(`[Activation Success] Activating order: ${merchantOid} for ${order.email}`);
 
   // Persist order status change to Firestore
   if (db && merchantOid) {
@@ -5189,136 +5417,72 @@ async function activateAndNotifyOrder(merchantOid: string): Promise<boolean> {
 
   if (!alreadyActive) {
     console.log(`[HTTPS REST 443 Activation] Dispatching license email to: ${maskEmail(customerDeliveryEmail)}`);
-    const htmlContent = getLicenseHtmlTemplate({
+    await dispatchLicenseEmail({
+      email: customerDeliveryEmail,
       name: order.fullName || order.name || 'Değerli İSG Pro Kullanıcısı',
       licenseKey: order.licenseKey,
       planName,
       planType,
       price: priceStr,
       purchaseDate: purchaseDateStr,
-      expiryDate: expiryDateStr
-    });
-
-    await sendEmailUniversal({
-      to: customerDeliveryEmail,
-      subject: `Tebrikler, İSG Pro Lisansınız Hazır!`,
-      html: htmlContent,
-      templateType: 'license'
+      expiryDate: expiryDateStr,
+      orderId: merchantOid
     });
   }
 
   // ============================================================
-  // ONAYLI SÖZLEŞMELER VE FATURA BİLGİLERİ (EŞ ZAMANLI & BİREBİR AYNI MANTIK)
-  // Kullanıcıya & infoisgpro@gmail.com'a Sözleşmeler + infoisgpro@gmail.com'a Fatura Bildirimi
+  // 1. ONAYLI SÖZLEŞMELER (Kullanıcıya ve infoisgpro@gmail.com'a 6 PDF Nüshası - TEK SEFER)
   // ============================================================
   try {
-    const cacheKey = `${merchantOid}_${order.email.toLowerCase().trim()}`;
-    const lastSent = sentContractsMap.get(cacheKey);
-    if (!lastSent || (Date.now() - lastSent >= 15 * 1000)) {
-      sentContractsMap.set(cacheKey, Date.now());
-
-      // 1. Onaylı Mesafeli Satış Sözleşmesi Şablonu (Fatura bilgileri doğrudan bu şablonun içine gömülerek %100 eş zamanlı ulaşması garanti edilir)
-      const contractHtml = getContractsApprovalHtmlTemplate({
-        customerName: order.fullName || order.name || 'Değerli İSG Pro Kullanıcısı',
-        customerEmail: order.email,
-        customerPhone: order.phone,
-        customerAddress: order.address,
-        planName,
-        price: priceStr,
-        orderId: merchantOid,
-        approvalDate: purchaseDateStr,
-        billingType: order.billingType || (order.companyName ? 'corporate' : 'individual'),
-        companyName: order.companyName,
-        tcNo: order.tcNo,
-        taxNumber: order.taxNumber,
-        taxOffice: order.taxOffice,
-        city: order.city,
-        district: order.district,
-        licenseKey: order.licenseKey,
-        customerSignature: order.userSignature
-      });
-
-      let pdfAttachments: Array<{ filename: string; content: Buffer; contentType: string }> = [];
-      try {
-        pdfAttachments = await generateAllContractsPDFAttachments({
-          customerName: order.fullName || order.name || 'Değerli İSG Pro Kullanıcısı',
-          customerEmail: order.email,
-          customerPhone: order.phone,
-          customerAddress: order.address,
-          orderId: merchantOid,
-          planName,
-          price: priceStr,
-          approvalDate: purchaseDateStr,
-          customerSignature: order.userSignature,
-          sellerSignature: '',
-          sellerName: 'İbrahim Coşkun'
-        });
-      } catch (pdfErr) {
-        console.error('[PayTR PDF Generation Error]:', pdfErr);
-      }
-
-      // 2. Fatura ve Yeni Sipariş Bildirimi Şablonu
-      const billingHtml = getBillingNotificationHtmlTemplate({
-        orderId: merchantOid,
-        planName,
-        price: priceStr,
-        purchaseDate: purchaseDateStr,
-        billingType: order.billingType || (order.companyName ? 'corporate' : 'individual'),
-        customerName: order.companyName || order.fullName || order.name || 'Değerli İSG Pro Müşterisi',
-        customerEmail: order.email || customerDeliveryEmail,
-        customerPhone: order.phone,
-        customerAddress: order.address,
-        city: order.city,
-        district: order.district,
-        tcNo: order.tcNo,
-        companyName: order.companyName,
-        taxNumber: order.taxNumber,
-        taxOffice: order.taxOffice,
-        licenseKey: order.licenseKey,
-        customerSignature: order.userSignature
-      });
-
-      const billingSubject = `🧾 [Yeni Sipariş & Fatura Bilgisi] ${order.companyName || order.fullName || order.name || order.email} (${merchantOid})`;
-
-      console.log(`[Google Direct SMTP Activation] Sözleşmeler ve Fatura bildirimleri eş zamanlı gönderiliyor: ${merchantOid}`);
-
-      const smtpConfig = await getSMTPConfig();
-
-      // 3. EŞ ZAMANLI İLETİM: Onaylı sözleşmeler (PDF'li) ile Fatura bildirimi aynı anda Google Direct SMTP ile çıkar
-      const [contractResult, billingResult] = await Promise.all([
-        sendEmailWithGoogleFallback({
-          config: smtpConfig,
-          to: [order.email, 'infoisgpro@gmail.com'],
-          subject: `İSG Pro Onaylı Mesafeli Satış Sözleşmesi ve Evrakları`,
-          html: contractHtml,
-          attachments: pdfAttachments
-        }),
-        sendEmailWithGoogleFallback({
-          config: { ...smtpConfig, fromName: 'İSG Pro Fatura & Muhasebe' },
-          to: 'infoisgpro@gmail.com',
-          replyTo: order.email || customerDeliveryEmail,
-          subject: billingSubject,
-          html: billingHtml
-        })
-      ]);
-
-      if (contractResult.success) {
-        console.log(`[Google Direct SMTP Activation ✅] Contracts and PDFs dispatched: ${maskEmail(order.email)} and infoisgpro@gmail.com`);
-      } else {
-        console.error(`[Google Direct SMTP Activation ⚠️] Contracts dispatch error:`, contractResult.error);
-      }
-
-      if (billingResult.success) {
-        console.log(`[Google Direct SMTP Activation ✅] Fatura bilgileri infoisgpro@gmail.com'a ulaştırıldı | Sipariş: ${merchantOid}`);
-      } else {
-        console.error(`[Google Direct SMTP Activation ⚠️] Fatura dispatch error:`, billingResult.error);
-      }
-
-    } else {
-      console.log(`[Activation Contracts] Contracts and billing already dispatched recently for ${merchantOid}, skipping.`);
-    }
+    await dispatchContractsEmail({
+      email: order.email || customerDeliveryEmail,
+      name: order.fullName || order.name || 'Değerli İSG Pro Kullanıcısı',
+      orderId: merchantOid,
+      planName,
+      price: priceStr,
+      purchaseDate: purchaseDateStr,
+      phone: order.phone,
+      address: order.address,
+      city: order.city,
+      district: order.district,
+      tcNo: order.tcNo,
+      companyName: order.companyName,
+      taxNumber: order.taxNumber,
+      taxOffice: order.taxOffice,
+      licenseKey: order.licenseKey,
+      userSignature: order.userSignature,
+      customerSignature: order.userSignature,
+      billingType: order.billingType || (order.companyName ? 'corporate' : 'individual')
+    });
   } catch (contractErr) {
-    console.error('[HTTPS REST 443 Contract & Billing Delivery Error]:', contractErr);
+    console.error('[HTTPS REST 443 Contract Delivery Error]:', contractErr);
+  }
+
+  // ============================================================
+  // 2. RESMİ FATURA BİLDİRİMİ (SADECE infoisgpro@gmail.com'a - TEK SEFER)
+  // ============================================================
+  try {
+    await dispatchBillingEmail({
+      orderId: merchantOid,
+      planName,
+      price: priceStr,
+      purchaseDate: purchaseDateStr,
+      billingType: order.billingType || (order.companyName ? 'corporate' : 'individual'),
+      customerName: order.fullName || order.name || 'Değerli İSG Pro Kullanıcısı',
+      customerEmail: order.email || customerDeliveryEmail,
+      customerPhone: order.phone,
+      customerAddress: order.address,
+      city: order.city,
+      district: order.district,
+      tcNo: order.tcNo,
+      companyName: order.companyName,
+      taxNumber: order.taxNumber,
+      taxOffice: order.taxOffice,
+      licenseKey: order.licenseKey,
+      customerSignature: order.userSignature
+    });
+  } catch (billingErr) {
+    console.error('[HTTPS REST 443 Billing Delivery Error]:', billingErr);
   }
 
   return true;
@@ -6010,21 +6174,13 @@ app.post('/api/send-email-billing', async (req, res) => {
       licenseKey, customerSignature 
     } = req.body;
 
-    const cleanOrderId = (orderId || `ISG-${Date.now().toString().slice(-6)}`).trim();
-    const cacheKey = `${cleanOrderId}_direct_billing`;
-    if (sentBillingNotificationsMap.get(cacheKey) && (Date.now() - sentBillingNotificationsMap.get(cacheKey)!) < 5 * 1000) {
-      return res.json({ success: true, message: 'Fatura bildirimi zaten gönderildi.' });
-    }
-    sentBillingNotificationsMap.set(cacheKey, Date.now());
-
-    const billingHtml = getBillingNotificationHtmlTemplate({
-      orderId: cleanOrderId,
-      planName: planName || 'İSG Pro Lisans Paketi',
-      price: price || '₺2.990,00',
-      purchaseDate: new Date().toLocaleDateString('tr-TR'),
-      billingType: billingType || (companyName ? 'corporate' : 'individual'),
-      customerName: companyName || customerName || 'Değerli Müşterimiz',
-      customerEmail: customerEmail || 'infoisgpro@gmail.com',
+    const result = await dispatchBillingEmail({
+      orderId,
+      planName,
+      price,
+      billingType,
+      customerName,
+      customerEmail,
       customerPhone,
       customerAddress,
       city,
@@ -6037,19 +6193,7 @@ app.post('/api/send-email-billing', async (req, res) => {
       customerSignature
     });
 
-    const billingSubject = `🧾 [Yeni Sipariş & Fatura Bilgisi] ${companyName || customerName || customerEmail} (${cleanOrderId})`;
-
-    // Birebir sözleşme mantığı ile gönderim (Google Direct SMTP Port 465 SSL, IPv4)
-    const smtpConfig = await getSMTPConfig();
-    const result = await sendEmailWithGoogleFallback({
-      config: smtpConfig,
-      to: 'infoisgpro@gmail.com',
-      subject: billingSubject,
-      html: billingHtml
-    });
-    console.log(`[API /api/send-email-billing ✅] Fatura e-postası infoisgpro@gmail.com'a ulaştırıldı | ${cleanOrderId} | Başarı: ${result.success}`);
-
-    return res.json({ success: true, message: 'Fatura bilgileri admin e-postasına iletildi.' });
+    return res.json(result);
   } catch (err: any) {
     console.error('[API /api/send-email-billing ❌ Error]:', err);
     return res.status(500).json({ error: err.message });
