@@ -3157,6 +3157,7 @@ app.post('/api/generate-risk', async (req, res) => {
     : getResolvedGeminiKey();
 
   const candidateModels = [
+    'gemini-3.8-flash',
     'gemini-2.5-flash',
     'gemini-2.5-flash-lite',
     'gemini-3.6-flash',
@@ -3413,6 +3414,7 @@ app.post('/api/gemini-proxy', async (req, res) => {
     : getResolvedGeminiKey();
 
   const candidateModels = [
+    'gemini-3.8-flash',
     'gemini-2.5-flash',
     'gemini-2.0-flash',
     'gemini-1.5-flash',
