@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <title>İSGPRO — İSG-KATİP Botu</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <div class="logo-area">
+      <div class="logo-icon">🤖</div>
+      <div>
+        <h1>İSGPRO Katip Botu</h1>
+        <p>Bakanlık İSG-KATİP Asistanı (v2.0)</p>
+      </div>
+    </div>
+    <span id="tab-status" class="status-badge checking">Kontrol Ediliyor...</span>
+  </div>
+
+  <div class="content">
+    <!-- Son Çekilen Veri Kartı -->
+    <div class="info-card">
+      <div class="info-title">Son Çekilen Firma Verileri</div>
+      <div id="data-summary" class="info-desc">Henüz veri taranmadı.</div>
+    </div>
+
+    <!-- Hızlı Eylem Butonları -->
+    <div class="actions-grid">
+      <button id="btn-scan" class="action-btn primary">
+        <span>🔍</span>
+        <div>
+          <strong>Firmaları Tara & Seç</strong>
+          <small>NACE, SGK, Çalışan, Uzman/Hekim seçimi</small>
+        </div>
+      </button>
+
+      <button id="btn-approve" class="action-btn success">
+        <span>⚡</span>
+        <div>
+          <strong>Toplu Sözleşme Onayla</strong>
+          <small>Bekleyen tüm sözleşmeleri onayla</small>
+        </div>
+      </button>
+
+      <button id="btn-download" class="action-btn warning">
+        <span>⬇️</span>
+        <div>
+          <strong>Toplu Sözleşme İndir</strong>
+          <small>Sözleşme PDF'lerini sırayla kaydet</small>
+        </div>
+      </button>
+
+      <button id="btn-export-json" class="action-btn info">
+        <span>📥</span>
+        <div>
+          <strong>İSGPRO'ya Aktar (JSON)</strong>
+          <small>Seçilen firmaları panele aktarmak için indir</small>
+        </div>
+      </button>
+    </div>
+
+    <!-- Hızlı Bağlantı -->
+    <div class="footer">
+      <a id="btn-open-katip" href="https://isgkatip.csgb.gov.tr" target="_blank" class="footer-link">
+        🌐 İSG-KATİP Portalına Git
+      </a>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

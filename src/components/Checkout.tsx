@@ -182,12 +182,14 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel, currentUse
   const userSignatureRef = useRef<string>('');
   const [loadingMsg, setLoadingMsg] = useState('Siparişiniz işleniyor...');
   const [paytrErrorMsg, setPaytrErrorMsg] = useState<string>('');
+  const [autoRenew, setAutoRenew] = useState<boolean>(true); // Varsayılan olarak açık (true)
 
-  const [selectedPlanId, setSelectedPlanId] = useState<'monthly' | 'yearly'>(planId === 'monthly' ? 'monthly' : 'yearly');
+  const [selectedPlanId, setSelectedPlanId] = useState<'monthly' | 'yearly' | 'test'>(planId === 'monthly' ? 'monthly' : 'yearly');
 
   const plansMeta = {
     monthly: { name: 'Aylık Plan', price: '₺299', rawPrice: '299.00', label: '/ Ay' },
-    yearly: { name: 'Yıllık Plan', price: '₺2.990', rawPrice: '2990.00', label: '/ Yıl (En İyi Teklif)' }
+    yearly: { name: 'Yıllık Plan', price: '₺2.990', rawPrice: '2990.00', label: '/ Yıl (En İyi Teklif)' },
+    test: { name: '10 Dk Yenileme Testi (Geçici)', price: '₺1,00', rawPrice: '1.00', label: '/ 10 Dakikada Bir Otomatik Çekilir' }
   };
 
   const activePlan = plansMeta[selectedPlanId] || plansMeta[planId] || plansMeta.yearly;
@@ -378,7 +380,8 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel, currentUse
           city: city.trim(),
           district: district.trim(),
           userSignature: activeSig,
-          customerSignature: activeSig
+          customerSignature: activeSig,
+          autoRenew: autoRenew !== false
         })
       });
 
@@ -559,6 +562,9 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel, currentUse
                 <div className="text-right">
                   <span className="text-slate-500 dark:text-slate-400 block">Ödenecek Tutar</span>
                   <span className="font-extrabold text-indigo-600 dark:text-indigo-400 text-base block">{activePlan.price}</span>
+                  <span className={`text-[9px] font-bold block ${autoRenew ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}`}>
+                    {autoRenew ? '✓ Otomatik Yenileme Aktif' : 'Tek Seferlik Ödeme'}
+                  </span>
                 </div>
               </div>
 
@@ -733,6 +739,36 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel, currentUse
                       <div className="text-[10px] font-black text-indigo-600 uppercase">👑 Yıllık</div>
                       <div className="text-sm font-black text-slate-900 dark:text-white mt-0.5">₺2.990</div>
                       <div className="text-[10px] text-slate-400 font-bold">/ Yıl</div>
+                    </button>
+                  </div>
+
+                  {/* 🧪 GEÇİCİ 10 DAKİKALIK TEST BUTONU */}
+                  <div className="mt-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPlanId('test')}
+                      className={`w-full p-2.5 rounded-xl border-2 text-left transition-all cursor-pointer flex items-center justify-between ${
+                        selectedPlanId === 'test'
+                          ? 'border-amber-500 bg-amber-50/80 dark:bg-amber-950/50 ring-2 ring-amber-500/30'
+                          : 'border-dashed border-amber-300 dark:border-amber-800/60 bg-amber-50/20 hover:bg-amber-50/50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-base">🧪</span>
+                        <div>
+                          <div className="text-[10.5px] font-extrabold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+                            <span>10 Dk Otomatik Yenileme Testi (Geçici)</span>
+                            <span className="text-[9px] bg-amber-200 dark:bg-amber-900 text-amber-900 dark:text-amber-100 px-1.5 py-0.2 rounded font-black">CANLI / TEST</span>
+                          </div>
+                          <div className="text-[9.5px] text-slate-500 dark:text-slate-400">
+                            10 dakikada bir otomatik çekim periyodunu test eder
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-xs font-black text-amber-700 dark:text-amber-300 block">₺1,00</span>
+                        <span className="text-[9px] font-bold text-slate-400">/ 10 dk</span>
+                      </div>
                     </button>
                   </div>
                 </div>
@@ -1047,6 +1083,40 @@ export default function Checkout({ planId, onSubmitSuccess, onCancel, currentUse
                   </div>
 
                   {/* Legal Agreements Panel */}
+                  {/* Otomatik Yenileme (Auto-Renew) Ayarı - Varsayılan Açık */}
+                  <div className="p-4 bg-gradient-to-r from-indigo-50/70 via-blue-50/70 to-purple-50/70 dark:from-indigo-950/30 dark:to-purple-950/30 border border-indigo-200 dark:border-indigo-900/40 rounded-xl">
+                    <label className="flex items-start justify-between gap-3 cursor-pointer select-none">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-extrabold text-indigo-900 dark:text-indigo-200">
+                            🔄 Dönem Sonunda Otomatik Yenile
+                          </span>
+                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
+                            autoRenew
+                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300'
+                              : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                          }`}>
+                            {autoRenew ? 'AÇIK (ÖNERİLEN)' : 'KAPALI'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium leading-relaxed">
+                          Lisans süreniz dolduğunda yapay zeka ve raporlama erişiminizin kesintiye uğramaması için dönem sonunda otomatik yenilenir. 
+                          <strong> İstediğiniz zaman panelinizden tek tıkla hiçbir ücret kesintisi olmadan iptal edebilirsiniz.</strong>
+                        </p>
+                      </div>
+                      <div className="relative inline-flex items-center shrink-0 mt-1">
+                        <input
+                          type="checkbox"
+                          checked={autoRenew}
+                          onChange={(e) => setAutoRenew(e.target.checked)}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                      </div>
+                    </label>
+                  </div>
+
+                  {/* YASAL SÖZLEŞMELER */}
                   <div className="p-4 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl space-y-3">
                     <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
                       <span className="text-[10px] font-extrabold text-slate-400 dark:text-slate-500 uppercase tracking-wide">YASAL SÖZLEŞMELER</span>

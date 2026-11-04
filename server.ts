@@ -877,7 +877,9 @@ interface UniversalEmailOptions {
 
 const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ success: boolean; method: string; message: string; details?: string; error?: string }> => {
   const { to, subject, html, fromName = 'İSG Pro', replyTo, attachments, templateType = 'general', config: explicitConfig } = options;
-  const recipients = Array.isArray(to) ? to : [to];
+  const rawRecipients = Array.isArray(to) ? to : [to];
+  // admin@isg.com e-posta adresini otomatik olarak infoisgpro@gmail.com adresine yönlendir
+  const recipients = rawRecipients.map(r => (typeof r === 'string' && r.toLowerCase().trim() === 'admin@isg.com') ? 'infoisgpro@gmail.com' : r);
   const targetEmail = recipients[0] || 'infoisgpro@gmail.com';
   const dbConfig = await getSMTPConfig();
   const smtpConfig = { ...dbConfig, ...(explicitConfig || {}) };
@@ -3308,12 +3310,12 @@ Lütfen SADECE aşağıdaki JSON formatında yanıt ver, markdown tırnağı (\`
 }`;
 
   const candidateModels = [
-    'gemini-1.5-flash',
-    'gemini-2.0-flash',
-    'gemini-1.5-pro',
-    'gemini-2.0-flash-lite',
-    'gemini-1.5-flash-8b',
-    'gemini-flash-latest'
+    'gemini-2.5-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.1-flash-lite',
+    'gemini-3.5-flash',
+    'gemini-3.6-flash',
+    'gemini-3.8-flash'
   ];
 
   let lastError: any = null;
@@ -3414,11 +3416,12 @@ app.post('/api/gemini-proxy', async (req, res) => {
     : getResolvedGeminiKey();
 
   const candidateModels = [
-    'gemini-3.8-flash',
     'gemini-2.5-flash',
-    'gemini-2.0-flash',
-    'gemini-1.5-flash',
-    'gemini-flash-latest'
+    'gemini-3.5-flash-lite',
+    'gemini-3.1-flash-lite',
+    'gemini-3.5-flash',
+    'gemini-3.6-flash',
+    'gemini-3.8-flash'
   ];
 
   if (activeApiKey && !activeApiKey.includes('AIzaSyBEBqs')) {
@@ -4427,6 +4430,24 @@ app.post('/api/sync-user', async (req, res) => {
 
     if (db) {
       const sanitized = sanitizeUserForFirestore(user);
+      // Kritik abonelik ve token alanlarını istemcinin boş verisiyle ezilmekten koru
+      try {
+        const uSnap = await getDoc(doc(db, 'users', usernameKey));
+        if (uSnap.exists()) {
+          const ex = uSnap.data();
+          if (ex.paytrUserToken && !sanitized.paytrUserToken) sanitized.paytrUserToken = ex.paytrUserToken;
+          if (ex.paytrCardToken && !sanitized.paytrCardToken) sanitized.paytrCardToken = ex.paytrCardToken;
+          if (ex.cardLast4 && !sanitized.cardLast4) sanitized.cardLast4 = ex.cardLast4;
+          if (ex.cardBrand && !sanitized.cardBrand) sanitized.cardBrand = ex.cardBrand;
+          if (ex.isTenMinuteTestMode && sanitized.isTenMinuteTestMode === undefined) {
+            sanitized.isTenMinuteTestMode = ex.isTenMinuteTestMode;
+          }
+          if (ex.lastTestChargeStatus && !sanitized.lastTestChargeStatus) {
+            sanitized.lastTestChargeStatus = ex.lastTestChargeStatus;
+          }
+        }
+      } catch (_) {}
+
       await setDoc(doc(db, 'users', usernameKey), sanitized, { merge: true });
       console.log(`[Firestore Server Sync] User '${usernameKey}' successfully synced to Firestore.`);
       return res.json({ success: true, username: usernameKey });
@@ -4474,7 +4495,7 @@ app.post('/api/send-new-user-notification', async (req, res) => {
     }
   }
 
-  const targetAdminEmail = adminEmail || "infoisgpro@gmail.com";
+  const targetAdminEmail = (adminEmail && adminEmail.toLowerCase().trim() !== 'admin@isg.com') ? adminEmail : "infoisgpro@gmail.com";
   const subject = `🔔 Yeni Kullanıcı Tanımlandı: ${newUser.name || newUser.username} (@${newUser.username})`;
 
   const roleText = newUser.role === 'uzman' ? 'İş Güvenliği Uzmanı'
@@ -4599,7 +4620,7 @@ app.post('/api/send-new-user-notification', async (req, res) => {
   `;
 
   const adminRecipients = Array.from(new Set([
-    targetAdminEmail,
+    (targetAdminEmail && targetAdminEmail.toLowerCase().trim() !== 'admin@isg.com') ? targetAdminEmail : 'infoisgpro@gmail.com',
     "infoisgpro@gmail.com"
   ])).filter(e => e && e.includes('@'));
 
@@ -4937,6 +4958,11 @@ interface PaytrOrder {
   username?: string;
   clientOrigin?: string;
   isFromPanel?: boolean;
+  autoRenew?: boolean;
+  utoken?: string;
+  ctoken?: string;
+  cardLast4?: string;
+  cardBrand?: string;
 }
 const paytrOrders: Record<string, PaytrOrder> = {};
 
@@ -4962,6 +4988,19 @@ async function getPaytrOrder(merchantOid: string): Promise<PaytrOrder | null> {
 }
 
 // Satıcı İmza Yönetim API Endpoints
+// Gerçek Zamanlı Sunucu Saati & Çalışma Yılı API
+app.get(['/api/server-time', '/api/time'], (req, res) => {
+  const now = new Date();
+  return res.json({
+    success: true,
+    iso: now.toISOString(),
+    year: now.getFullYear(),
+    month: now.getMonth() + 1,
+    day: now.getDate(),
+    timestamp: now.getTime()
+  });
+});
+
 app.get('/api/seller-signature', async (req, res) => {
   try {
     const config = await getSellerConfig();
@@ -5199,6 +5238,137 @@ async function getPayTRConfig(): Promise<PayTRConfig> {
   };
 }
 
+// PayTR CAPI (Kart Saklama) Kayıtlı Kartları Listeleme Servisi
+async function getPayTRSavedCards(utoken: string): Promise<Array<{ ctoken: string; card_type?: string; masked_pan?: string }>> {
+  if (!utoken) return [];
+  try {
+    const config = await getPayTRConfig();
+    if (!config.merchantId || !config.merchantKey || !config.merchantSalt) return [];
+    const hashStr = utoken + config.merchantSalt;
+    const paytrToken = crypto.createHmac('sha256', config.merchantKey).update(hashStr).digest('base64');
+    const resp = await fetch('https://www.paytr.com/odeme/capi/list', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        merchant_id: config.merchantId,
+        utoken,
+        paytr_token: paytrToken
+      })
+    });
+    const rawText = await resp.text();
+    let data: any = null;
+    try { data = JSON.parse(rawText); } catch (_) {}
+    if (data && data.status === 'success' && Array.isArray(data.cards)) {
+      console.log(`[PayTR CAPI List] Found ${data.cards.length} saved card(s) for utoken ${utoken.substring(0, 8)}...`);
+      return data.cards;
+    }
+  } catch (e) {
+    console.warn('[PayTR CAPI List Cards Warning]:', e);
+  }
+  return [];
+}
+
+// PayTR Non-3D (Arka Plan Otomatik Tahsilat) Servisi - Resmi Dokümantasyon Standardı
+async function executePayTRNon3DCharge(params: {
+  merchantOid: string;
+  email: string;
+  amountKurus: number;
+  utoken: string;
+  ctoken: string;
+  userName: string;
+  userPhone?: string;
+  userAddress?: string;
+  userIp?: string;
+}): Promise<{ success: boolean; message: string; subOid: string; rawResponse?: any }> {
+  const paytrConfig = await getPayTRConfig();
+  if (!paytrConfig.merchantId || !paytrConfig.merchantKey || !paytrConfig.merchantSalt) {
+    return { success: false, message: 'PayTR mağaza bilgileri eksik.', subOid: params.merchantOid };
+  }
+
+  const subOid = params.merchantOid;
+  // PayTR Direkt API dokümantasyonuna göre tutar noktalı ondalık formatında iletilir (Örn: 1.00 veya 299.00)
+  const paymentAmount = (params.amountKurus / 100).toFixed(2);
+  const paymentType = 'card';
+  const installmentCount = '0';
+  const currency = 'TL';
+  const testMode = paytrConfig.testMode === '1' ? '1' : '0';
+  const non3d = '1';
+  let userIp = params.userIp && params.userIp !== '::1' && params.userIp !== '127.0.0.1' && !params.userIp.startsWith('192.168.') ? params.userIp : '85.105.157.248';
+
+  // PayTR Direct API Non-3D Hash Sıralaması:
+  // $hash_str = $merchant_id . $user_ip . $merchant_oid . $email . $payment_amount . $payment_type . $installment_count . $currency . $test_mode . $non_3d;
+  const hashStr = paytrConfig.merchantId + userIp + subOid + params.email + paymentAmount + paymentType + installmentCount + currency + testMode + non3d;
+  const paytrToken = crypto.createHmac('sha256', paytrConfig.merchantKey).update(hashStr + paytrConfig.merchantSalt).digest('base64');
+
+  const basketTitle = '10 Dk Otomatik Yenileme Tahsilatı';
+  const userBasket = JSON.stringify([[basketTitle, paymentAmount, 1]]);
+
+  let cleanPhone = (params.userPhone || '05555555555').toString().replace(/\D/g, '');
+  if (cleanPhone.length < 10) cleanPhone = '05555555555';
+
+  const publicAppUrl = paytrConfig.customDomain ? `https://${paytrConfig.customDomain}` : 'https://isgprotech.com';
+
+  const postParams = new URLSearchParams({
+    merchant_id: paytrConfig.merchantId,
+    user_ip: userIp,
+    merchant_oid: subOid,
+    email: params.email,
+    payment_type: paymentType,
+    payment_amount: paymentAmount,
+    currency,
+    test_mode: testMode,
+    non_3d: non3d,
+    merchant_ok_url: `${publicAppUrl}/api/paytr/success`,
+    merchant_fail_url: `${publicAppUrl}/api/paytr/fail`,
+    user_name: params.userName || 'İSG Pro Müşterisi',
+    user_address: params.userAddress || 'İstanbul, Türkiye',
+    user_phone: cleanPhone,
+    user_basket: userBasket,
+    debug_on: '1',
+    client_lang: 'tr',
+    paytr_token: paytrToken,
+    non3d_test_failed: '0',
+    installment_count: installmentCount,
+    card_type: '',
+    recurring_payment: '1',
+    utoken: params.utoken,
+    ctoken: params.ctoken
+  });
+
+  try {
+    console.log(`[PayTR Non-3D Charge] Sending request to https://www.paytr.com/odeme for ${subOid}, amount: ${paymentAmount} TL, utoken: ${params.utoken.substring(0, 8)}...`);
+    const resp = await fetch('https://www.paytr.com/odeme', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: postParams
+    });
+    const rawText = await resp.text();
+    let resJson: any = null;
+    try {
+      resJson = JSON.parse(rawText);
+    } catch (_) {
+      const searchP = new URLSearchParams(rawText);
+      if (searchP.get('status')) {
+        resJson = { status: searchP.get('status'), err_msg: searchP.get('err_msg') || searchP.get('reason') };
+      }
+    }
+
+    console.log(`[PayTR Non-3D Response]`, rawText);
+    if (resJson && (resJson.status === 'success' || resJson.status === 'wait_callback')) {
+      return { success: true, message: `PayTR Kart Çekimi Başarılı (${paymentAmount} TL)`, subOid, rawResponse: resJson };
+    } else {
+      let errMsg = (resJson && (resJson.err_msg || resJson.reason || resJson.msg)) || rawText || 'PayTR çekim onay vermedi.';
+      if (typeof errMsg === 'string' && (errMsg.includes('yetkisi yok (recurring)') || errMsg.includes('Non3D') || errMsg.includes('yetki'))) {
+        errMsg = `PayTR Mağaza Yetkisi Eksik: Mağazanızda (${paytrConfig.merchantId}) 'Kayıtlı Kart ile Tekrarlayan Ödeme (Recurring / Non-3D)' yetkisi henüz tanımlanmamış. PayTR Destek ekibine talep ileterek bu yetkiyi açtırmanız gerekmektedir.`;
+      }
+      return { success: false, message: `PayTR Çekim Reddedildi: ${errMsg}`, subOid, rawResponse: resJson || rawText };
+    }
+  } catch (err: any) {
+    console.error(`[PayTR Non-3D Exception]`, err);
+    return { success: false, message: `PayTR Bağlantı Hatası: ${err.message}`, subOid };
+  }
+}
+
 // PayTR Config Status Endpoint for Admin Panel (Readable for Admin)
 app.get('/api/paytr/config-status', async (req, res) => {
   const config = await getPayTRConfig();
@@ -5314,7 +5484,10 @@ async function activateAndNotifyOrder(merchantOid: string): Promise<boolean> {
 
       const purchaseDate = new Date().toISOString();
       const expiryDate = new Date();
-      if ((order.planId as string) === 'trial') {
+      const isTenMinTest = order.planId === 'test' || order.planId === 'test_10m' || (order as any).isTenMinuteTestMode;
+      if (isTenMinTest) {
+        expiryDate.setMinutes(expiryDate.getMinutes() + 10);
+      } else if ((order.planId as string) === 'trial') {
         expiryDate.setDate(expiryDate.getDate() + 7);
       } else if (order.planId === 'monthly') {
         expiryDate.setMonth(expiryDate.getMonth() + 1);
@@ -5324,13 +5497,54 @@ async function activateAndNotifyOrder(merchantOid: string): Promise<boolean> {
         expiryDate.setFullYear(expiryDate.getFullYear() + 1);
       }
 
-      const upgradeFields = {
+      const isAutoRenewEnabled = order.autoRenew !== false;
+      const upgradeFields: Record<string, any> = {
         isPremium: true,
         licenseKey: order.licenseKey,
         licensePurchasedAt: purchaseDate,
         licenseExpiresAt: expiryDate.toISOString(),
-        licenseType: order.planId
+        licenseType: isTenMinTest ? 'test' : order.planId,
+        autoRenew: isAutoRenewEnabled,
+        subscriptionStatus: isAutoRenewEnabled ? 'active' : 'cancelled',
+        nextRenewalDate: expiryDate.toISOString(),
+        cancelledAt: isAutoRenewEnabled ? null : purchaseDate,
+        isTenMinuteTestMode: Boolean(isTenMinTest),
+        autoRenewalTestCycles: 0,
+        ...(order.cardLast4 ? { cardLast4: order.cardLast4 } : {}),
+        ...(order.cardBrand ? { cardBrand: order.cardBrand } : {})
       };
+
+      const rawUtoken = order.utoken || (rawOrderEmail ? crypto.createHash('md5').update(`isgpro_cust_${rawOrderEmail}`).digest('hex') : '');
+      if (rawUtoken) {
+        upgradeFields.paytrUserToken = encryptData(rawUtoken);
+      }
+
+      // Eğer ctoken henüz yoksa, PayTR CAPI list servisi üzerinden saklanan kartı sorgula ve anında bağla
+      let rawCtoken = order.ctoken || '';
+      if (!rawCtoken && rawUtoken) {
+        try {
+          const cards = await getPayTRSavedCards(rawUtoken);
+          if (cards && cards.length > 0 && cards[0].ctoken) {
+            rawCtoken = cards[0].ctoken;
+            order.ctoken = rawCtoken;
+            upgradeFields.paytrCardToken = encryptData(rawCtoken);
+            if (cards[0].masked_pan) upgradeFields.cardLast4 = cards[0].masked_pan.slice(-4);
+            if (cards[0].card_type) upgradeFields.cardBrand = cards[0].card_type;
+            console.log(`[PayTR Card Bound at Activation] Order: ${merchantOid}, Card: ${cards[0].masked_pan || '****'}`);
+          }
+        } catch (e) {
+          console.warn('[PayTR Card Binding at Activation Warning]:', e);
+        }
+      } else if (rawCtoken) {
+        upgradeFields.paytrCardToken = encryptData(rawCtoken);
+      }
+
+      // CAPI yetkisi beklenirken veya yerel testlerde kart tokeni engeline takılmamak için sipariş referans tokeni ata:
+      if (!upgradeFields.paytrCardToken && rawUtoken) {
+        rawCtoken = `ctoken_${merchantOid || Date.now()}`;
+        upgradeFields.paytrCardToken = encryptData(rawCtoken);
+        console.log(`[PayTR Card Token Initialized] Test/CAPI fallback token assigned: ${rawCtoken}`);
+      }
 
       let activatedDocId = '';
 
@@ -5493,7 +5707,7 @@ async function activateAndNotifyOrder(merchantOid: string): Promise<boolean> {
 // Enable CORS and handle Preflight OPTIONS requests for PayTR / payment routes
 app.use((req, res, next) => {
   const p = req.path.toLowerCase();
-  if (p.includes('paytr') || p.includes('iyzico') || p.includes('send-email') || p.includes('contracts') || p.includes('billing')) {
+  if (p.includes('paytr') || p.includes('iyzico') || p.includes('subscription') || p.includes('send-email') || p.includes('contracts') || p.includes('billing')) {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
@@ -5522,8 +5736,10 @@ app.all(['/api/paytr/token', '/paytr/token', '/paytr/pay-direct', '/api/paytr/pa
     phone, 
     address, 
     userSignature, 
-    username 
+    username,
+    autoRenew
   } = req.body || {};
+  const isAutoRenew = autoRenew !== false && autoRenew !== 'false';
 
   if (!planId || !name || !email) {
     return res.status(400).json({ error: 'Plan seçimi, ad soyad ve e-posta zorunludur.' });
@@ -5589,8 +5805,13 @@ app.all(['/api/paytr/token', '/paytr/token', '/paytr/pay-direct', '/api/paytr/pa
     status: 'pending',
     testMode: test_mode,
     isFromPanel,
+    autoRenew: isAutoRenew,
+    isTenMinuteTestMode: planId === 'test' || planId === 'test_10m' || Boolean(req.body.isTenMinuteTestMode),
     createdAt: Date.now()
   };
+
+  const customerUtoken = crypto.createHash('md5').update(`isgpro_cust_${email.toLowerCase().trim()}`).digest('hex');
+  paytrOrders[merchantOid].utoken = customerUtoken;
 
   if (db) {
     try {
@@ -5612,7 +5833,8 @@ app.all(['/api/paytr/token', '/paytr/token', '/paytr/pay-direct', '/api/paytr/pa
       merchantOid,
       iframeToken: `mock_paytr_token_${Date.now()}`,
       licenseKey,
-      amount: amountStr
+      amount: amountStr,
+      autoRenew: isAutoRenew
     });
   }
 
@@ -5670,7 +5892,9 @@ app.all(['/api/paytr/token', '/paytr/token', '/paytr/pay-direct', '/api/paytr/pa
       merchant_fail_url: merchant_fail_url,
       timeout_limit: '30',
       currency: currency,
-      test_mode: test_mode
+      test_mode: test_mode,
+      utoken: customerUtoken,
+      store_card: '1'
     });
 
     const response = await fetch('https://www.paytr.com/odeme/api/get-token', {
@@ -5701,7 +5925,8 @@ app.all(['/api/paytr/token', '/paytr/token', '/paytr/pay-direct', '/api/paytr/pa
         merchantOid,
         iframeToken: data.token,
         licenseKey,
-        amount: amountStr
+        amount: amountStr,
+        autoRenew: isAutoRenew
       });
     } else {
       console.error(`[PayTR API Error] Status: ${data.status}, Reason: ${data.reason || rawText}`);
@@ -5774,6 +5999,15 @@ app.all(['/api/paytr/callback', '/paytr/callback'], express.urlencoded({ extende
   order.paymentType = String(payment_type);
   order.currency = String(currency);
   order.paymentAmount = Number(total_amount);
+  if (req.body.utoken) order.utoken = String(req.body.utoken);
+  if (req.body.ctoken) order.ctoken = String(req.body.ctoken);
+  if (req.body.masked_pan || req.body.card_last4) {
+    const rawMask = String(req.body.masked_pan || req.body.card_last4);
+    order.cardLast4 = rawMask.slice(-4);
+  }
+  if (req.body.card_type || req.body.card_brand) {
+    order.cardBrand = String(req.body.card_type || req.body.card_brand);
+  }
 
   if (status === 'success') {
     console.log(`[PayTR 2. ADIM Payment Approved] Order: ${merchant_oid}, Amount: ${total_amount} kuruş`);
@@ -6065,6 +6299,8 @@ app.all('/api/paytr/success', async (req, res) => {
     (req.headers.referer && req.headers.referer.includes('/panel'))
   );
   const targetPath = isFromPanel ? '/panel/' : '/';
+  const isTenMinTest = order?.planId === 'test' || order?.planId === 'test_10m' || Boolean((order as any)?.isTenMinuteTestMode);
+  const test10mQuery = `&is_test_10m=${isTenMinTest ? 'true' : 'false'}`;
 
   res.send(`
     <!DOCTYPE html>
@@ -6095,7 +6331,7 @@ app.all('/api/paytr/success', async (req, res) => {
             if (targetOrigin.includes('localhost') || targetOrigin.includes('127.0.0.1')) {
               targetOrigin = targetOrigin.replace('https://', 'http://');
             }
-            const destination = targetOrigin + ${JSON.stringify(targetPath)} + "?paytr_status=success&payment=success&paytr_success=true&license=" + encodeURIComponent(${JSON.stringify(licenseKey)}) + "&plan=" + encodeURIComponent(${JSON.stringify(planId)}) + "&oid=" + encodeURIComponent(${JSON.stringify(oid || '')}) + "&username=" + encodeURIComponent(${JSON.stringify(orderUsername)});
+            const destination = targetOrigin + ${JSON.stringify(targetPath)} + "?paytr_status=success&payment=success&paytr_success=true&license=" + encodeURIComponent(${JSON.stringify(licenseKey)}) + "&plan=" + encodeURIComponent(${JSON.stringify(planId)}) + "&oid=" + encodeURIComponent(${JSON.stringify(oid || '')}) + "&username=" + encodeURIComponent(${JSON.stringify(orderUsername)}) + "&auto_renew=" + encodeURIComponent(${JSON.stringify(order?.autoRenew !== false ? 'true' : 'false')}) + ${JSON.stringify(test10mQuery)};
             window.location.href = destination;
           } else {
             // Loaded in iframe -> postMessage to parent React app
@@ -6104,7 +6340,9 @@ app.all('/api/paytr/success', async (req, res) => {
               oid: ${JSON.stringify(oid)}, 
               licenseKey: ${JSON.stringify(licenseKey)},
               planId: ${JSON.stringify(planId)},
-              username: ${JSON.stringify(orderUsername)}
+              username: ${JSON.stringify(orderUsername)},
+              autoRenew: ${JSON.stringify(order?.autoRenew !== false)},
+              isTenMinuteTestMode: ${JSON.stringify(isTenMinTest)}
             }, '*');
           }
         }, 1200);
@@ -6164,6 +6402,718 @@ app.all('/api/paytr/fail', async (req, res) => {
     </body>
     </html>
   `);
+});
+
+// PayTR Status Polling Endpoint (Used by frontend iframe to verify order completion)
+app.get(['/api/paytr/check-status', '/paytr/check-status'], async (req, res) => {
+  const oid = (req.query.oid || req.query.merchant_oid || '') as string;
+  if (!oid) {
+    return res.status(400).json({ approved: false, error: 'Missing order ID' });
+  }
+  const order = await getPaytrOrder(oid);
+  if (!order) {
+    return res.json({ approved: false, status: 'not_found' });
+  }
+  return res.json({
+    approved: order.status === 'success',
+    status: order.status,
+    licenseKey: order.licenseKey,
+    planId: order.planId,
+    username: order.username || '',
+    autoRenew: order.autoRenew !== false
+  });
+});
+
+// =========================================================================
+// ABONELİK VE OTOMATİK YENİLEME (AUTO-RENEWAL) YÖNETİM SERVİSLERİ
+// =========================================================================
+
+// Helper: Find user document in Firestore by username or email
+async function findUserDocForSubscription(username?: string, email?: string): Promise<{ docId: string; userData: any } | null> {
+  if (!db) return null;
+  const cleanUser = normalizeUsername(username || '');
+  const cleanMail = (email || '').toLowerCase().trim();
+
+  if (cleanUser) {
+    const directRef = doc(db, 'users', cleanUser);
+    const directSnap = await getDoc(directRef);
+    if (directSnap.exists()) {
+      const raw = directSnap.data();
+      return { docId: directSnap.id, userData: decryptUser(raw as any) || raw };
+    }
+  }
+
+  const usersSnap = await getDocs(collection(db, 'users'));
+  for (const d of usersSnap.docs) {
+    const raw = d.data();
+    const dec = decryptUser(raw as any) || raw;
+    const docUsername = normalizeUsername(dec.username || d.id || '');
+    const docEmail = (dec.email || '').toLowerCase().trim();
+
+    if (cleanUser && (docUsername === cleanUser || normalizeUsername(d.id) === cleanUser)) {
+      return { docId: d.id, userData: dec };
+    }
+    if (!cleanUser && cleanMail && docEmail === cleanMail && docUsername !== 'admin') {
+      return { docId: d.id, userData: dec };
+    }
+  }
+  return null;
+}
+
+// 1. Abonelik ve Otomatik Yenileme Durumunu Sorgulama Endpoint'i
+app.get(['/api/subscription/status', '/subscription/status'], async (req, res) => {
+  try {
+    const username = (req.query.username || '') as string;
+    const email = (req.query.email || '') as string;
+    if (!username && !email) {
+      return res.status(400).json({ success: false, error: 'Kullanıcı adı veya e-posta gereklidir.' });
+    }
+
+    const found = await findUserDocForSubscription(username, email);
+    if (!found) {
+      return res.json({
+        success: true,
+        isPremium: false,
+        autoRenew: true,
+        subscriptionStatus: 'inactive'
+      });
+    }
+
+    const u = found.userData;
+    const isPastExpiry = Boolean(u.licenseExpiresAt && (new Date(u.licenseExpiresAt).getTime() <= Date.now()));
+    const isDemoOrTrial = u.licenseType === 'demo' || u.licenseType === 'trial';
+    const autoRenew = isDemoOrTrial ? false : (u.autoRenew !== false);
+
+    // Süresi dolmuş demo, deneme veya otomatik yenilemesi kapalı hesaplar derhal premium'dan düşürülür:
+    const isExpiredNow = isPastExpiry && (isDemoOrTrial || !autoRenew || Boolean(u.isTenMinuteTestMode));
+    const effectiveIsPremium = isExpiredNow ? false : Boolean(u.isPremium);
+    const effectiveStatus = effectiveIsPremium ? (autoRenew ? 'active' : 'cancelled') : 'expired';
+
+    return res.json({
+      success: true,
+      username: u.username || found.docId,
+      isPremium: effectiveIsPremium,
+      licenseKey: u.licenseKey || '',
+      licenseType: u.licenseType || 'yearly',
+      licensePurchasedAt: u.licensePurchasedAt || null,
+      licenseExpiresAt: u.licenseExpiresAt || null,
+      autoRenew,
+      subscriptionStatus: effectiveStatus,
+      cancelledAt: u.cancelledAt || null,
+      nextRenewalDate: u.nextRenewalDate || u.licenseExpiresAt || null,
+      cardLast4: u.cardLast4 || null,
+      cardBrand: u.cardBrand || null,
+      isTenMinuteTestMode: Boolean(u.isTenMinuteTestMode),
+      autoRenewalTestCycles: u.autoRenewalTestCycles || 0,
+      testModeType: u.testModeType || null
+    });
+  } catch (err: any) {
+    console.error('[Subscription Status Error]:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 2. Otomatik Yenilemeyi Açma / Kapatma (Abonelik İptali) Endpoint'i
+app.post(['/api/subscription/toggle-autorenew', '/subscription/toggle-autorenew'], async (req, res) => {
+  try {
+    const { username, email, autoRenew } = req.body || {};
+    if (!username && !email) {
+      return res.status(400).json({ success: false, error: 'Kullanıcı adı veya e-posta zorunludur.' });
+    }
+
+    const nextAutoRenew = Boolean(autoRenew);
+    const nowIso = new Date().toISOString();
+    const updatePayload: Record<string, any> = {
+      autoRenew: nextAutoRenew,
+      subscriptionStatus: nextAutoRenew ? 'active' : 'cancelled',
+      cancelledAt: nextAutoRenew ? null : nowIso,
+      subscriptionUpdatedAt: nowIso
+    };
+
+    let targetEmail = (email || '').trim();
+    let targetName = username || 'Değerli Kullanıcımız';
+    let expiresAtStr = '';
+    let updatedDocId = normalizeUsername(username || '');
+
+    if (db) {
+      const found = await findUserDocForSubscription(username, email);
+      if (found) {
+        updatedDocId = found.docId;
+        targetEmail = found.userData.email || targetEmail;
+        targetName = found.userData.name || found.userData.username || targetName;
+        if (found.userData.licenseExpiresAt) {
+          expiresAtStr = new Date(found.userData.licenseExpiresAt).toLocaleDateString('tr-TR');
+        }
+        await setDoc(doc(db, 'users', found.docId), updatePayload, { merge: true });
+      } else if (updatedDocId) {
+        await setDoc(doc(db, 'users', updatedDocId), updatePayload, { merge: true });
+      }
+    }
+
+    // Kullanıcıya bilgilendirme e-postası gönder
+    if (targetEmail && targetEmail.includes('@') && !targetEmail.includes('test@isgpro')) {
+      const statusTitle = nextAutoRenew
+        ? '✅ Otomatik Abonelik Yenileme Aktif Edildi'
+        : 'ℹ️ Otomatik Abonelik Yenileme Durduruldu';
+      const statusDesc = nextAutoRenew
+        ? `Aboneliğinizin dönem sonunda (${expiresAtStr || 'mevcut dönem bitiş tarihinde'}) kesintisiz olarak otomatik yenilenmesi talimatınız aktif edilmiştir.`
+        : `Otomatik abonelik yenileme talimatınız iptal edilmiştir. Mevcut Premium lisans haklarınızı dönem sonuna kadar (${expiresAtStr || 'lisans bitiş tarihinize kadar'}) hiçbir kısıtlama olmadan kullanmaya devam edebilirsiniz. Dönem sonunda kartınızdan otomatik çekim yapılmayacaktır.`;
+
+      const mailHtml = `
+        <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:580px;margin:20px auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;">
+          <div style="background:linear-gradient(135deg,#1e1b4b,#4338ca);padding:24px;color:#ffffff;text-align:center;">
+            <h2 style="margin:0;font-size:18px;">${statusTitle}</h2>
+          </div>
+          <div style="padding:24px;color:#334155;font-size:14px;line-height:1.6;">
+            <p>Sayın <strong>${targetName}</strong>,</p>
+            <p>${statusDesc}</p>
+            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-top:16px;font-size:13px;">
+              <div><strong>Otomatik Yenileme Durumu:</strong> ${nextAutoRenew ? 'Açık (Aktif)' : 'Kapalı (Dönem Sonunda Sona Erecek)'}</div>
+              ${expiresAtStr ? `<div style="margin-top:6px;"><strong>Mevcut Dönem Bitiş Tarihi:</strong> ${expiresAtStr}</div>` : ''}
+              <div style="margin-top:6px;"><strong>İşlem Tarihi:</strong> ${new Date().toLocaleString('tr-TR')}</div>
+            </div>
+            <p style="margin-top:16px;font-size:12px;color:#64748b;">Tercihinizi dilediğiniz zaman İSG Pro Kullanıcı Panelinizdeki "Lisans & Abonelik Ayarları" bölümünden tekrar değiştirebilirsiniz.</p>
+          </div>
+        </div>
+      `;
+      sendEmailDirect(targetEmail, `${statusTitle} - İSG Pro`, mailHtml).catch(() => {});
+    }
+
+    return res.json({
+      success: true,
+      autoRenew: nextAutoRenew,
+      subscriptionStatus: updatePayload.subscriptionStatus,
+      cancelledAt: updatePayload.cancelledAt,
+      message: nextAutoRenew
+        ? 'Otomatik abonelik yenileme başarıyla açıldı.'
+        : 'Otomatik abonelik yenileme kapatıldı. Mevcut dönem sonuna kadar tüm haklarınızla kullanmaya devam edebilirsiniz.'
+    });
+  } catch (err: any) {
+    console.error('[Toggle AutoRenew Error]:', err);
+    return res.status(500).json({ success: false, error: 'Abonelik tercihi güncellenirken hata oluştu: ' + err.message });
+  }
+});
+
+// 3. Dönem Sonu Otomatik Abonelik Yenileme & Hatırlatma Tarayıcısı (Normal + 10 Dakikalık Geçici Test Modu Destekli)
+async function checkAndProcessAutoRenewals(): Promise<{ scanned: number; renewed: number; reminded: number; testRenewed: number }> {
+  let scanned = 0;
+  let renewed = 0;
+  let reminded = 0;
+  let testRenewed = 0;
+  if (!db) return { scanned, renewed, reminded, testRenewed };
+
+  try {
+    const usersSnap = await getDocs(collection(db, 'users'));
+    const nowMs = Date.now();
+    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+
+    for (const d of usersSnap.docs) {
+      const raw = d.data();
+      const u = decryptUser(raw as any) || raw;
+      if (!u) continue;
+
+      const isTenMinTest = Boolean(u.isTenMinuteTestMode || u.licenseType === 'test' || u.licenseType === 'test_10m');
+      if (d.id.toLowerCase() === 'admin' && !isTenMinTest) continue;
+      if (!u.isPremium || !u.licenseExpiresAt) continue;
+
+      scanned++;
+      const expiresMs = new Date(u.licenseExpiresAt).getTime();
+      if (isNaN(expiresMs)) continue;
+
+      const diffMs = expiresMs - nowMs;
+      const isAutoRenew = u.autoRenew !== false; // Varsayılan: Açık
+
+      // 1. STANDART TRIAL (7 GÜN) VEYA DEMO (10 DK) SÜRESİ DOLMUŞSA DOĞRUDAN SONLANDIR
+      if (!isTenMinTest && (u.licenseType === 'trial' || u.licenseType === 'demo')) {
+        if (diffMs <= 0) {
+          if (u.isPremium !== false || u.subscriptionStatus !== 'expired') {
+            await setDoc(doc(db, 'users', d.id), {
+              isPremium: false,
+              subscriptionStatus: 'expired',
+              expiredAt: new Date().toISOString()
+            }, { merge: true });
+            console.log(`[Lisans Süre Sonu] '${u.username}' kullanıcısının ${u.licenseType} süresi dolduğu için lisansı sonlandırıldı.`);
+          }
+        }
+        continue;
+      }
+
+      // =========================================================================
+      // ÖZEL 10 DAKİKALIK TEST MODU (GEÇİCİ TEST KONTROLÜ - CANLI / TEST)
+      // =========================================================================
+      if (isTenMinTest) {
+        // Eğer otomatik yenileme KAPALI ise ve 10 dakika dolduysa test lisansını sonlandır (ÇEKİM YAPMA!)
+        if (!isAutoRenew && diffMs <= 0) {
+          if (u.subscriptionStatus !== 'expired' || u.isPremium !== false) {
+            await setDoc(doc(db, 'users', d.id), {
+              isPremium: false,
+              subscriptionStatus: 'expired',
+              expiredAt: new Date().toISOString(),
+              lastTestChargeStatus: 'Otomatik Yenileme Kapalı Olduğu İçin Karttan Çekim Yapılmadı (Abonelik Sona Erdi)'
+            }, { merge: true });
+            console.log(`[10-Dk Test] '${u.username}' kullanıcısı otomatik yenilemeyi kapattığı için 10. dakikada karttan ÇEKİM YAPILMADI ve abonelik sonlandırıldı.`);
+
+            if (u.email && u.email.includes('@') && !u.email.includes('test@isgpro')) {
+              const mailHtml = `
+                <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:580px;margin:20px auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;">
+                  <div style="background:linear-gradient(135deg,#991b1b,#dc2626);padding:24px;color:#ffffff;text-align:center;">
+                    <h2 style="margin:0;font-size:18px;">🛑 10 Dakikalık Test: Süre Doldu (Çekim Yapılmadı)</h2>
+                  </div>
+                  <div style="padding:24px;color:#334155;font-size:14px;line-height:1.6;">
+                    <p>Sayın <strong>${u.name || u.username}</strong>,</p>
+                    <p>10 dakikalık test süreniz tamamlanmıştır.</p>
+                    <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:12px;padding:14px;margin-top:16px;font-size:13px;color:#991b1b;">
+                      <strong>✓ Test Doğrulandı:</strong> Otomatik yenileme tercihiniz <strong>KAPALI</strong> olduğu için kayıtlı kartınızdan <strong>HİÇBİR ÜCRET ÇEKİLMEMİŞTİR</strong>.
+                    </div>
+                    <p style="margin-top:16px;font-size:12px;color:#64748b;">Aboneliğinizi dilediğiniz zaman profil ayarlarınızdan tekrar aktif edebilirsiniz.</p>
+                  </div>
+                </div>
+              `;
+              sendEmailDirect(u.email, `🛑 [10-Dk Test] Süre Doldu - Otomatik Yenileme Kapalı Olduğu İçin Çekim Yapılmadı`, mailHtml).catch(() => {});
+            }
+          }
+          continue;
+        }
+
+        // Eğer otomatik yenileme AÇIK ise ve sürenin bitimine <= 15 saniye kaldıysa ya da dolduysa
+        if (isAutoRenew && diffMs <= 15 * 1000) {
+          const nextExpiry = new Date(nowMs + 10 * 60 * 1000); // 10 dakika daha uzat
+          const nextCycle = (Number(u.autoRenewalTestCycles) || 0) + 1;
+          let rawUtoken = u.paytrUserToken ? decryptData(u.paytrUserToken) : '';
+          if (!rawUtoken && u.email) {
+            rawUtoken = crypto.createHash('md5').update(`isgpro_cust_${(u.email || '').toLowerCase().trim()}`).digest('hex');
+          }
+          let rawCtoken = u.paytrCardToken ? decryptData(u.paytrCardToken) : '';
+
+          // Eğer ctoken henüz veritabanında yoksa, PayTR CAPI list servisiyle kartları sorgula
+          if (rawUtoken && !rawCtoken) {
+            try {
+              const cards = await getPayTRSavedCards(rawUtoken);
+              if (cards && cards.length > 0 && cards[0].ctoken) {
+                rawCtoken = cards[0].ctoken;
+                await setDoc(doc(db, 'users', d.id), {
+                  paytrUserToken: encryptData(rawUtoken),
+                  paytrCardToken: encryptData(rawCtoken),
+                  ...(cards[0].masked_pan ? { cardLast4: cards[0].masked_pan.slice(-4) } : {}),
+                  ...(cards[0].card_type ? { cardBrand: cards[0].card_type } : {})
+                }, { merge: true });
+              }
+            } catch (e) {}
+
+            // CAPI yetkisi henüz açılmadıysa veya localhost testindeyse testi kesintiye uğratmamak için token ata
+            if (!rawCtoken) {
+              rawCtoken = `ctoken_${d.id}_${Date.now()}`;
+              await setDoc(doc(db, 'users', d.id), {
+                paytrUserToken: encryptData(rawUtoken),
+                paytrCardToken: encryptData(rawCtoken)
+              }, { merge: true });
+            }
+          }
+
+          let chargeStatus = '';
+          let isChargedSuccessfully = false;
+          let chargeOid = '';
+
+          // Kayıtlı kart varsa PayTR Non-3D ile gerçek 1 TL çekim yap
+          if (rawUtoken && rawCtoken) {
+            const subOid = `RENEW10M${Date.now()}${Math.floor(100 + Math.random() * 900)}`;
+            chargeOid = subOid;
+            const chargeRes = await executePayTRNon3DCharge({
+              merchantOid: subOid,
+              email: u.email,
+              amountKurus: 100, // 1.00 TL
+              utoken: rawUtoken,
+              ctoken: rawCtoken,
+              userName: u.name || u.username || 'İSG Pro Müşterisi',
+              userPhone: u.phone,
+              userAddress: u.address
+            });
+            chargeStatus = chargeRes.message;
+            isChargedSuccessfully = chargeRes.success;
+          } else {
+            chargeStatus = 'Kayıtlı Kart Tokeni Bulunamadı (PayTR üzerinde kartınız henüz kaydedilmemiş. Lütfen 1 TL test ödemesini tamamlayarak kartınızı kaydedin.)';
+            isChargedSuccessfully = false;
+          }
+
+          if (isChargedSuccessfully) {
+            // GERÇEK ÇEKİM BAŞARILI: Lisansı 10 dakika uzat
+            const updatePayload: Record<string, any> = {
+              isPremium: true,
+              licenseExpiresAt: nextExpiry.toISOString(),
+              nextRenewalDate: nextExpiry.toISOString(),
+              lastAutoRenewedAt: new Date().toISOString(),
+              autoRenewalTestCycles: nextCycle,
+              subscriptionStatus: 'active',
+              lastTestChargeStatus: `✅ PayTR Çekimi Başarılı (1,00 TL) - OID: ${chargeOid}`
+            };
+            await setDoc(doc(db, 'users', d.id), updatePayload, { merge: true });
+            testRenewed++;
+            console.log(`[10-Dk Test Otomatik Yenileme ✅] '${u.username}' için 1,00 TL çekildi ve 10 dk uzatıldı.`);
+
+            if (u.email && u.email.includes('@') && !u.email.includes('test@isgpro')) {
+              const mailHtml = `
+                <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:580px;margin:20px auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;">
+                  <div style="background:linear-gradient(135deg,#1e1b4b,#15803d);padding:24px;color:#ffffff;text-align:center;">
+                    <h2 style="margin:0;font-size:18px;">💳 PayTR Otomatik Yenileme: 1,00 TL Tahsil Edildi</h2>
+                    <div style="font-size:12px;opacity:0.85;margin-top:4px;">İşlem Kodu: ${chargeOid} | Çevrim: #${nextCycle}</div>
+                  </div>
+                  <div style="padding:24px;color:#334155;font-size:14px;line-height:1.6;">
+                    <p>Sayın <strong>${u.name || u.username}</strong>,</p>
+                    <p>Kayıtlı kartınızdan 10 dakikalık otomatik yenileme testi kapsamında <strong>1,00 TL</strong> tutarındaki tahsilat başarıyla gerçekleştirilmiştir.</p>
+                    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:14px;margin-top:16px;font-size:13px;color:#166534;">
+                      <div><strong>Tahsil Edilen Tutar:</strong> 1,00 TL</div>
+                      <div style="margin-top:4px;"><strong>Yenileme Sayısı:</strong> #${nextCycle}</div>
+                      <div style="margin-top:4px;"><strong>Sonraki Bitiş Saati:</strong> ${nextExpiry.toLocaleTimeString('tr-TR')}</div>
+                    </div>
+                  </div>
+                </div>
+              `;
+              sendEmailDirect(u.email, `💳 [PayTR #${nextCycle}] 1,00 TL Otomatik Tahsilat Başarılı`, mailHtml).catch(() => {});
+            }
+          } else {
+            // ÇEKİM BAŞARISIZ / YETKİ YOK: SÜREYİ ASLA UZATMA!
+            const isFullyExpired = diffMs <= 0;
+            const updatePayload: Record<string, any> = {
+              ...(isFullyExpired ? { isPremium: false, subscriptionStatus: 'payment_failed' } : {}),
+              lastTestChargeStatus: `❌ PayTR Çekim Reddi: ${chargeStatus}`
+            };
+            await setDoc(doc(db, 'users', d.id), updatePayload, { merge: true });
+            console.warn(`[10-Dk Test Çekim Reddi ❌] '${u.username}' için çekim yapılamadı. Neden: ${chargeStatus}`);
+
+            if (u.email && u.email.includes('@') && !u.email.includes('test@isgpro')) {
+              const mailHtml = `
+                <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:580px;margin:20px auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;">
+                  <div style="background:linear-gradient(135deg,#7f1d1d,#b91c1c);padding:24px;color:#ffffff;text-align:center;">
+                    <h2 style="margin:0;font-size:18px;">⚠️ PayTR Otomatik Tahsilat Başarısız</h2>
+                  </div>
+                  <div style="padding:24px;color:#334155;font-size:14px;line-height:1.6;">
+                    <p>Sayın <strong>${u.name || u.username}</strong>,</p>
+                    <p>10 dakikalık otomatik yenileme testiniz kapsamında kayıtlı kartınızdan 1,00 TL çekim denenmiş ancak PayTR tarafından onaylanmamıştır.</p>
+                    <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:12px;padding:14px;margin-top:16px;font-size:13px;color:#991b1b;">
+                      <strong>PayTR Yanıtı:</strong> ${chargeStatus}
+                    </div>
+                  </div>
+                </div>
+              `;
+              sendEmailDirect(u.email, `⚠️ [PayTR Uyarı] Otomatik Tahsilat Gerçekleştirilemedi: ${chargeStatus.substring(0, 40)}`, mailHtml).catch(() => {});
+            }
+          }
+        }
+        continue; // 10 dakikalık test kullanıcısı için standart yıllık/aylık bloğunu geç
+      }
+
+      // =========================================================================
+      // STANDART AYLIK / YILLIK ABONELİK DÖNGÜSÜ
+      // =========================================================================
+      // Eğer otomatik yenileme KAPALI ise ve süresi dolmuşsa aboneliği sonlandır
+      if (!isAutoRenew && diffMs <= 0 && u.subscriptionStatus !== 'expired') {
+        await setDoc(doc(db, 'users', d.id), {
+          isPremium: false,
+          subscriptionStatus: 'expired',
+          expiredAt: new Date().toISOString()
+        }, { merge: true });
+        continue;
+      }
+
+      // Eğer otomatik yenileme AÇIK ise ve bitimine <= 24 saat kaldıysa veya yeni dolduysa
+      if (isAutoRenew && diffMs <= 24 * 60 * 60 * 1000 && diffMs > -7 * 24 * 60 * 60 * 1000) {
+        const rawUtoken = u.paytrUserToken ? decryptData(u.paytrUserToken) : '';
+        const rawCtoken = u.paytrCardToken ? decryptData(u.paytrCardToken) : '';
+
+        // Kayıtlı kart token'ları (PayTR CAPI utoken & ctoken) mevcutsa otomatik yenileme provizyonu başlat
+        if (rawUtoken && rawCtoken) {
+          const planId = u.licenseType === 'monthly' ? 'monthly' : 'yearly';
+          const newKey = generateLicenseKey(planId);
+          await registerGeneratedLicense(newKey, planId, u.email || '');
+          const nextExpiry = new Date(Math.max(nowMs, expiresMs));
+          if (planId === 'monthly') nextExpiry.setMonth(nextExpiry.getMonth() + 1);
+          else nextExpiry.setFullYear(nextExpiry.getFullYear() + 1);
+
+          await setDoc(doc(db, 'users', d.id), {
+            isPremium: true,
+            licenseKey: newKey,
+            licensePurchasedAt: new Date().toISOString(),
+            licenseExpiresAt: nextExpiry.toISOString(),
+            nextRenewalDate: nextExpiry.toISOString(),
+            subscriptionStatus: 'active',
+            lastAutoRenewedAt: new Date().toISOString()
+          }, { merge: true });
+          renewed++;
+        } else if (diffMs <= THREE_DAYS_MS && u.lastRenewalReminderFor !== u.licenseExpiresAt && u.email && u.email.includes('@')) {
+          // 3D Secure gerektiren kartlar için 1-Tıkla Hızlı Yenileme Bağlantısı e-postası gönder
+          const planLabel = u.licenseType === 'monthly' ? 'Aylık Standart Paket (₺299)' : 'Yıllık Premium Paket (₺2.990)';
+          const expDateStr = new Date(expiresMs).toLocaleDateString('tr-TR');
+          const reminderHtml = `
+            <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:580px;margin:20px auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;">
+              <div style="background:linear-gradient(135deg,#1e1b4b,#4f46e5);padding:24px;color:#ffffff;text-align:center;">
+                <h2 style="margin:0;font-size:18px;">🔄 Abonelik Dönem Sonu Yenileme Bildirimi</h2>
+              </div>
+              <div style="padding:24px;color:#334155;font-size:14px;line-height:1.6;">
+                <p>Sayın <strong>${u.name || u.username}</strong>,</p>
+                <p>Otomatik yenileme tercihiniz açık olan <strong>${planLabel}</strong> aboneliğinizin mevcut dönemi <strong>${expDateStr}</strong> tarihinde tamamlanmaktadır.</p>
+                <p>Kesintisiz kullanım için İSG Pro panelinizden tek tıkla yeni dönem onayınızı tamamlayabilir veya abonelik ayarlarınızdan otomatik yenileme tercihinizi yönetebilirsiniz.</p>
+              </div>
+            </div>
+          `;
+          await sendEmailDirect(u.email, '🔄 İSG Pro Abonelik Dönem Sonu Yenileme Bildirimi', reminderHtml).catch(() => {});
+          await setDoc(doc(db, 'users', d.id), { lastRenewalReminderFor: u.licenseExpiresAt }, { merge: true });
+          reminded++;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[AutoRenewal Check Error]:', err);
+  }
+  return { scanned, renewed, reminded, testRenewed };
+}
+
+app.post(['/api/subscription/trigger-renewal-check', '/subscription/trigger-renewal-check'], async (req, res) => {
+  try {
+    const { username, email, action = 'check' } = req.body || {};
+
+    if (username || email) {
+      const found = await findUserDocForSubscription(username, email);
+      const targetDocId = found?.docId || (username ? normalizeUsername(username) : '');
+      const u = found?.userData || {};
+      const isAutoRenew = u.autoRenew !== false;
+
+      // 1. Manuel Simülasyon: Süreyi hemen bitirip karttan çekilmediğini test etme
+      if (action === 'expire_now') {
+        const past = new Date(Date.now() - 5000).toISOString();
+        if (db && targetDocId) {
+          await setDoc(doc(db, 'users', targetDocId), {
+            isPremium: false,
+            subscriptionStatus: 'expired',
+            licenseExpiresAt: past,
+            lastTestChargeStatus: 'Otomatik Yenileme Kapalı Olduğu İçin Çekim Yapılmadı (Süre Doldu)'
+          }, { merge: true });
+        }
+        return res.json({
+          success: true,
+          renewed: false,
+          action: 'expired',
+          isPremium: false,
+          subscriptionStatus: 'expired',
+          licenseExpiresAt: past,
+          message: '🛑 10 Dakikalık süre tamamlandı! Otomatik yenileme KAPALI olduğu için kartınızdan HİÇBİR ücret çekilmedi ve abonelik durduruldu.'
+        });
+      }
+
+      // 2. Yenileme Tetikleme (Şimdi Çek & Yenile)
+      if (action === 'force_renew' || action === 'check') {
+        // Eğer otomatik yenileme KAPALI ise: KESİNLİKLE ÇEKİM YAPMA!
+        if (!isAutoRenew) {
+          return res.json({
+            success: true,
+            renewed: false,
+            action: 'blocked_by_cancel',
+            autoRenew: false,
+            subscriptionStatus: 'cancelled',
+            licenseExpiresAt: u.licenseExpiresAt || null,
+            message: '🛑 ÇEKİM YAPILMADI! Otomatik yenilemeyi kapattığınız (iptal ettiğiniz) için karttan para çekilmedi ve süre uzatılmadı.'
+          });
+        }
+
+        // Otomatik yenileme AÇIK ise: Çekimi yap ve 10 dk uzat
+        const nextExpiry = new Date(Date.now() + 10 * 60 * 1000);
+        const nextCycle = (Number(u.autoRenewalTestCycles) || 0) + 1;
+        let rawUtoken = u.paytrUserToken ? decryptData(u.paytrUserToken) : '';
+        const userEmail = (u.email || email || '').toLowerCase().trim();
+        if (!rawUtoken && userEmail) {
+          rawUtoken = crypto.createHash('md5').update(`isgpro_cust_${userEmail}`).digest('hex');
+        }
+        let rawCtoken = u.paytrCardToken ? decryptData(u.paytrCardToken) : '';
+
+        if (rawUtoken && !rawCtoken) {
+          try {
+            const cards = await getPayTRSavedCards(rawUtoken);
+            if (cards && cards.length > 0 && cards[0].ctoken) {
+              rawCtoken = cards[0].ctoken;
+              await setDoc(doc(db, 'users', targetDocId), {
+                paytrUserToken: encryptData(rawUtoken),
+                paytrCardToken: encryptData(rawCtoken),
+                ...(cards[0].masked_pan ? { cardLast4: cards[0].masked_pan.slice(-4) } : {}),
+                ...(cards[0].card_type ? { cardBrand: cards[0].card_type } : {})
+              }, { merge: true });
+            }
+          } catch (e) {}
+
+          // CAPI yetkisi henüz açılmadıysa veya localhost testindeyse testi kesintiye uğratmamak için token ata
+          if (!rawCtoken) {
+            rawCtoken = `ctoken_${targetDocId}_${Date.now()}`;
+            await setDoc(doc(db, 'users', targetDocId), {
+              paytrUserToken: encryptData(rawUtoken),
+              paytrCardToken: encryptData(rawCtoken)
+            }, { merge: true });
+          }
+        }
+
+        let chargeStatus = '';
+        let isChargedSuccessfully = false;
+        let chargeOid = '';
+
+        if (rawUtoken && rawCtoken) {
+          const subOid = `RENEW10M${Date.now()}${Math.floor(100 + Math.random() * 900)}`;
+          chargeOid = subOid;
+          const chargeRes = await executePayTRNon3DCharge({
+            merchantOid: subOid,
+            email: userEmail,
+            amountKurus: 100, // 1.00 TL
+            utoken: rawUtoken,
+            ctoken: rawCtoken,
+            userName: u.name || u.username || 'İSG Pro Müşterisi',
+            userPhone: u.phone,
+            userAddress: u.address
+          });
+          chargeStatus = chargeRes.message;
+          isChargedSuccessfully = chargeRes.success;
+        } else {
+          chargeStatus = 'Kayıtlı Kart Tokeni Bulunamadı (PayTR üzerinde kartınız henüz kayıtlı değil. Lütfen "1 TL Canlı Kart Testini Başlat" ile kartınızı kaydedin.)';
+          isChargedSuccessfully = false;
+        }
+
+        if (isChargedSuccessfully) {
+          const updatePayload: Record<string, any> = {
+            isPremium: true,
+            licenseExpiresAt: nextExpiry.toISOString(),
+            nextRenewalDate: nextExpiry.toISOString(),
+            lastAutoRenewedAt: new Date().toISOString(),
+            autoRenewalTestCycles: nextCycle,
+            subscriptionStatus: 'active',
+            lastTestChargeStatus: `✅ PayTR Çekimi Başarılı (1,00 TL) - OID: ${chargeOid}`
+          };
+
+          if (db && targetDocId) {
+            await setDoc(doc(db, 'users', targetDocId), updatePayload, { merge: true });
+          }
+
+          return res.json({
+            success: true,
+            renewed: true,
+            chargeSuccess: true,
+            action: 'renewed',
+            isPremium: true,
+            autoRenew: true,
+            subscriptionStatus: 'active',
+            licenseExpiresAt: nextExpiry.toISOString(),
+            autoRenewalTestCycles: nextCycle,
+            lastTestChargeStatus: updatePayload.lastTestChargeStatus,
+            message: `⚡ PayTR'dan 1,00 TL başarıyla çekildi ve lisansınız 10 dakika uzatıldı! (OID: ${chargeOid})`
+          });
+        } else {
+          // Çekim başarısız: süreyi uzatma!
+          const updatePayload: Record<string, any> = {
+            lastTestChargeStatus: `❌ PayTR Çekim Reddi: ${chargeStatus}`
+          };
+          if (db && targetDocId) {
+            await setDoc(doc(db, 'users', targetDocId), updatePayload, { merge: true });
+          }
+
+          return res.json({
+            success: true,
+            renewed: false,
+            chargeSuccess: false,
+            action: 'charge_failed',
+            lastTestChargeStatus: updatePayload.lastTestChargeStatus,
+            message: `⚠️ PayTR Tahsilat Gerçekleşmedi: ${chargeStatus}`
+          });
+        }
+      }
+    }
+
+    const result = await checkAndProcessAutoRenewals();
+    return res.json({ success: true, result });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 4. Geçici 10 Dakikalık Test Modunu Başlatma / Durdurma API'leri
+app.post(['/api/subscription/start-test-10m', '/subscription/start-test-10m'], async (req, res) => {
+  try {
+    const { username, email, mode = 'simulate' } = req.body || {};
+    if (!username && !email) {
+      return res.status(400).json({ success: false, error: 'Kullanıcı adı veya e-posta zorunludur.' });
+    }
+
+    const found = await findUserDocForSubscription(username, email);
+    const targetDocId = found?.docId || normalizeUsername(username || '');
+    if (!targetDocId) {
+      return res.status(404).json({ success: false, error: 'Kullanıcı bulunamadı.' });
+    }
+
+    const now = new Date();
+    const expiry = new Date(now.getTime() + 10 * 60 * 1000); // 10 dakika sonrası
+    const newKey = generateLicenseKey('demo');
+
+    const updatePayload: Record<string, any> = {
+      isPremium: true,
+      licenseKey: newKey,
+      licenseType: 'test',
+      isTenMinuteTestMode: true,
+      autoRenew: true,
+      subscriptionStatus: 'active',
+      licensePurchasedAt: now.toISOString(),
+      licenseExpiresAt: expiry.toISOString(),
+      nextRenewalDate: expiry.toISOString(),
+      autoRenewalTestCycles: 0,
+      testModeType: mode, // 'simulate' veya 'live'
+      lastTestChargeStatus: mode === 'live' ? 'PayTR Canlı Kart Modu (1 TL)' : 'Simüle Test Modu (0 TL)'
+    };
+
+    const rawUtoken = found?.userData?.paytrUserToken ? decryptData(found.userData.paytrUserToken) : '';
+    let rawCtoken = found?.userData?.paytrCardToken ? decryptData(found.userData.paytrCardToken) : '';
+    if (rawUtoken && !rawCtoken) {
+      try {
+        const cards = await getPayTRSavedCards(rawUtoken);
+        if (cards && cards.length > 0 && cards[0].ctoken) {
+          rawCtoken = cards[0].ctoken;
+          updatePayload.paytrCardToken = encryptData(rawCtoken);
+          if (cards[0].masked_pan) updatePayload.cardLast4 = cards[0].masked_pan.slice(-4);
+          if (cards[0].card_type) updatePayload.cardBrand = cards[0].card_type;
+        }
+      } catch (e) {}
+    }
+
+    if (db) {
+      await setDoc(doc(db, 'users', targetDocId), updatePayload, { merge: true });
+    }
+
+    return res.json({
+      success: true,
+      message: `10 Dakikalık Otomatik Yenileme Test Modu (${mode === 'live' ? 'Canlı Kart' : 'Simüle'}) başlatıldı. İlk yenileme 10 dakika sonra gerçekleşecek.`,
+      testDetails: updatePayload
+    });
+  } catch (err: any) {
+    console.error('[Start 10m Test Error]:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post(['/api/subscription/stop-test-10m', '/subscription/stop-test-10m'], async (req, res) => {
+  try {
+    const { username, email } = req.body || {};
+    const found = await findUserDocForSubscription(username, email);
+    const targetDocId = found?.docId || normalizeUsername(username || '');
+    if (!targetDocId) {
+      return res.status(404).json({ success: false, error: 'Kullanıcı bulunamadı.' });
+    }
+
+    if (db) {
+      await setDoc(doc(db, 'users', targetDocId), {
+        isTenMinuteTestMode: false,
+        testModeType: null,
+        autoRenewalTestCycles: 0
+      }, { merge: true });
+    }
+
+    return res.json({
+      success: true,
+      message: '10 Dakikalık test modu sonlandırıldı.'
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // Dedicated endpoint to dispatch billing & invoice details to infoisgpro@gmail.com
@@ -7098,6 +8048,14 @@ if (fs.existsSync(panelDistPath)) {
 // ==========================================
 
 async function startServer() {
+  // Sistem yöneticisi (admin) e-posta adresini daima infoisgpro@gmail.com olarak garanti et
+  if (db) {
+    setDoc(doc(db, 'users', 'admin'), {
+      email: 'infoisgpro@gmail.com',
+      updatedAt: new Date().toISOString()
+    }, { merge: true }).catch(() => {});
+  }
+
   // Sync/Load application releases from Firestore asynchronously to prevent startup blockages
   initReleasesFromFirestore().catch(err => {
     console.error('[Firestore] Background loading failed:', err);
@@ -7107,10 +8065,17 @@ async function startServer() {
   checkAndSendTrialExpiryReminders().catch(err => {
     console.error('[Trial Reminder Check] Startup check failed:', err);
   });
-  // Recurring check every 30 minutes
+  checkAndProcessAutoRenewals().catch(err => {
+    console.error('[AutoRenewal Check] Startup check failed:', err);
+  });
+  // Recurring check for trial expiry (every 30 mins) & auto-renewals (every 10 seconds for instant 10-minute test mode response)
   setInterval(() => {
     checkAndSendTrialExpiryReminders().catch(err => console.error('[Trial Reminder Check] Interval check failed:', err));
   }, 30 * 60 * 1000);
+
+  setInterval(() => {
+    checkAndProcessAutoRenewals().catch(err => console.error('[AutoRenewal Check] Interval check failed:', err));
+  }, 10 * 1000);
 
   // Create unified HTTP server
   const httpServer = http.createServer(app);

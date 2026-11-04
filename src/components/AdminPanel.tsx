@@ -837,7 +837,7 @@ export default function AdminPanel({
 
   const handleDeleteUser = (targetUser: User) => {
     const targetUsername = normalizeUsername(targetUser.username);
-    if (targetUsername === 'admin' || targetUser.email === 'admin@isg.com') {
+    if (targetUsername === 'admin' || targetUser.email === 'admin@isg.com' || targetUser.email === 'infoisgpro@gmail.com') {
       alert('Sistem yöneticisi silinemez!');
       return;
     }
@@ -3433,7 +3433,7 @@ export default function AdminPanel({
                                     {u.isPremium ? (
                                       <button
                                         onClick={() => {
-                                          if (u.email === 'admin@isg.com') {
+                                          if (u.email === 'admin@isg.com' || u.email === 'infoisgpro@gmail.com' || u.username === 'admin') {
                                             alert('Sistem yöneticisinin lisansı iptal edilemez!');
                                             return;
                                           }

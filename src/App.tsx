@@ -34,6 +34,7 @@ import DownloadsPage from './components/DownloadsPage';
 import TrialModal from './components/TrialModal';
 import InitialLegalConsentModal from './components/InitialLegalConsentModal';
 import EmailVerificationModal from './components/EmailVerificationModal';
+import TenMinuteTestTopBanner from './components/TenMinuteTestTopBanner';
 import { getLicenseTypeFromKey, getLicenseDurationDays, isLicenseActive, getLicensePlanName } from './lib/licenseUtils';
 import { deduplicateAndCleanUsers, sanitizeUserForFirestore, normalizeUsername, generateAvailableUsernameSuggestions, checkEmailAccountLimitFromDb } from './lib/userUtils';
 import { getGenericLegalText } from './data/legal';
@@ -48,7 +49,7 @@ const INITIAL_USERS: UserType[] = [
     username: "admin", 
     password: "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8", // SHA-256 hash of "password"
     name: getObfuscatedSecret("U2lzdGVtIFnDtm5ldGljaXNp"), 
-    email: getObfuscatedSecret("YWRtaW5AaXNnLmNvbQ=="), 
+    email: getObfuscatedSecret("aW5mb2lzZ3Byb0BnbWFpbC5jb20="), 
     phone: getObfuscatedSecret("NTU1MTExMjIzMw=="), 
     role: 'admin', 
     isPremium: true,
@@ -146,10 +147,11 @@ export default function App() {
           }
         }
 
-        // Auto-check expiration for non-admin accounts
-        if (parsed.isPremium && parsed.licenseExpiresAt && parsed.role !== 'admin') {
+        // Auto-check expiration for all accounts
+        if (parsed.isPremium && parsed.licenseExpiresAt) {
           if (!isLicenseActive(parsed)) {
             parsed.isPremium = false;
+            parsed.subscriptionStatus = 'expired';
           }
         }
         localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(parsed));
@@ -393,10 +395,14 @@ export default function App() {
       }
 
       if (targetUser && license) {
-        const planType = getLicenseTypeFromKey(license);
+        const urlPlan = params.get('plan') || '';
+        const is10mTest = params.get('is_test_10m') === 'true' || urlPlan === 'test' || urlPlan === 'test_10m' || Boolean((targetUser as any)?.isTenMinuteTestMode);
+        const planType = is10mTest ? 'test' : getLicenseTypeFromKey(license);
         const durationDays = getLicenseDurationDays(planType);
         const now = new Date();
-        const expiresAt = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+        const expiresAt = is10mTest
+          ? new Date(now.getTime() + 10 * 60 * 1000)
+          : new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
 
         const updatedTarget: UserType = {
           ...targetUser,
@@ -404,7 +410,13 @@ export default function App() {
           licenseKey: license,
           licensePurchasedAt: now.toISOString(),
           licenseExpiresAt: expiresAt.toISOString(),
-          licenseType: planType
+          licenseType: is10mTest ? ('test' as any) : planType,
+          isTenMinuteTestMode: Boolean(is10mTest),
+          autoRenew: params.get('auto_renew') !== 'false',
+          subscriptionStatus: params.get('auto_renew') !== 'false' ? 'active' : 'cancelled',
+          nextRenewalDate: expiresAt.toISOString(),
+          autoRenewalTestCycles: 0,
+          testModeType: is10mTest ? 'live' : null
         };
 
         // Update in users array
@@ -517,7 +529,7 @@ export default function App() {
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, [currentUser, users]);
-  const [checkoutPlan, setCheckoutPlan] = useState<'monthly' | 'yearly' | null>(null);
+  const [checkoutPlan, setCheckoutPlan] = useState<'monthly' | 'yearly' | 'test' | null>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
 
   // Dynamic Site Administration states
@@ -821,6 +833,53 @@ export default function App() {
     window.addEventListener('storage', handleStorageChange);
     return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
+
+  // Aktif oturumda sürenin bitimini anlık olarak yakalayıp lisansı düşüren canlı dinleyici
+  useEffect(() => {
+    if (!currentUser?.licenseExpiresAt) return;
+    const checkExpiry = () => {
+      if (currentUser.licenseExpiresAt && !isLicenseActive(currentUser)) {
+        if (currentUser.isPremium) {
+          handleUpdateProfile({ isPremium: false, subscriptionStatus: 'expired' });
+        }
+      }
+    };
+    checkExpiry();
+    const expInterval = setInterval(checkExpiry, 2000);
+    return () => clearInterval(expInterval);
+  }, [currentUser?.licenseExpiresAt, currentUser?.isPremium]);
+
+  // Sayfa açıldığında veya kullanıcı oturum açtığında sunucudan güncel abonelik ve test durumunu senkronize et
+  useEffect(() => {
+    if (!currentUser?.username) return;
+    const fetchLatestSubStatus = async () => {
+      try {
+        const res = await fetch(`/api/subscription/status?username=${encodeURIComponent(currentUser.username)}&email=${encodeURIComponent(currentUser.email || '')}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data && data.success) {
+          const hasDiff = 
+            Boolean(data.isTenMinuteTestMode) !== Boolean(currentUser.isTenMinuteTestMode) ||
+            Boolean(data.isPremium) !== Boolean(currentUser.isPremium) ||
+            (data.licenseExpiresAt && data.licenseExpiresAt !== currentUser.licenseExpiresAt) ||
+            (typeof data.autoRenew === 'boolean' && data.autoRenew !== (currentUser.autoRenew !== false));
+
+          if (hasDiff) {
+            handleUpdateProfile({
+              isTenMinuteTestMode: Boolean(data.isTenMinuteTestMode),
+              isPremium: Boolean(data.isPremium),
+              licenseExpiresAt: data.licenseExpiresAt || currentUser.licenseExpiresAt,
+              autoRenew: data.autoRenew !== false,
+              subscriptionStatus: data.subscriptionStatus || currentUser.subscriptionStatus,
+              autoRenewalTestCycles: data.autoRenewalTestCycles || 0,
+              testModeType: data.testModeType || currentUser.testModeType
+            });
+          }
+        }
+      } catch (_) {}
+    };
+    fetchLatestSubStatus();
+  }, [currentUser?.username]);
 
   // ==========================================
   // AUTHENTICATION HANDLERS
@@ -1171,6 +1230,9 @@ export default function App() {
       localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
       localStorage.setItem('isg_users_db', JSON.stringify(updatedUsers));
       localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(updatedUser));
+      localStorage.setItem('isg_active_user', JSON.stringify(updatedUser));
+      localStorage.setItem('currentUser', JSON.stringify(encryptUser(updatedUser)));
+      window.dispatchEvent(new Event('storage'));
     } catch (e) {}
 
     await saveUserToFirestore(updatedUser);
@@ -1201,15 +1263,26 @@ export default function App() {
 
     const purchaseDate = new Date().toISOString();
     const expiryDate = new Date();
-    if (checkoutPlan === 'yearly') expiryDate.setFullYear(expiryDate.getFullYear() + 1);
-    else expiryDate.setMonth(expiryDate.getMonth() + 1);
+    const isTestPlan = checkoutPlan === 'test' || checkoutMeta?.planId === 'test';
+    if (isTestPlan) {
+      expiryDate.setMinutes(expiryDate.getMinutes() + 10);
+    } else if (checkoutPlan === 'yearly') {
+      expiryDate.setFullYear(expiryDate.getFullYear() + 1);
+    } else {
+      expiryDate.setMonth(expiryDate.getMonth() + 1);
+    }
 
     const upgradeFields: Partial<UserType> = { 
       isPremium: true, 
       licenseKey, 
       licensePurchasedAt: purchaseDate, 
       licenseExpiresAt: expiryDate.toISOString(),
-      licenseType: checkoutPlan as any
+      licenseType: (isTestPlan ? 'test' : checkoutPlan) as any,
+      isTenMinuteTestMode: isTestPlan,
+      autoRenew: true,
+      subscriptionStatus: 'active',
+      autoRenewalTestCycles: 0,
+      nextRenewalDate: expiryDate.toISOString()
     };
 
     if (checkoutMeta?.tcNo && !currentUser.tcNo) {
@@ -1385,6 +1458,14 @@ export default function App() {
   return (
     <div className="min-h-screen bg-white dark:bg-slate-950 flex flex-col font-sans text-slate-800 dark:text-slate-100 antialiased transition-colors duration-300">
       
+      {/* 10 Dakikalık Abonelik Test Barı (Ana Site Üst Barı) */}
+      {currentUser?.isTenMinuteTestMode && (
+        <TenMinuteTestTopBanner
+          currentUser={currentUser}
+          onUpdateUser={handleUpdateProfile}
+        />
+      )}
+
       {/* Dynamic Header */}
       {checkoutPlan === null && (
         <Navbar 

@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "İSGPRO — İSG-KATİP Akıllı Bot & Asistan",
+  "version": "1.0.0",
+  "description": "İSG-KATİP üzerinden firma ve çalışan bilgilerini tek tıkla çekme, toplu sözleşme onaylama ve toplu sözleşme indirme asistanı.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "downloads"
+  ],
+  "host_permissions": [
+    "*://*.csgb.gov.tr/*",
+    "https://isgkatip.csgb.gov.tr/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "İSGPRO Katip Asistanı",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.csgb.gov.tr/*",
+        "https://isgkatip.csgb.gov.tr/*"
+      ],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

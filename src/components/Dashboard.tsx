@@ -50,6 +50,159 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
   const [passwordSuccess, setPasswordSuccess] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
 
+  // Otomatik Yenileme & 10 Dakikalık Test Modu State'leri
+  const [subAutoRenew, setSubAutoRenew] = useState(() => currentUser.autoRenew !== false);
+  const [isTenMinuteTest, setIsTenMinuteTest] = useState(() => Boolean(currentUser.isTenMinuteTestMode));
+  const [testTimeLeft, setTestTimeLeft] = useState('');
+  const [testLoading, setTestLoading] = useState(false);
+  const [testCycles, setTestCycles] = useState(() => currentUser.autoRenewalTestCycles || 0);
+
+  useEffect(() => {
+    setSubAutoRenew(currentUser.autoRenew !== false);
+    setIsTenMinuteTest(Boolean(currentUser.isTenMinuteTestMode));
+    setTestCycles(currentUser.autoRenewalTestCycles || 0);
+  }, [currentUser.autoRenew, currentUser.isTenMinuteTestMode, currentUser.autoRenewalTestCycles]);
+
+  useEffect(() => {
+    if (!currentUser.licenseExpiresAt || !isTenMinuteTest) return;
+    const calc = () => {
+      const diff = new Date(currentUser.licenseExpiresAt).getTime() - Date.now();
+      if (diff <= 0) {
+        setTestTimeLeft('00:00 (Süre Doldu)');
+      } else {
+        const m = Math.floor(diff / 60000);
+        const s = Math.floor((diff % 60000) / 1000);
+        setTestTimeLeft(`${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`);
+      }
+    };
+    calc();
+    const interval = setInterval(calc, 1000);
+    return () => clearInterval(interval);
+  }, [currentUser.licenseExpiresAt, isTenMinuteTest]);
+
+  const handleToggleAutoRenew = async () => {
+    const nextVal = !subAutoRenew;
+    setTestLoading(true);
+    try {
+      const res = await fetch('/api/subscription/toggle-autorenew', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: currentUser.username, email: currentUser.email, autoRenew: nextVal })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSubAutoRenew(nextVal);
+        await onUpdateProfile({ autoRenew: nextVal, subscriptionStatus: nextVal ? 'active' : 'cancelled' });
+        alert(nextVal ? '✓ Otomatik yenileme AÇILDI. Süre bitince karttan otomatik çekilecek.' : '✕ Otomatik yenileme KAPATILDI. Süre bittiğinde KARTTAN ÇEKİLMEYECEK.');
+      }
+    } catch (e: any) {
+      alert('Hata: ' + e.message);
+    } finally {
+      setTestLoading(false);
+    }
+  };
+
+  const handleStart10mTest = async (mode: 'simulate' | 'live') => {
+    setTestLoading(true);
+    try {
+      const res = await fetch('/api/subscription/start-test-10m', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: currentUser.username, email: currentUser.email, mode })
+      });
+      const data = await res.json();
+      if (data.success && data.testDetails) {
+        setIsTenMinuteTest(true);
+        setSubAutoRenew(true);
+        setTestCycles(0);
+        await onUpdateProfile(data.testDetails);
+        alert('✅ 10 Dakikalık Test Modu Başlatıldı!\n\nGeri sayım sayacı devrede. Otomatik yenilemeyi açık veya kapalı tutarak karttan çekilip çekilmediğini anında test edebilirsiniz.');
+      } else {
+        alert(data.error || 'Test başlatılamadı.');
+      }
+    } catch (e: any) {
+      alert('Hata: ' + e.message);
+    } finally {
+      setTestLoading(false);
+    }
+  };
+
+  const handleTriggerNow = async () => {
+    setTestLoading(true);
+    try {
+      const res = await fetch('/api/subscription/trigger-renewal-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: currentUser.username, email: currentUser.email, action: 'force_renew' })
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (data.action === 'blocked_by_cancel' || data.renewed === false) {
+          alert('🛑 TEST DOĞRULANDI:\n\nOtomatik yenilemeyi kapattığınız için KARTTAN HİÇBİR ÜCRET ÇEKİLMEDİ ve süre uzatılmadı!\n\nSistem iptal talimatınıza tam olarak uyuyor.');
+          return;
+        }
+        const nextCycles = data.autoRenewalTestCycles || (testCycles + 1);
+        setTestCycles(nextCycles);
+        await onUpdateProfile({
+          licenseExpiresAt: data.licenseExpiresAt,
+          nextRenewalDate: data.licenseExpiresAt,
+          autoRenewalTestCycles: nextCycles,
+          isPremium: true,
+          subscriptionStatus: 'active'
+        });
+        alert('⚡ TEST BAŞARILI:\n\nOtomatik yenileme açık olduğu için 10 dakikalık çekim gerçekleşti ve lisansınız 10 dakika daha uzatıldı!');
+      }
+    } catch (e: any) {
+      alert('Hata: ' + e.message);
+    } finally {
+      setTestLoading(false);
+    }
+  };
+
+  const handleSimulateExpire = async () => {
+    if (!confirm('10 dakikalık süreyi hemen doldurarak otomatik yenileme kapalıyken karttan çekilmediğini doğrulamak istiyor musunuz?')) return;
+    setTestLoading(true);
+    try {
+      const res = await fetch('/api/subscription/trigger-renewal-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: currentUser.username, email: currentUser.email, action: 'expire_now' })
+      });
+      const data = await res.json();
+      if (data.success) {
+        await onUpdateProfile({
+          isPremium: false,
+          subscriptionStatus: 'expired',
+          licenseExpiresAt: data.licenseExpiresAt
+        });
+        alert('🛑 TEST DOĞRULANDI:\n\n10 dakikalık süre tamamlandı. Otomatik yenileme KAPALI olduğu için kartınızdan HİÇBİR ücret çekilmedi ve abonelik sonlandırıldı.');
+      }
+    } catch (e: any) {
+      alert('Hata: ' + e.message);
+    } finally {
+      setTestLoading(false);
+    }
+  };
+
+  const handleStop10mTest = async () => {
+    if (!confirm('10 dakikalık test modunu kapatmak istiyor musunuz?')) return;
+    setTestLoading(true);
+    try {
+      await fetch('/api/subscription/stop-test-10m', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: currentUser.username, email: currentUser.email })
+      });
+      setIsTenMinuteTest(false);
+      await onUpdateProfile({ isTenMinuteTestMode: false, autoRenewalTestCycles: 0, testModeType: null as any });
+      alert('Test modu kapatıldı.');
+    } catch (e: any) {
+      alert('Hata: ' + e.message);
+    } finally {
+      setTestLoading(false);
+    }
+  };
+
   const [sendingEmailNotice, setSendingEmailNotice] = useState(false);
   const [emailNoticeMsg, setEmailNoticeMsg] = useState('');
   const [emailUnlocked, setEmailUnlocked] = useState(false);
@@ -562,6 +715,120 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
                       <span className={`font-bold ${remaining.isExpired ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                         {remaining.label}
                       </span>
+                    </div>
+                  </div>
+
+                  {/* OTOMATİK YENİLEME VE TEST MODU YÖNETİMİ */}
+                  <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 mt-3 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-xs text-slate-900 dark:text-white">Otomatik Yenileme Talimatı</span>
+                          <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
+                            subAutoRenew ? 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300' : 'bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300'
+                          }`}>
+                            {subAutoRenew ? '✓ AÇIK (Karttan Otomatik Çekilir)' : '✕ KAPALI (Süre Bitişinde Durdurulur)'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                          {subAutoRenew 
+                            ? 'Aboneliğiniz dönem sonunda kesintisiz uzatılır. Dilediğiniz an tek tıkla kapatabilirsiniz.' 
+                            : 'Otomatik yenileme kapatılmıştır. Dönem sonunda kartınızdan kesinlikle ücret çekilmez.'}
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={testLoading}
+                        onClick={handleToggleAutoRenew}
+                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer whitespace-nowrap ${
+                          subAutoRenew
+                            ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 dark:border-rose-900/50'
+                            : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                        }`}
+                      >
+                        {testLoading ? 'İşleniyor...' : subAutoRenew ? 'Otomatik Yenilemeyi Kapat (İptal Et)' : 'Otomatik Yenilemeyi Aç'}
+                      </button>
+                    </div>
+
+                    {/* 🧪 10 DAKİKALIK TEST PANELİ */}
+                    <div className="bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30 border border-amber-300 dark:border-amber-800/60 rounded-xl p-3.5 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-amber-600 dark:text-amber-400 font-extrabold text-xs">🧪 10 Dakikalık Yenileme & İptal Test Modu</span>
+                        </div>
+                        <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
+                          isTenMinuteTest ? 'bg-amber-300 text-amber-950 animate-pulse' : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                        }`}>
+                          {isTenMinuteTest ? '● TEST AKTİF' : 'TEST KAPALI'}
+                        </span>
+                      </div>
+
+                      {isTenMinuteTest ? (
+                        <div className="space-y-2.5">
+                          <div className="grid grid-cols-2 gap-2 bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-amber-200 dark:border-amber-900/40 text-xs">
+                            <div>
+                              <span className="text-[10px] font-bold text-slate-400 uppercase block">Kalan Süre (Geri Sayım)</span>
+                              <span className="font-mono text-base font-black text-amber-600 dark:text-amber-400 animate-pulse">{testTimeLeft || '10:00'}</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-bold text-slate-400 uppercase block">Yenilenen Çevrim</span>
+                              <span className="font-mono text-base font-black text-indigo-600 dark:text-indigo-400">#{testCycles} kez</span>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap gap-2 pt-1">
+                            <button
+                              type="button"
+                              disabled={testLoading}
+                              onClick={handleTriggerNow}
+                              className="px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-black shadow transition active:scale-95 cursor-pointer flex items-center gap-1"
+                              title="10 dakika beklemeden hemen çekim/yenileme döngüsünü tetikle"
+                            >
+                              ⚡ Şimdi Çek & Yenile Testi
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled={testLoading}
+                              onClick={handleSimulateExpire}
+                              className="px-3 py-2 bg-amber-900 hover:bg-black text-white rounded-lg text-xs font-bold shadow transition active:scale-95 cursor-pointer flex items-center gap-1"
+                              title="10 dakikayı hemen doldurup karttan çekilmediğini test et"
+                            >
+                              ⏳ 10 Dk Bitir (İptal Testi)
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled={testLoading}
+                              onClick={handleStop10mTest}
+                              className="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 dark:bg-slate-800 dark:text-slate-200 rounded-lg text-xs font-bold transition cursor-pointer"
+                            >
+                              ✕ Testi Kapat
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap gap-2 pt-1">
+                          <button
+                            type="button"
+                            disabled={testLoading}
+                            onClick={() => handleStart10mTest('live')}
+                            className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-black shadow transition active:scale-95 cursor-pointer flex items-center gap-1.5"
+                            title="Kayıtlı kartınızdan 10 dakikada bir 1 TL çekilmesini canlı modda test edin"
+                          >
+                            💳 Canlı Kart Testini Başlat (1 TL)
+                          </button>
+                          <button
+                            type="button"
+                            disabled={testLoading}
+                            onClick={() => handleStart10mTest('simulate')}
+                            className="px-3 py-2 bg-slate-600 hover:bg-slate-700 text-white rounded-lg text-xs font-bold shadow transition cursor-pointer"
+                          >
+                            ⚪ Simüle Test (0 TL)
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

@@ -103,8 +103,10 @@ export function getRemainingLicenseTime(expiresAt?: string | null): {
   if (days > 0) {
     return { days, hours, isExpired: false, label: `${days} gün kaldı` };
   }
-  const mins = Math.floor((diffMs % (60 * 1000)) / 1000);
-  return { days: 0, hours, isExpired: false, label: `${hours} saat ${mins} dk kaldı` };
+  const minutes = Math.floor((diffMs % (60 * 60 * 1000)) / (60 * 1000));
+  const seconds = Math.floor((diffMs % (60 * 1000)) / 1000);
+  if (hours > 0) return { days: 0, hours, isExpired: false, label: `${hours} saat ${minutes} dk kaldı` };
+  return { days: 0, hours: 0, isExpired: false, label: `${minutes} dk ${seconds} sn kaldı` };
 }
 
 /**
