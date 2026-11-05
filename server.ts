@@ -8001,6 +8001,42 @@ Kurulum Talimatları:
 });
 
 // ==========================================
+// 1.45. PERİYODİK KONTROL EKİPMAN DOSYA / RAPOR DEPOLAMA ENDPOINT'LERİ
+// ==========================================
+app.post('/api/equipment-file', async (req, res) => {
+  try {
+    const { id, documentName, documentData } = req.body;
+    if (!id || !documentData) {
+      return res.status(400).json({ error: 'id ve documentData zorunludur' });
+    }
+    await setDoc(doc(db, 'equipment_files', id), {
+      id,
+      documentName: documentName || 'ekipman_muayene_raporu.pdf',
+      documentData,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+    return res.json({ success: true, id });
+  } catch (err: any) {
+    console.error('[EquipmentFile Save Error]:', err);
+    return res.status(500).json({ error: err?.message || 'Dosya kaydedilemedi' });
+  }
+});
+
+app.get('/api/equipment-file/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const snap = await getDoc(doc(db, 'equipment_files', id));
+    if (snap.exists()) {
+      return res.json(snap.data());
+    }
+    return res.status(404).json({ error: 'Dosya bulunamadı' });
+  } catch (err: any) {
+    console.error('[EquipmentFile Fetch Error]:', err);
+    return res.status(500).json({ error: err?.message || 'Sunucu hatası' });
+  }
+});
+
+// ==========================================
 // 1.5. API CATCH-ALL (Prevents HTML fallback / JSON parse errors)
 // ==========================================
 app.all('/api/*', (req, res) => {
