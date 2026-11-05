@@ -4439,12 +4439,6 @@ app.post('/api/sync-user', async (req, res) => {
           if (ex.paytrCardToken && !sanitized.paytrCardToken) sanitized.paytrCardToken = ex.paytrCardToken;
           if (ex.cardLast4 && !sanitized.cardLast4) sanitized.cardLast4 = ex.cardLast4;
           if (ex.cardBrand && !sanitized.cardBrand) sanitized.cardBrand = ex.cardBrand;
-          if (ex.isTenMinuteTestMode && sanitized.isTenMinuteTestMode === undefined) {
-            sanitized.isTenMinuteTestMode = ex.isTenMinuteTestMode;
-          }
-          if (ex.lastTestChargeStatus && !sanitized.lastTestChargeStatus) {
-            sanitized.lastTestChargeStatus = ex.lastTestChargeStatus;
-          }
         }
       } catch (_) {}
 
@@ -5484,15 +5478,10 @@ async function activateAndNotifyOrder(merchantOid: string): Promise<boolean> {
 
       const purchaseDate = new Date().toISOString();
       const expiryDate = new Date();
-      const isTenMinTest = order.planId === 'test' || order.planId === 'test_10m' || (order as any).isTenMinuteTestMode;
-      if (isTenMinTest) {
-        expiryDate.setMinutes(expiryDate.getMinutes() + 10);
-      } else if ((order.planId as string) === 'trial') {
+      if ((order.planId as string) === 'trial') {
         expiryDate.setDate(expiryDate.getDate() + 7);
       } else if (order.planId === 'monthly') {
         expiryDate.setMonth(expiryDate.getMonth() + 1);
-      } else if ((order.planId as string) === 'demo') {
-        expiryDate.setMinutes(expiryDate.getMinutes() + 10);
       } else {
         expiryDate.setFullYear(expiryDate.getFullYear() + 1);
       }
@@ -5503,13 +5492,11 @@ async function activateAndNotifyOrder(merchantOid: string): Promise<boolean> {
         licenseKey: order.licenseKey,
         licensePurchasedAt: purchaseDate,
         licenseExpiresAt: expiryDate.toISOString(),
-        licenseType: isTenMinTest ? 'test' : order.planId,
+        licenseType: order.planId,
         autoRenew: isAutoRenewEnabled,
         subscriptionStatus: isAutoRenewEnabled ? 'active' : 'cancelled',
         nextRenewalDate: expiryDate.toISOString(),
         cancelledAt: isAutoRenewEnabled ? null : purchaseDate,
-        isTenMinuteTestMode: Boolean(isTenMinTest),
-        autoRenewalTestCycles: 0,
         ...(order.cardLast4 ? { cardLast4: order.cardLast4 } : {}),
         ...(order.cardBrand ? { cardBrand: order.cardBrand } : {})
       };
@@ -5806,7 +5793,6 @@ app.all(['/api/paytr/token', '/paytr/token', '/paytr/pay-direct', '/api/paytr/pa
     testMode: test_mode,
     isFromPanel,
     autoRenew: isAutoRenew,
-    isTenMinuteTestMode: planId === 'test' || planId === 'test_10m' || Boolean(req.body.isTenMinuteTestMode),
     createdAt: Date.now()
   };
 
@@ -5821,8 +5807,8 @@ app.all(['/api/paytr/token', '/paytr/token', '/paytr/pay-direct', '/api/paytr/pa
     }
   }
 
-  const amountStr = planId === 'test' ? '1.00' : (planId === 'yearly' ? '2990.00' : '299.00');
-  const paymentAmount = planId === 'test' ? 100 : (planId === 'yearly' ? 299000 : 29900); // in kuruş (cents)
+  const amountStr = planId === 'yearly' ? '2990.00' : '299.00';
+  const paymentAmount = planId === 'yearly' ? 299000 : 29900; // in kuruş (cents)
 
   // If credentials are not configured, offer a fully functional sandbox demo response
   if (!isConfigured) {
@@ -6299,9 +6285,6 @@ app.all('/api/paytr/success', async (req, res) => {
     (req.headers.referer && req.headers.referer.includes('/panel'))
   );
   const targetPath = isFromPanel ? '/panel/' : '/';
-  const isTenMinTest = order?.planId === 'test' || order?.planId === 'test_10m' || Boolean((order as any)?.isTenMinuteTestMode);
-  const test10mQuery = `&is_test_10m=${isTenMinTest ? 'true' : 'false'}`;
-
   res.send(`
     <!DOCTYPE html>
     <html lang="tr">
@@ -6331,7 +6314,7 @@ app.all('/api/paytr/success', async (req, res) => {
             if (targetOrigin.includes('localhost') || targetOrigin.includes('127.0.0.1')) {
               targetOrigin = targetOrigin.replace('https://', 'http://');
             }
-            const destination = targetOrigin + ${JSON.stringify(targetPath)} + "?paytr_status=success&payment=success&paytr_success=true&license=" + encodeURIComponent(${JSON.stringify(licenseKey)}) + "&plan=" + encodeURIComponent(${JSON.stringify(planId)}) + "&oid=" + encodeURIComponent(${JSON.stringify(oid || '')}) + "&username=" + encodeURIComponent(${JSON.stringify(orderUsername)}) + "&auto_renew=" + encodeURIComponent(${JSON.stringify(order?.autoRenew !== false ? 'true' : 'false')}) + ${JSON.stringify(test10mQuery)};
+            const destination = targetOrigin + ${JSON.stringify(targetPath)} + "?paytr_status=success&payment=success&paytr_success=true&license=" + encodeURIComponent(${JSON.stringify(licenseKey)}) + "&plan=" + encodeURIComponent(${JSON.stringify(planId)}) + "&oid=" + encodeURIComponent(${JSON.stringify(oid || '')}) + "&username=" + encodeURIComponent(${JSON.stringify(orderUsername)}) + "&auto_renew=" + encodeURIComponent(${JSON.stringify(order?.autoRenew !== false ? 'true' : 'false')});
             window.location.href = destination;
           } else {
             // Loaded in iframe -> postMessage to parent React app
@@ -6341,8 +6324,7 @@ app.all('/api/paytr/success', async (req, res) => {
               licenseKey: ${JSON.stringify(licenseKey)},
               planId: ${JSON.stringify(planId)},
               username: ${JSON.stringify(orderUsername)},
-              autoRenew: ${JSON.stringify(order?.autoRenew !== false)},
-              isTenMinuteTestMode: ${JSON.stringify(isTenMinTest)}
+              autoRenew: ${JSON.stringify(order?.autoRenew !== false)}
             }, '*');
           }
         }, 1200);
@@ -6485,7 +6467,7 @@ app.get(['/api/subscription/status', '/subscription/status'], async (req, res) =
     const autoRenew = isDemoOrTrial ? false : (u.autoRenew !== false);
 
     // Süresi dolmuş demo, deneme veya otomatik yenilemesi kapalı hesaplar derhal premium'dan düşürülür:
-    const isExpiredNow = isPastExpiry && (isDemoOrTrial || !autoRenew || Boolean(u.isTenMinuteTestMode));
+    const isExpiredNow = isPastExpiry && (isDemoOrTrial || !autoRenew);
     const effectiveIsPremium = isExpiredNow ? false : Boolean(u.isPremium);
     const effectiveStatus = effectiveIsPremium ? (autoRenew ? 'active' : 'cancelled') : 'expired';
 
@@ -6502,10 +6484,7 @@ app.get(['/api/subscription/status', '/subscription/status'], async (req, res) =
       cancelledAt: u.cancelledAt || null,
       nextRenewalDate: u.nextRenewalDate || u.licenseExpiresAt || null,
       cardLast4: u.cardLast4 || null,
-      cardBrand: u.cardBrand || null,
-      isTenMinuteTestMode: Boolean(u.isTenMinuteTestMode),
-      autoRenewalTestCycles: u.autoRenewalTestCycles || 0,
-      testModeType: u.testModeType || null
+      cardBrand: u.cardBrand || null
     });
   } catch (err: any) {
     console.error('[Subscription Status Error]:', err);
@@ -6612,8 +6591,7 @@ async function checkAndProcessAutoRenewals(): Promise<{ scanned: number; renewed
       const u = decryptUser(raw as any) || raw;
       if (!u) continue;
 
-      const isTenMinTest = Boolean(u.isTenMinuteTestMode || u.licenseType === 'test' || u.licenseType === 'test_10m');
-      if (d.id.toLowerCase() === 'admin' && !isTenMinTest) continue;
+      if (d.id.toLowerCase() === 'admin') continue;
       if (!u.isPremium || !u.licenseExpiresAt) continue;
 
       scanned++;
@@ -6623,8 +6601,8 @@ async function checkAndProcessAutoRenewals(): Promise<{ scanned: number; renewed
       const diffMs = expiresMs - nowMs;
       const isAutoRenew = u.autoRenew !== false; // Varsayılan: Açık
 
-      // 1. STANDART TRIAL (7 GÜN) VEYA DEMO (10 DK) SÜRESİ DOLMUŞSA DOĞRUDAN SONLANDIR
-      if (!isTenMinTest && (u.licenseType === 'trial' || u.licenseType === 'demo')) {
+      // 1. STANDART TRIAL (7 GÜN) VEYA DEMO SÜRESİ DOLMUŞSA DOĞRUDAN SONLANDIR
+      if (u.licenseType === 'trial' || u.licenseType === 'demo') {
         if (diffMs <= 0) {
           if (u.isPremium !== false || u.subscriptionStatus !== 'expired') {
             await setDoc(doc(db, 'users', d.id), {
@@ -6636,170 +6614,6 @@ async function checkAndProcessAutoRenewals(): Promise<{ scanned: number; renewed
           }
         }
         continue;
-      }
-
-      // =========================================================================
-      // ÖZEL 10 DAKİKALIK TEST MODU (GEÇİCİ TEST KONTROLÜ - CANLI / TEST)
-      // =========================================================================
-      if (isTenMinTest) {
-        // Eğer otomatik yenileme KAPALI ise ve 10 dakika dolduysa test lisansını sonlandır (ÇEKİM YAPMA!)
-        if (!isAutoRenew && diffMs <= 0) {
-          if (u.subscriptionStatus !== 'expired' || u.isPremium !== false) {
-            await setDoc(doc(db, 'users', d.id), {
-              isPremium: false,
-              subscriptionStatus: 'expired',
-              expiredAt: new Date().toISOString(),
-              lastTestChargeStatus: 'Otomatik Yenileme Kapalı Olduğu İçin Karttan Çekim Yapılmadı (Abonelik Sona Erdi)'
-            }, { merge: true });
-            console.log(`[10-Dk Test] '${u.username}' kullanıcısı otomatik yenilemeyi kapattığı için 10. dakikada karttan ÇEKİM YAPILMADI ve abonelik sonlandırıldı.`);
-
-            if (u.email && u.email.includes('@') && !u.email.includes('test@isgpro')) {
-              const mailHtml = `
-                <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:580px;margin:20px auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;">
-                  <div style="background:linear-gradient(135deg,#991b1b,#dc2626);padding:24px;color:#ffffff;text-align:center;">
-                    <h2 style="margin:0;font-size:18px;">🛑 10 Dakikalık Test: Süre Doldu (Çekim Yapılmadı)</h2>
-                  </div>
-                  <div style="padding:24px;color:#334155;font-size:14px;line-height:1.6;">
-                    <p>Sayın <strong>${u.name || u.username}</strong>,</p>
-                    <p>10 dakikalık test süreniz tamamlanmıştır.</p>
-                    <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:12px;padding:14px;margin-top:16px;font-size:13px;color:#991b1b;">
-                      <strong>✓ Test Doğrulandı:</strong> Otomatik yenileme tercihiniz <strong>KAPALI</strong> olduğu için kayıtlı kartınızdan <strong>HİÇBİR ÜCRET ÇEKİLMEMİŞTİR</strong>.
-                    </div>
-                    <p style="margin-top:16px;font-size:12px;color:#64748b;">Aboneliğinizi dilediğiniz zaman profil ayarlarınızdan tekrar aktif edebilirsiniz.</p>
-                  </div>
-                </div>
-              `;
-              sendEmailDirect(u.email, `🛑 [10-Dk Test] Süre Doldu - Otomatik Yenileme Kapalı Olduğu İçin Çekim Yapılmadı`, mailHtml).catch(() => {});
-            }
-          }
-          continue;
-        }
-
-        // Eğer otomatik yenileme AÇIK ise ve sürenin bitimine <= 15 saniye kaldıysa ya da dolduysa
-        if (isAutoRenew && diffMs <= 15 * 1000) {
-          const nextExpiry = new Date(nowMs + 10 * 60 * 1000); // 10 dakika daha uzat
-          const nextCycle = (Number(u.autoRenewalTestCycles) || 0) + 1;
-          let rawUtoken = u.paytrUserToken ? decryptData(u.paytrUserToken) : '';
-          if (!rawUtoken && u.email) {
-            rawUtoken = crypto.createHash('md5').update(`isgpro_cust_${(u.email || '').toLowerCase().trim()}`).digest('hex');
-          }
-          let rawCtoken = u.paytrCardToken ? decryptData(u.paytrCardToken) : '';
-
-          // Eğer ctoken henüz veritabanında yoksa, PayTR CAPI list servisiyle kartları sorgula
-          if (rawUtoken && !rawCtoken) {
-            try {
-              const cards = await getPayTRSavedCards(rawUtoken);
-              if (cards && cards.length > 0 && cards[0].ctoken) {
-                rawCtoken = cards[0].ctoken;
-                await setDoc(doc(db, 'users', d.id), {
-                  paytrUserToken: encryptData(rawUtoken),
-                  paytrCardToken: encryptData(rawCtoken),
-                  ...(cards[0].masked_pan ? { cardLast4: cards[0].masked_pan.slice(-4) } : {}),
-                  ...(cards[0].card_type ? { cardBrand: cards[0].card_type } : {})
-                }, { merge: true });
-              }
-            } catch (e) {}
-
-            // CAPI yetkisi henüz açılmadıysa veya localhost testindeyse testi kesintiye uğratmamak için token ata
-            if (!rawCtoken) {
-              rawCtoken = `ctoken_${d.id}_${Date.now()}`;
-              await setDoc(doc(db, 'users', d.id), {
-                paytrUserToken: encryptData(rawUtoken),
-                paytrCardToken: encryptData(rawCtoken)
-              }, { merge: true });
-            }
-          }
-
-          let chargeStatus = '';
-          let isChargedSuccessfully = false;
-          let chargeOid = '';
-
-          // Kayıtlı kart varsa PayTR Non-3D ile gerçek 1 TL çekim yap
-          if (rawUtoken && rawCtoken) {
-            const subOid = `RENEW10M${Date.now()}${Math.floor(100 + Math.random() * 900)}`;
-            chargeOid = subOid;
-            const chargeRes = await executePayTRNon3DCharge({
-              merchantOid: subOid,
-              email: u.email,
-              amountKurus: 100, // 1.00 TL
-              utoken: rawUtoken,
-              ctoken: rawCtoken,
-              userName: u.name || u.username || 'İSG Pro Müşterisi',
-              userPhone: u.phone,
-              userAddress: u.address
-            });
-            chargeStatus = chargeRes.message;
-            isChargedSuccessfully = chargeRes.success;
-          } else {
-            chargeStatus = 'Kayıtlı Kart Tokeni Bulunamadı (PayTR üzerinde kartınız henüz kaydedilmemiş. Lütfen 1 TL test ödemesini tamamlayarak kartınızı kaydedin.)';
-            isChargedSuccessfully = false;
-          }
-
-          if (isChargedSuccessfully) {
-            // GERÇEK ÇEKİM BAŞARILI: Lisansı 10 dakika uzat
-            const updatePayload: Record<string, any> = {
-              isPremium: true,
-              licenseExpiresAt: nextExpiry.toISOString(),
-              nextRenewalDate: nextExpiry.toISOString(),
-              lastAutoRenewedAt: new Date().toISOString(),
-              autoRenewalTestCycles: nextCycle,
-              subscriptionStatus: 'active',
-              lastTestChargeStatus: `✅ PayTR Çekimi Başarılı (1,00 TL) - OID: ${chargeOid}`
-            };
-            await setDoc(doc(db, 'users', d.id), updatePayload, { merge: true });
-            testRenewed++;
-            console.log(`[10-Dk Test Otomatik Yenileme ✅] '${u.username}' için 1,00 TL çekildi ve 10 dk uzatıldı.`);
-
-            if (u.email && u.email.includes('@') && !u.email.includes('test@isgpro')) {
-              const mailHtml = `
-                <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:580px;margin:20px auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;">
-                  <div style="background:linear-gradient(135deg,#1e1b4b,#15803d);padding:24px;color:#ffffff;text-align:center;">
-                    <h2 style="margin:0;font-size:18px;">💳 PayTR Otomatik Yenileme: 1,00 TL Tahsil Edildi</h2>
-                    <div style="font-size:12px;opacity:0.85;margin-top:4px;">İşlem Kodu: ${chargeOid} | Çevrim: #${nextCycle}</div>
-                  </div>
-                  <div style="padding:24px;color:#334155;font-size:14px;line-height:1.6;">
-                    <p>Sayın <strong>${u.name || u.username}</strong>,</p>
-                    <p>Kayıtlı kartınızdan 10 dakikalık otomatik yenileme testi kapsamında <strong>1,00 TL</strong> tutarındaki tahsilat başarıyla gerçekleştirilmiştir.</p>
-                    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:14px;margin-top:16px;font-size:13px;color:#166534;">
-                      <div><strong>Tahsil Edilen Tutar:</strong> 1,00 TL</div>
-                      <div style="margin-top:4px;"><strong>Yenileme Sayısı:</strong> #${nextCycle}</div>
-                      <div style="margin-top:4px;"><strong>Sonraki Bitiş Saati:</strong> ${nextExpiry.toLocaleTimeString('tr-TR')}</div>
-                    </div>
-                  </div>
-                </div>
-              `;
-              sendEmailDirect(u.email, `💳 [PayTR #${nextCycle}] 1,00 TL Otomatik Tahsilat Başarılı`, mailHtml).catch(() => {});
-            }
-          } else {
-            // ÇEKİM BAŞARISIZ / YETKİ YOK: SÜREYİ ASLA UZATMA!
-            const isFullyExpired = diffMs <= 0;
-            const updatePayload: Record<string, any> = {
-              ...(isFullyExpired ? { isPremium: false, subscriptionStatus: 'payment_failed' } : {}),
-              lastTestChargeStatus: `❌ PayTR Çekim Reddi: ${chargeStatus}`
-            };
-            await setDoc(doc(db, 'users', d.id), updatePayload, { merge: true });
-            console.warn(`[10-Dk Test Çekim Reddi ❌] '${u.username}' için çekim yapılamadı. Neden: ${chargeStatus}`);
-
-            if (u.email && u.email.includes('@') && !u.email.includes('test@isgpro')) {
-              const mailHtml = `
-                <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:580px;margin:20px auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;">
-                  <div style="background:linear-gradient(135deg,#7f1d1d,#b91c1c);padding:24px;color:#ffffff;text-align:center;">
-                    <h2 style="margin:0;font-size:18px;">⚠️ PayTR Otomatik Tahsilat Başarısız</h2>
-                  </div>
-                  <div style="padding:24px;color:#334155;font-size:14px;line-height:1.6;">
-                    <p>Sayın <strong>${u.name || u.username}</strong>,</p>
-                    <p>10 dakikalık otomatik yenileme testiniz kapsamında kayıtlı kartınızdan 1,00 TL çekim denenmiş ancak PayTR tarafından onaylanmamıştır.</p>
-                    <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:12px;padding:14px;margin-top:16px;font-size:13px;color:#991b1b;">
-                      <strong>PayTR Yanıtı:</strong> ${chargeStatus}
-                    </div>
-                  </div>
-                </div>
-              `;
-              sendEmailDirect(u.email, `⚠️ [PayTR Uyarı] Otomatik Tahsilat Gerçekleştirilemedi: ${chargeStatus.substring(0, 40)}`, mailHtml).catch(() => {});
-            }
-          }
-        }
-        continue; // 10 dakikalık test kullanıcısı için standart yıllık/aylık bloğunu geç
       }
 
       // =========================================================================
@@ -6867,250 +6681,11 @@ async function checkAndProcessAutoRenewals(): Promise<{ scanned: number; renewed
   return { scanned, renewed, reminded, testRenewed };
 }
 
+// 3. Abonelikleri ve Otomatik Yenilemeleri Kontrol Etme
 app.post(['/api/subscription/trigger-renewal-check', '/subscription/trigger-renewal-check'], async (req, res) => {
   try {
-    const { username, email, action = 'check' } = req.body || {};
-
-    if (username || email) {
-      const found = await findUserDocForSubscription(username, email);
-      const targetDocId = found?.docId || (username ? normalizeUsername(username) : '');
-      const u = found?.userData || {};
-      const isAutoRenew = u.autoRenew !== false;
-
-      // 1. Manuel Simülasyon: Süreyi hemen bitirip karttan çekilmediğini test etme
-      if (action === 'expire_now') {
-        const past = new Date(Date.now() - 5000).toISOString();
-        if (db && targetDocId) {
-          await setDoc(doc(db, 'users', targetDocId), {
-            isPremium: false,
-            subscriptionStatus: 'expired',
-            licenseExpiresAt: past,
-            lastTestChargeStatus: 'Otomatik Yenileme Kapalı Olduğu İçin Çekim Yapılmadı (Süre Doldu)'
-          }, { merge: true });
-        }
-        return res.json({
-          success: true,
-          renewed: false,
-          action: 'expired',
-          isPremium: false,
-          subscriptionStatus: 'expired',
-          licenseExpiresAt: past,
-          message: '🛑 10 Dakikalık süre tamamlandı! Otomatik yenileme KAPALI olduğu için kartınızdan HİÇBİR ücret çekilmedi ve abonelik durduruldu.'
-        });
-      }
-
-      // 2. Yenileme Tetikleme (Şimdi Çek & Yenile)
-      if (action === 'force_renew' || action === 'check') {
-        // Eğer otomatik yenileme KAPALI ise: KESİNLİKLE ÇEKİM YAPMA!
-        if (!isAutoRenew) {
-          return res.json({
-            success: true,
-            renewed: false,
-            action: 'blocked_by_cancel',
-            autoRenew: false,
-            subscriptionStatus: 'cancelled',
-            licenseExpiresAt: u.licenseExpiresAt || null,
-            message: '🛑 ÇEKİM YAPILMADI! Otomatik yenilemeyi kapattığınız (iptal ettiğiniz) için karttan para çekilmedi ve süre uzatılmadı.'
-          });
-        }
-
-        // Otomatik yenileme AÇIK ise: Çekimi yap ve 10 dk uzat
-        const nextExpiry = new Date(Date.now() + 10 * 60 * 1000);
-        const nextCycle = (Number(u.autoRenewalTestCycles) || 0) + 1;
-        let rawUtoken = u.paytrUserToken ? decryptData(u.paytrUserToken) : '';
-        const userEmail = (u.email || email || '').toLowerCase().trim();
-        if (!rawUtoken && userEmail) {
-          rawUtoken = crypto.createHash('md5').update(`isgpro_cust_${userEmail}`).digest('hex');
-        }
-        let rawCtoken = u.paytrCardToken ? decryptData(u.paytrCardToken) : '';
-
-        if (rawUtoken && !rawCtoken) {
-          try {
-            const cards = await getPayTRSavedCards(rawUtoken);
-            if (cards && cards.length > 0 && cards[0].ctoken) {
-              rawCtoken = cards[0].ctoken;
-              await setDoc(doc(db, 'users', targetDocId), {
-                paytrUserToken: encryptData(rawUtoken),
-                paytrCardToken: encryptData(rawCtoken),
-                ...(cards[0].masked_pan ? { cardLast4: cards[0].masked_pan.slice(-4) } : {}),
-                ...(cards[0].card_type ? { cardBrand: cards[0].card_type } : {})
-              }, { merge: true });
-            }
-          } catch (e) {}
-
-          // CAPI yetkisi henüz açılmadıysa veya localhost testindeyse testi kesintiye uğratmamak için token ata
-          if (!rawCtoken) {
-            rawCtoken = `ctoken_${targetDocId}_${Date.now()}`;
-            await setDoc(doc(db, 'users', targetDocId), {
-              paytrUserToken: encryptData(rawUtoken),
-              paytrCardToken: encryptData(rawCtoken)
-            }, { merge: true });
-          }
-        }
-
-        let chargeStatus = '';
-        let isChargedSuccessfully = false;
-        let chargeOid = '';
-
-        if (rawUtoken && rawCtoken) {
-          const subOid = `RENEW10M${Date.now()}${Math.floor(100 + Math.random() * 900)}`;
-          chargeOid = subOid;
-          const chargeRes = await executePayTRNon3DCharge({
-            merchantOid: subOid,
-            email: userEmail,
-            amountKurus: 100, // 1.00 TL
-            utoken: rawUtoken,
-            ctoken: rawCtoken,
-            userName: u.name || u.username || 'İSG Pro Müşterisi',
-            userPhone: u.phone,
-            userAddress: u.address
-          });
-          chargeStatus = chargeRes.message;
-          isChargedSuccessfully = chargeRes.success;
-        } else {
-          chargeStatus = 'Kayıtlı Kart Tokeni Bulunamadı (PayTR üzerinde kartınız henüz kayıtlı değil. Lütfen "1 TL Canlı Kart Testini Başlat" ile kartınızı kaydedin.)';
-          isChargedSuccessfully = false;
-        }
-
-        if (isChargedSuccessfully) {
-          const updatePayload: Record<string, any> = {
-            isPremium: true,
-            licenseExpiresAt: nextExpiry.toISOString(),
-            nextRenewalDate: nextExpiry.toISOString(),
-            lastAutoRenewedAt: new Date().toISOString(),
-            autoRenewalTestCycles: nextCycle,
-            subscriptionStatus: 'active',
-            lastTestChargeStatus: `✅ PayTR Çekimi Başarılı (1,00 TL) - OID: ${chargeOid}`
-          };
-
-          if (db && targetDocId) {
-            await setDoc(doc(db, 'users', targetDocId), updatePayload, { merge: true });
-          }
-
-          return res.json({
-            success: true,
-            renewed: true,
-            chargeSuccess: true,
-            action: 'renewed',
-            isPremium: true,
-            autoRenew: true,
-            subscriptionStatus: 'active',
-            licenseExpiresAt: nextExpiry.toISOString(),
-            autoRenewalTestCycles: nextCycle,
-            lastTestChargeStatus: updatePayload.lastTestChargeStatus,
-            message: `⚡ PayTR'dan 1,00 TL başarıyla çekildi ve lisansınız 10 dakika uzatıldı! (OID: ${chargeOid})`
-          });
-        } else {
-          // Çekim başarısız: süreyi uzatma!
-          const updatePayload: Record<string, any> = {
-            lastTestChargeStatus: `❌ PayTR Çekim Reddi: ${chargeStatus}`
-          };
-          if (db && targetDocId) {
-            await setDoc(doc(db, 'users', targetDocId), updatePayload, { merge: true });
-          }
-
-          return res.json({
-            success: true,
-            renewed: false,
-            chargeSuccess: false,
-            action: 'charge_failed',
-            lastTestChargeStatus: updatePayload.lastTestChargeStatus,
-            message: `⚠️ PayTR Tahsilat Gerçekleşmedi: ${chargeStatus}`
-          });
-        }
-      }
-    }
-
     const result = await checkAndProcessAutoRenewals();
     return res.json({ success: true, result });
-  } catch (err: any) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// 4. Geçici 10 Dakikalık Test Modunu Başlatma / Durdurma API'leri
-app.post(['/api/subscription/start-test-10m', '/subscription/start-test-10m'], async (req, res) => {
-  try {
-    const { username, email, mode = 'simulate' } = req.body || {};
-    if (!username && !email) {
-      return res.status(400).json({ success: false, error: 'Kullanıcı adı veya e-posta zorunludur.' });
-    }
-
-    const found = await findUserDocForSubscription(username, email);
-    const targetDocId = found?.docId || normalizeUsername(username || '');
-    if (!targetDocId) {
-      return res.status(404).json({ success: false, error: 'Kullanıcı bulunamadı.' });
-    }
-
-    const now = new Date();
-    const expiry = new Date(now.getTime() + 10 * 60 * 1000); // 10 dakika sonrası
-    const newKey = generateLicenseKey('demo');
-
-    const updatePayload: Record<string, any> = {
-      isPremium: true,
-      licenseKey: newKey,
-      licenseType: 'test',
-      isTenMinuteTestMode: true,
-      autoRenew: true,
-      subscriptionStatus: 'active',
-      licensePurchasedAt: now.toISOString(),
-      licenseExpiresAt: expiry.toISOString(),
-      nextRenewalDate: expiry.toISOString(),
-      autoRenewalTestCycles: 0,
-      testModeType: mode, // 'simulate' veya 'live'
-      lastTestChargeStatus: mode === 'live' ? 'PayTR Canlı Kart Modu (1 TL)' : 'Simüle Test Modu (0 TL)'
-    };
-
-    const rawUtoken = found?.userData?.paytrUserToken ? decryptData(found.userData.paytrUserToken) : '';
-    let rawCtoken = found?.userData?.paytrCardToken ? decryptData(found.userData.paytrCardToken) : '';
-    if (rawUtoken && !rawCtoken) {
-      try {
-        const cards = await getPayTRSavedCards(rawUtoken);
-        if (cards && cards.length > 0 && cards[0].ctoken) {
-          rawCtoken = cards[0].ctoken;
-          updatePayload.paytrCardToken = encryptData(rawCtoken);
-          if (cards[0].masked_pan) updatePayload.cardLast4 = cards[0].masked_pan.slice(-4);
-          if (cards[0].card_type) updatePayload.cardBrand = cards[0].card_type;
-        }
-      } catch (e) {}
-    }
-
-    if (db) {
-      await setDoc(doc(db, 'users', targetDocId), updatePayload, { merge: true });
-    }
-
-    return res.json({
-      success: true,
-      message: `10 Dakikalık Otomatik Yenileme Test Modu (${mode === 'live' ? 'Canlı Kart' : 'Simüle'}) başlatıldı. İlk yenileme 10 dakika sonra gerçekleşecek.`,
-      testDetails: updatePayload
-    });
-  } catch (err: any) {
-    console.error('[Start 10m Test Error]:', err);
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-app.post(['/api/subscription/stop-test-10m', '/subscription/stop-test-10m'], async (req, res) => {
-  try {
-    const { username, email } = req.body || {};
-    const found = await findUserDocForSubscription(username, email);
-    const targetDocId = found?.docId || normalizeUsername(username || '');
-    if (!targetDocId) {
-      return res.status(404).json({ success: false, error: 'Kullanıcı bulunamadı.' });
-    }
-
-    if (db) {
-      await setDoc(doc(db, 'users', targetDocId), {
-        isTenMinuteTestMode: false,
-        testModeType: null,
-        autoRenewalTestCycles: 0
-      }, { merge: true });
-    }
-
-    return res.json({
-      success: true,
-      message: '10 Dakikalık test modu sonlandırıldı.'
-    });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   }

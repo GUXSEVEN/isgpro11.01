@@ -34,7 +34,6 @@ import DownloadsPage from './components/DownloadsPage';
 import TrialModal from './components/TrialModal';
 import InitialLegalConsentModal from './components/InitialLegalConsentModal';
 import EmailVerificationModal from './components/EmailVerificationModal';
-import TenMinuteTestTopBanner from './components/TenMinuteTestTopBanner';
 import { getLicenseTypeFromKey, getLicenseDurationDays, isLicenseActive, getLicensePlanName } from './lib/licenseUtils';
 import { deduplicateAndCleanUsers, sanitizeUserForFirestore, normalizeUsername, generateAvailableUsernameSuggestions, checkEmailAccountLimitFromDb } from './lib/userUtils';
 import { getGenericLegalText } from './data/legal';
@@ -395,14 +394,10 @@ export default function App() {
       }
 
       if (targetUser && license) {
-        const urlPlan = params.get('plan') || '';
-        const is10mTest = params.get('is_test_10m') === 'true' || urlPlan === 'test' || urlPlan === 'test_10m' || Boolean((targetUser as any)?.isTenMinuteTestMode);
-        const planType = is10mTest ? 'test' : getLicenseTypeFromKey(license);
+        const planType = getLicenseTypeFromKey(license);
         const durationDays = getLicenseDurationDays(planType);
         const now = new Date();
-        const expiresAt = is10mTest
-          ? new Date(now.getTime() + 10 * 60 * 1000)
-          : new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+        const expiresAt = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
 
         const updatedTarget: UserType = {
           ...targetUser,
@@ -410,13 +405,10 @@ export default function App() {
           licenseKey: license,
           licensePurchasedAt: now.toISOString(),
           licenseExpiresAt: expiresAt.toISOString(),
-          licenseType: is10mTest ? ('test' as any) : planType,
-          isTenMinuteTestMode: Boolean(is10mTest),
+          licenseType: planType,
           autoRenew: params.get('auto_renew') !== 'false',
           subscriptionStatus: params.get('auto_renew') !== 'false' ? 'active' : 'cancelled',
-          nextRenewalDate: expiresAt.toISOString(),
-          autoRenewalTestCycles: 0,
-          testModeType: is10mTest ? 'live' : null
+          nextRenewalDate: expiresAt.toISOString()
         };
 
         // Update in users array
@@ -859,20 +851,16 @@ export default function App() {
         const data = await res.json();
         if (data && data.success) {
           const hasDiff = 
-            Boolean(data.isTenMinuteTestMode) !== Boolean(currentUser.isTenMinuteTestMode) ||
             Boolean(data.isPremium) !== Boolean(currentUser.isPremium) ||
             (data.licenseExpiresAt && data.licenseExpiresAt !== currentUser.licenseExpiresAt) ||
             (typeof data.autoRenew === 'boolean' && data.autoRenew !== (currentUser.autoRenew !== false));
 
           if (hasDiff) {
             handleUpdateProfile({
-              isTenMinuteTestMode: Boolean(data.isTenMinuteTestMode),
               isPremium: Boolean(data.isPremium),
               licenseExpiresAt: data.licenseExpiresAt || currentUser.licenseExpiresAt,
               autoRenew: data.autoRenew !== false,
-              subscriptionStatus: data.subscriptionStatus || currentUser.subscriptionStatus,
-              autoRenewalTestCycles: data.autoRenewalTestCycles || 0,
-              testModeType: data.testModeType || currentUser.testModeType
+              subscriptionStatus: data.subscriptionStatus || currentUser.subscriptionStatus
             });
           }
         }
@@ -1264,9 +1252,7 @@ export default function App() {
     const purchaseDate = new Date().toISOString();
     const expiryDate = new Date();
     const isTestPlan = checkoutPlan === 'test' || checkoutMeta?.planId === 'test';
-    if (isTestPlan) {
-      expiryDate.setMinutes(expiryDate.getMinutes() + 10);
-    } else if (checkoutPlan === 'yearly') {
+    if (checkoutPlan === 'yearly') {
       expiryDate.setFullYear(expiryDate.getFullYear() + 1);
     } else {
       expiryDate.setMonth(expiryDate.getMonth() + 1);
@@ -1277,11 +1263,9 @@ export default function App() {
       licenseKey, 
       licensePurchasedAt: purchaseDate, 
       licenseExpiresAt: expiryDate.toISOString(),
-      licenseType: (isTestPlan ? 'test' : checkoutPlan) as any,
-      isTenMinuteTestMode: isTestPlan,
+      licenseType: (checkoutPlan || 'monthly') as any,
       autoRenew: true,
       subscriptionStatus: 'active',
-      autoRenewalTestCycles: 0,
       nextRenewalDate: expiryDate.toISOString()
     };
 
@@ -1458,14 +1442,6 @@ export default function App() {
   return (
     <div className="min-h-screen bg-white dark:bg-slate-950 flex flex-col font-sans text-slate-800 dark:text-slate-100 antialiased transition-colors duration-300">
       
-      {/* 10 Dakikalık Abonelik Test Barı (Ana Site Üst Barı) */}
-      {currentUser?.isTenMinuteTestMode && (
-        <TenMinuteTestTopBanner
-          currentUser={currentUser}
-          onUpdateUser={handleUpdateProfile}
-        />
-      )}
-
       {/* Dynamic Header */}
       {checkoutPlan === null && (
         <Navbar 
