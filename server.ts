@@ -106,7 +106,7 @@ function parseBase64Image(dataUrl?: string): Buffer | null {
         if (trimmed.includes('base64,')) {
           trimmed = trimmed.split('base64,')[1].trim();
         }
-      } catch {}
+      } catch { }
     }
     // Replace any spaces that might have been converted from '+' during HTTP decoding
     trimmed = trimmed.replace(/ /g, '+');
@@ -154,7 +154,7 @@ async function generateSingleContractPDF(
         docTitle = 'MESAFELI SATIS SOZLESMESI';
         docSubtitle = 'RESMI ONAYLI MESAFELI SATIS SOZLESMESI NUSHASI';
         bodyText = toLatin(
-`MESAFELİ SATIŞ SÖZLEŞMESİ
+          `MESAFELİ SATIŞ SÖZLEŞMESİ
 
 1. TARAFLAR
 İşbu Sözleşme, aşağıdaki taraflar arasında aşağıda belirtilen hüküm ve şartlar çerçevesinde imzalanmıştır.
@@ -192,7 +192,7 @@ Mesafeli Sözleşmeler Yönetmeliği’nin 15. maddesinin (ğ) bendi uyarınca; 
         docTitle = 'ON BILGILENDIRME FORMU';
         docSubtitle = 'RESMI ONAYLI ON BILGILENDIRME FORMU NUSHASI';
         bodyText = options.isRegistrationConsent ? toLatin(
-`ON BİLGİLENDİRME FORMU
+          `ON BİLGİLENDİRME FORMU
 
 1. SATICI BİLGİLERİ
 Unvan/Adı: İBRAHİM COŞKUN (İSG Pro Teknolojileri)
@@ -214,7 +214,7 @@ Teslimat Şekli: Elektronik ortamda dijital platform erişimi ve e-posta ile bil
 4. CAYMA HAKKI VE İSTİSNALARI
 6502 sayılı Tüketicinin Korunması Hakkında Kanun ve Mesafeli Sözleşmeler Yönetmeliği'nin 15/ğ maddesi uyarınca, elektronik ortamda anında teslim edilen ve ifa edilen dijital yazılım lisanslarında cayma hakkı bulunmamaktadır.`
         ) : toLatin(
-`ÖN BİLGİLENDİRME FORMU
+          `ÖN BİLGİLENDİRME FORMU
 
 1. SATICI BİLGİLERİ
 Unvan/Adı: İBRAHİM COŞKUN (İSG Pro Teknolojileri)
@@ -243,7 +243,7 @@ Sipariş ekranında seçilen lisans paketinin (${options.planName}) vergiler dah
         docTitle = 'IPTAL VE IADE KOSULLARI';
         docSubtitle = 'RESMI ONAYLI IPTAL VE IADE KOSULLARI NUSHASI';
         bodyText = toLatin(
-`İPTAL VE İADE KOŞULLARI
+          `İPTAL VE İADE KOŞULLARI
 
 1. DİJİTAL ÜRÜN İSTİSNASI
 İSG Pro platformu üzerinden satın alınan tüm paketler (Aylık ve Yıllık Lisanslar), elektronik ortamda anında teslim edilen ve anında tüketime açılan dijital lisans anahtarı formatındadır. Bu tür gayri maddi mallar, 6502 sayılı Tüketicinin Korunması Hakkında Kanun ve Mesafeli Sözleşmeler Yönetmeliği uyarınca iade kapsamı dışındadır.
@@ -259,7 +259,7 @@ SATICI (İBRAHİM COŞKUN), dijital lisansın etkinleştirilmesinde veya yapay z
         docTitle = 'GIZLILIK POLITIKASI';
         docSubtitle = 'RESMI ONAYLI GIZLILIK POLITIKASI NUSHASI';
         bodyText = toLatin(
-`GİZLİLİK POLİTİKASI
+          `GİZLİLİK POLİTİKASI
 
 İSG Pro internet sitesini ziyaret eden veya lisans satın alan tüm kullanıcıların gizliliği bizim için son derece önemlidir. İşbu Gizlilik Politikası, kişisel verilerinizin nasıl toplandığı, korunduğu ve kullanıldığına dair bilgilendirme amacıyla hazırlanmıştır.
 
@@ -277,7 +277,7 @@ Sitemizde, kullanıcı deneyimini iyileştirmek, oturumları açık tutmak ve si
         docTitle = 'KVKK AYDINLATMA METNI';
         docSubtitle = 'RESMI ONAYLI KVKK AYDINLATMA METNI NUSHASI';
         bodyText = toLatin(
-`KVKK AYDINLATMA METNİ
+          `KVKK AYDINLATMA METNİ
 
 İşbu Aydınlatma Metni, 6698 sayılı Kişisel Verilerin Korunması Kanunu ("KVKK") uyarınca, veri sorumlusu sıfatıyla İBRAHİM COŞKUN tarafından kişisel verilerinizin işlenmesi, korunması ve haklarınız konusunda sizi bilgilendirmek amacıyla hazırlanmıştır.
 
@@ -298,7 +298,7 @@ KVKK'nın 11. maddesi uyarınca veri sahibi olarak; verilerinizin işlenip işle
         docTitle = 'TESLIMAT VE KARGO KOSULLARI';
         docSubtitle = 'RESMI ONAYLI TESLIMAT VE KARGO KOSULLARI NUSHASI';
         bodyText = toLatin(
-`TESLİMAT VE KARGO KOŞULLARI
+          `TESLİMAT VE KARGO KOŞULLARI
 
 1. TESLİMAT ŞEKLİ VE SÜRECİ
 İSG Pro platformu üzerinden satın alınan tüm dijital yazılım lisansları ve abonelik paketleri, doğası gereği dijital ürün niteliğindedir. Bu nedenle herhangi bir fiziksel kargo gönderimi, koli veya kurye teslimatı yapılmamaktadır.
@@ -353,15 +353,15 @@ KVKK'nın 11. maddesi uyarınca veri sahibi olarak; verilerinizin işlenip işle
 
       const boxHeight = curY - boxStartY + 4;
       doc.strokeColor('#cbd5e1').lineWidth(1).rect(35, boxStartY, 525, boxHeight).stroke();
-      
+
       // Contract Body Text
       const bodyStartY = boxStartY + boxHeight + 12;
       doc.fillColor('#1e40af').fontSize(10).font('Helvetica-Bold').text(docTitle, 35, bodyStartY);
       doc.moveDown(0.4);
-      doc.fillColor('#334155').fontSize(8.5).font('Helvetica').text(bodyText, 35, doc.y, { 
-        align: 'justify', 
-        lineGap: 2.5, 
-        width: 525 
+      doc.fillColor('#334155').fontSize(8.5).font('Helvetica').text(bodyText, 35, doc.y, {
+        align: 'justify',
+        lineGap: 2.5,
+        width: 525
       });
 
       // Dual Signature Boxes - Dynamic placement after contract text
@@ -565,7 +565,7 @@ export const checkEmailAccountLimit = async (
         const rawData = docSnap.data();
         const decrypted = decryptUser(rawData) || rawData;
         const userEmail = String(decrypted.email || rawData.email || '').trim().toLowerCase();
-        
+
         if (userEmail === cleanEmail && (decrypted.isEmailVerified === true || rawData.isEmailVerified === true)) {
           // 1 yıllık süre kontrolü (emailVerifiedAt veya createdAt)
           const verifiedTimeStr = decrypted.emailVerifiedAt || rawData.emailVerifiedAt || decrypted.createdAt || rawData.createdAt;
@@ -715,7 +715,7 @@ const getSMTPConfig = async () => {
             googleScriptUrl = smtpAlt.data().googleScriptUrl;
           }
         }
-      } catch (_) {}
+      } catch (_) { }
     }
   } catch (err) {
     console.error('[SMTP Config] Error reading dynamic SMTP settings from Firestore:', err);
@@ -749,8 +749,8 @@ const sendEmailWithGoogleFallback = async (options: {
     return { success: false, error: 'Google / SMTP e-posta adresi tanımlanmamış.' };
   }
   if (!cleanPass) {
-    return { 
-      success: false, 
+    return {
+      success: false,
       error: 'Google 16 haneli Uygulama Şifresi (App Password) girilmemiş.',
       details: 'Gmail hesabınızdan (myaccount.google.com/apppasswords) 16 karakterlik bir Uygulama Şifresi alıp kaydediniz.'
     };
@@ -818,8 +818,8 @@ const sendEmailWithGoogleFallback = async (options: {
       return { success: true };
     } catch (err587: any) {
       console.error(`[Google Direct SMTP Error - Port 587]: ${err587?.message}`);
-      return { 
-        success: false, 
+      return {
+        success: false,
         error: `Google Sunucu Hatası: ${err587?.message || 'Google SMTP sunucusu ile bağlantı kurulamadı.'}`
       };
     }
@@ -942,7 +942,7 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
 
       const resp = await fetch(smtpConfig.googleScriptUrl, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json, text/plain, */*'
         },
@@ -968,10 +968,10 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
 
       if (isSuccess) {
         console.log(`[Google Apps Script REST 443 Success] Delivered via Google Cloud Webhook (${templateType}) to ${targetEmail}`);
-        return { 
-          success: true, 
-          method: 'google_apps_script_443', 
-          message: `E-posta Google Apps Script REST API (Port 443) üzerinden '${targetEmail}' adresine başarıyla ulaştırıldı.` 
+        return {
+          success: true,
+          method: 'google_apps_script_443',
+          message: `E-posta Google Apps Script REST API (Port 443) üzerinden '${targetEmail}' adresine başarıyla ulaştırıldı.`
         };
       } else {
         console.warn(`[Google Apps Script REST 443 Warning]: Status ${resp.status}, Response:`, respText);
@@ -1054,10 +1054,10 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
       });
       if (resSMTP.success) {
         const attCount = attachments && attachments.length > 0 ? ` (${attachments.length} dosya eki ile)` : '';
-        return { 
-          success: true, 
-          method: 'smtp_direct', 
-          message: `E-posta SMTP (${smtpConfig.host || 'smtp.gmail.com'}) üzerinden '${targetEmail}' adresine${attCount} ulaştırıldı.` 
+        return {
+          success: true,
+          method: 'smtp_direct',
+          message: `E-posta SMTP (${smtpConfig.host || 'smtp.gmail.com'}) üzerinden '${targetEmail}' adresine${attCount} ulaştırıldı.`
         };
       } else {
         console.warn(`[Direct SMTP Attempt Warning]:`, resSMTP.error);
@@ -1079,7 +1079,7 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
               method: 'google_apps_script_fallback',
               message: `E-posta Google Apps Script yedek hattı üzerinden '${targetEmail}' adresine ulaştırıldı.`
             };
-          } catch (_) {}
+          } catch (_) { }
         }
       }
     } catch (smtpErr: any) {
@@ -1101,7 +1101,7 @@ const sendEmailUniversal = async (options: UniversalEmailOptions): Promise<{ suc
             method: 'google_apps_script_fallback',
             message: `E-posta Google Apps Script yedek hattı üzerinden '${targetEmail}' adresine ulaştırıldı.`
           };
-        } catch (_) {}
+        } catch (_) { }
       }
     }
   }
@@ -2818,7 +2818,7 @@ const ai = new GoogleGenAI({ apiKey: getResolvedGeminiKey() });
 
 function generateExpertOHSAnalysis(description: string, method?: string) {
   const text = toLatin(description || '').toLowerCase();
-  
+
   let category = 'Genel İş Güvenliği';
   let hazard = 'Uygun olmayan çalışma koşulları ve tehlikeli durum';
   let risk = 'İş kazası, yaralanma veya meslek hastalığı riski';
@@ -2901,7 +2901,7 @@ function generateExpertOHSAnalysis(description: string, method?: string) {
 function analyzeExpertOHSImageFallback(prompt?: string) {
   // Prompt içeriğine göre en uygun İSG kategorisini seç
   const p = (prompt || '').toLowerCase();
-  
+
   if (p.includes('elektrik') || p.includes('kablo') || p.includes('pano') || p.includes('priz')) {
     return {
       topic: 'Elektrik Güvenliği',
@@ -3231,6 +3231,258 @@ Lütfen SADECE aşağıdaki JSON formatında yanıt ver, markdown tırnağı ve 
   });
 });
 
+// ============================================================================
+// AI ACİL DURUM VE TATBİKAT SENARYO ÜRETİCİSİ (Kapsamlı, Dinamik, Prompt Algılayan)
+// ============================================================================
+function generateIntelligentDrillScenarioFallback(
+  rawPrompt: string,
+  drillTypeParam?: string,
+  companyNameParam?: string,
+  sectorParam?: string,
+  hazardClassParam?: string,
+  locationParam?: string,
+  durationMinutesParam?: string | number
+) {
+  const p = (rawPrompt || '').toLowerCase();
+  const comp = companyNameParam || 'İşletmemiz';
+  const loc = locationParam || 'Ana Üretim ve Tesis Sahası';
+  const hazard = hazardClassParam || 'Çok Tehlikeli';
+  const sector = sectorParam || 'Sanayi & İmalat';
+  const duration = durationMinutesParam || '45';
+
+  const isChemical = p.includes('kimyasal') || p.includes('asit') || p.includes('solvent') || p.includes('tiner') || p.includes('zehir') || p.includes('gaz') || p.includes('dökül') || p.includes('sızıntı');
+  const isExplosion = p.includes('patlama') || p.includes('parlama') || p.includes('kazan') || p.includes('basınç') || p.includes('statik');
+  const isEarthquake = p.includes('deprem') || p.includes('sarsıntı') || p.includes('çök-kapan') || p.includes('göçük') || p.includes('enkaz');
+  const isFire = p.includes('yangın') || p.includes('alev') || p.includes('duman') || p.includes('kıvılcım') || p.includes('elektrik') || p.includes('pano') || (!isChemical && !isEarthquake);
+  const hasInjured = p.includes('yaralı') || p.includes('yanık') || p.includes('mahsur') || p.includes('bayıl') || p.includes('kırık') || p.includes('etkilen') || p.includes('düştü');
+
+  let detectedType = drillTypeParam || (isEarthquake ? 'Deprem ve Afet Tahliyesi' : isChemical ? 'Tehlikeli Kimyasal Sızıntısı & İlkyardım' : isExplosion ? 'Parlama / Patlama ve Acil Tahliye' : 'Yangın ve Acil Tahliye');
+  let specificTitle = `${comp} ${loc} Kapsamlı ${detectedType} Tatbikatı`;
+  let analysis = '';
+  let scenario = '';
+  let timeline: Array<{ time: string; event: string }> = [];
+  let equipment: string[] = [];
+  let teamsAction = {
+    sondurme: '',
+    kurtarma: '',
+    koruma: '',
+    ilkyardim: '',
+    krizYoneticisi: ''
+  };
+
+  if (isChemical) {
+    analysis = `Prompt analizi: ${loc} sahasında tehlikeli sıvı/gaz salınımı riski tespit edildi. Öncelik; buharlaşma alanını izole etmek, maruziyet altındaki personeli rüzgar yönü hesaba katılarak tahliye etmek ve döküntü kitleriyle nötralizasyon sağlamaktır.`;
+    scenario = `${comp} bünyesinde faaliyet gösteren ${loc} bölümünde, operasyonel süreç sırasında kimyasal maddenin kontrolsüz dökülmesi/sızıntısı ve ortama toksik buhar yayılımı senaryolaştırılmıştır. Olayı fark eden saha sorumlusu tarafından derhal bölge acil ikaz butonuna basılarak genel alarm verilmiş, havalandırma sistemi acil emiş moduna geçirilmiştir. Kurtarma ve İlkyardım ekipleri tam donanımlı ABEK1 gaz maskeleri ve koruyucu tulumlarla sahayı emniyet kordonuna almıştır. ${hasInjured ? 'Kimyasal buhardan etkilenen 1 çalışan özel travma sedyesiyle açık havaya taşınmış ve göz/vücut solüsyonu ile ilk triyaj uygulanmıştır.' : 'Tesis personeli rüzgar yönü dikkate alınarak ters istikametteki acil çıkış kapılarına yönlendirilmiştir.'} Döküntü kiti (Spill Kit) ile kimyasal bariyer oluşturulmuş, emici pedlerle atık toplanarak sızdırmaz varillere aktarılmıştır. Tesis genelindeki tüm çalışanlar toplanma alanında eksiksiz sayılmış ve tatbikat kriz koordinatörü tarafından güvenle tamamlanmıştır.`;
+    timeline = [
+      { time: '00:00', event: `${loc} alanında kimyasal sızıntı/buharlaşma tespit edildi, acil alarm butonuna basılarak sirenler devreye alındı.` },
+      { time: '00:35', event: 'Koruma ekibi ana bölge vanalarını kapattı, havalandırma emiş fanları çalıştırıldı ve alan güvenlik şeridiyle çevrildi.' },
+      { time: '01:15', event: 'Kurtarma ekibi ABEK1 kombine gaz maskeleri, kimyasal tulum ve eldivenlerle olay yerine intikal etti.' },
+      { time: '02:00', event: hasInjured ? 'Etkilenen personel kurtarma ekibince temiz havaya çıkarıldı; İlkyardım Ekibi göz/cilt yıkaması ve oksijen desteği başlattı.' : 'Tahliye görevlileri eşliğinde bina çalışanları kimyasal buharın tersi yönündeki acil çıkışlardan açık alana tahliye edildi.' },
+      { time: '03:10', event: 'Döküntü kiti (Spill Kit) ile sızıntı kaynağına bariyer çekildi, nötralize edici granüllerle kimyasal atık varile hapsedildi.' },
+      { time: '04:00', event: 'Toplanma sahasında bölüm bazlı yoklama yapıldı, 112 / Çevre Acil Müdahale ekipleriyle haberleşme testi başarıyla simüle edildi.' },
+      { time: '05:00', event: 'İSG Uzmanı ve Kriz Masası gaz ölçümü yaparak alanın güvenli olduğunu teyit etti; tatbikat başarılı tutanakla sonlandırıldı.' }
+    ];
+    equipment = [
+      'ABEK1 Çok Amaçlı Gaz ve Buhar Filtreli Maskeler (4 Adet)',
+      'Kimyasal Döküntü Müdahale Kiti (Spill Kit - 120 Lt)',
+      'Kimyasala Dirençli Tychem Tulum ve Nitril Ağır Hizmet Eldivenleri',
+      'Portatif Göz ve Vücut Yıkama Duş Solüsyonları',
+      'Katlanabilir Alüminyum Travma Sedyesi ve Oksijen Tüpü',
+      'Acil Durum Megafonu, Telsiz ve Olay Yeri Güvenlik Şeridi'
+    ];
+    teamsAction = {
+      sondurme: 'Kimyasal buharın alev alma riskine karşı köpüklü ve CO2 yangın söndürücülerle teyakkuzda bekledi.',
+      kurtarma: 'Filtreli gaz maskeleriyle sıcak bölgeye girerek sızıntı alanını emniyete aldı ve varsa personeli tahliye etti.',
+      koruma: 'Tesisin havalandırma, elektrik ve kimyasal besleme hatlarını kesti; yetkisiz girişleri önlemek için kordon oluşturdu.',
+      ilkyardim: 'Etkilenen personeli açık havada karşılayarak dekontaminasyon ve yaşamsal parametre takibini icra etti.',
+      krizYoneticisi: 'Tatbikatın genel akışını, süre hedeflerini (5 dk altı tahliye ve emniyet) ve 112 koordinasyonunu yönetti.'
+    };
+  } else if (isEarthquake) {
+    analysis = `Prompt analizi: Şiddetli deprem sarsıntısı ve sonrasında oluşabilecek yapısal/tesisat riskleri değerlendirildi. Öncelik; sarsıntı esnasında doğru Çök-Kapan-Tutun refleksini vermek, sarsıntı bitiminde yangın/gaz riskine karşı vanaları kesip güvenli tahliyeyi sağlamaktır.`;
+    scenario = `${comp} tesislerinde merkez üssü bölgeye yakın şiddetli bir deprem simülasyonu anonsu yapılmıştır. Anonsla birlikte tüm ofis ve saha çalışanları panik yapmadan en yakın sağlam kolon ve masaların yanında 'Çök-Kapan-Tutun' pozisyonu almıştır. 45 saniyelik sanal sarsıntı süresince pencerelerden ve devrilebilecek ağır raflardan uzak durulmuştur. Sarsıntının durduğu anonsu ile birlikte koruma görevlileri ana elektrik şalterlerini, doğalgaz ve basınçlı hava vanalarını emniyete almıştır. Tahliye sorumluları yönlendirmesinde tüm çalışanlar başlarını koruyucu baret/elleriyle muhafaza ederek yangın merdivenleri üzerinden güvenli toplanma alanına intikal etmiştir. Arama-kurtarma ekibi binada mahsur kalan olup olmadığını kontrol etmiş, toplanma alanında kriz masası oluşturularak eksiksiz sayım yapılmıştır.`;
+    timeline = [
+      { time: '00:00', event: 'Deprem alarmı ve sirenleri çaldı; personelin tamamı eş zamanlı Çök-Kapan-Tutun pozisyonu aldı.' },
+      { time: '00:45', event: 'Sarsıntı bitti ikazı yapıldı; Koruma ekibi ana doğalgaz, su ve elektrik panolarını derhal kapattı.' },
+      { time: '01:25', event: 'Tahliye ekibi liderliğinde katlar ve atölyeler acil çıkış tabelaları izlenerek seri şekilde boşaltılmaya başlandı.' },
+      { time: '02:30', event: 'Arama-kurtarma ekibi katları ve tuvaletleri tarayarak geride kimsenin kalmadığını teyit etti.' },
+      { time: '03:15', event: 'Tüm personel açık güvenli toplanma alanına intikal etti; departman sorumluları tarafından baş sayımı yapıldı.' },
+      { time: '04:00', event: 'İlkyardım ekibi şok ve hafif sıyrık simülasyonu olan çalışanlara triyaj çadırında müdahale uyguladı.' },
+      { time: '04:45', event: 'Kriz yöneticisi bina hasarsızlık kontrol raporunu değerlendirdi ve tatbikat başarıyla tamamlandı.' }
+    ];
+    equipment = [
+      'CE Belgeli Baret ve Koruyucu Kasklar',
+      'Acil Durum Afet Çantası ve Megafon',
+      'Katlanabilir Omurga Tahtası Sedye ve Boyunluk Seti',
+      'Şarjlı Arama-Kurtarma Projektörleri ve El Fenerleri',
+      'Bölüm Bazlı Toplanma Alanı Yoklama Listeleri ve Telsiz Seti'
+    ];
+    teamsAction = {
+      sondurme: 'Deprem sonrası oluşabilecek sekonder yangınlara karşı yangın tüpleriyle hazır bekledi.',
+      kurtarma: 'Bina boşaltıldıktan sonra odaları, lavaboları ve soyunma alanlarını tarayarak mahsur kalma kontrolü yaptı.',
+      koruma: 'Ana enerji, doğalgaz ve yakıt hatlarını kesti; binaya geri girişleri engelledi.',
+      ilkyardim: 'Toplanma alanında acil yardım istasyonu kurarak olası yaralanma ve panik durumlarına müdahale etti.',
+      krizYoneticisi: 'Bina tahliye süresini (hedef: 3.5 dk), ekip reaksiyonlarını ve AFAD/112 protokol simülasyonunu yönetti.'
+    };
+  } else {
+    // Yangın ve Acil Tahliye / Parlama
+    analysis = `Prompt analizi: ${loc} sahasında ${isExplosion ? 'parlama / ani alevlenme' : 'elektrik ve yanıcı maddeden kaynaklı yangın ve yoğun duman yayılımı'} tespit edildi. Öncelik; alev kaynağını uygun söndürme maddeleriyle sınırlamak, duman zehirlenmesine karşı personeli hızla tahliye etmek ve toplanma alanında eksiksiz sayım yapmaktır.`;
+    scenario = `${comp} ${loc} alanında ${rawPrompt ? `"${rawPrompt}" dinamikleri doğrultusunda` : 'aşırı yüklenme ve ark oluşması neticesinde'} duman ve alev emareleri meydana gelmiştir. Durumu ilk fark eden personel en yakın yangın ihbar butonunu kırarak tesis genelinde acil durum alarmını devreye almıştır. Söndürme ekibi bölgedeki ana şalterleri indirerek 6 kg KKT ve CO2 söndürme cihazlarıyla alevlere rüzgarı arkaya alarak müdahaleye başlamıştır. ${hasInjured ? 'Olay esnasında hafif yanık ve dumandan etkilenen 1 çalışan kurtarma ve ilkyardım ekipleri tarafından duman altı bölgeden güvenle çıkarılmış, yanık örtüsü ve oksijen desteği verilmiştir.' : 'Tahliye görevlileri dumanın yayılmasını önlemek için yangın kapılarını kontrollü kapatarak personeli acil kaçış yollarına sevk etmiştir.'} Tüm fabrika personeli panik yaşamadan ve izdihama mahal vermeden 2 dakika 50 saniye içerisinde toplanma sahasına ulaşmış, bölüm amirlerince yapılan sayımda hiçbir çalışanın içeride kalmadığı teyit edilmiştir.`;
+    timeline = [
+      { time: '00:00', event: `${loc} alanında alev ve yoğun duman tespit edildi, yangın butonuna basılarak sesli ve ışıklı sirenler devreye sokuldu.` },
+      { time: '00:30', event: 'Söndürme ekibi donanımlarıyla olay yerine ulaştı; tesis ana elektrik şalteri ve doğalgaz vanası kapatıldı.' },
+      { time: '01:10', event: 'Söndürme ekibi 6 kg KKT ve CO2 tüpleriyle alevlerin merkezine püskürtme yaparak yangını kontrol altına aldı.' },
+      { time: '01:50', event: hasInjured ? 'Duman ve ısıdan etkilenen personel kurtarma ekibince tahliye edildi; İlkyardım ekibi yanık jeli ve sedye ile müdahale etti.' : 'Tahliye ekibi yönlendirmesiyle katlar boşaltıldı, kaçış koridorları ve yangın merdivenleri disiplinle kullanıldı.' },
+      { time: '02:50', event: 'Tüm bina personeli güvenli toplanma alanına ulaştı; bölüm şefleri tarafından baş sayımı ve yoklama icra edildi.' },
+      { time: '03:40', event: 'İtfaiye ve 112 Acil Çağrı Merkezi ile temsili kriz haberleşmesi yapıldı; ekiplerin intikal süresi test edildi.' },
+      { time: '04:30', event: 'İSG Uzmanı ve Kriz Masası soğutma çalışmalarını denetledi; tatbikat başarılı bir tutanakla kayda geçirildi.' }
+    ];
+    equipment = [
+      '6 kg ABC Kuru Kimyevi Tozlu (KKT) Yangın Söndürücüler (3 Adet)',
+      '5 kg CO2 Gazlı Yangın Söndürme Tüpü (Elektrik Pano Müdahalesi)',
+      'Acil Durum Yangın Battaniyesi ve Yanık İlk Yardım Seti',
+      'Acil Durum Megafonu, Telsiz ve Siren Tertibatı',
+      'Katlanabilir Alüminyum Hasta Taşıma Sedyesi',
+      'Toplanma Alanı Belirteç Flaması ve Güvenlik İkaz Şeridi'
+    ];
+    teamsAction = {
+      sondurme: 'Elektrik bağlantısının kesilmesini müteakip KKT ve CO2 cihazlarıyla yangının merkezine doğrudan müdahale etti.',
+      kurtarma: 'Duman dolan koridorları kontrol ederek geride kalan personel olup olmadığını denetledi ve yaralıyı taşıdı.',
+      koruma: 'Tesis enerji hatlarını izole etti, dış kapıları açık tuttu ve acil araçların yanaşabilmesi için yolu emniyete aldı.',
+      ilkyardim: 'Dumandan etkilenen veya sıyrığı olan personele açık havada solunum desteği ve pansuman uyguladı.',
+      krizYoneticisi: 'Tahliye süresini (2 dk 50 sn) kronometreyle kaydetti, baş sayımını doğruladı ve itfaiye simülasyonunu yönetti.'
+    };
+  }
+
+  const evaluation = `Tatbikat 6331 sayılı İSG Kanunu ve Binaların Yangından Korunması Hakkında Yönetmelik ilkelerine %100 uyumlu olarak icra edilmiştir. ${hazard} risk grubundaki işletmede hedeflenen 3 dakikanın altında (${duration === '45' ? '2 dakika 50 saniye' : '3 dakika'}) eksiksiz tahliye başarılmıştır. Ekiplerin KKD kullanımı, vanaların süratle kapatılması ve toplanma alanındaki sayım disiplini tatbikat heyetinden tam not almıştır.`;
+
+  return {
+    drillTitle: specificTitle,
+    drillType: detectedType,
+    detectedEmergencyAnalysis: analysis,
+    scenarioText: scenario,
+    timeline,
+    teamsActionFlow: teamsAction,
+    equipment,
+    evaluation
+  };
+}
+
+app.post(['/api/generate-drill-scenario', '/generate-drill-scenario'], async (req, res) => {
+  const {
+    prompt: userPrompt,
+    drillType,
+    companyName,
+    sector,
+    hazardClass,
+    location,
+    durationMinutes,
+    apiKey: clientApiKey
+  } = req.body;
+
+  const activeApiKey = (clientApiKey && typeof clientApiKey === 'string' && clientApiKey.trim().length > 10 && !clientApiKey.includes('AIzaSyBEBqs'))
+    ? clientApiKey.trim()
+    : getResolvedGeminiKey();
+
+  const candidateModels = [
+    'gemini-4-argon',
+    'gemini-3.8-flash',
+    'gemini-3.6-flash',
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
+    'gemini-flash-latest'
+  ];
+
+  const systemPrompt = `Sen Türkiye İş Sağlığı ve Güvenliği mevzuatına (6331 sayılı İSG Kanunu, "İşyerlerinde Acil Durumlar Hakkında Yönetmelik" ve "Binaların Yangından Korunması Hakkında Yönetmelik") ve AFAD standartlarına en üst düzeyde hakim, Baş İSG Baş Denetçisi ve Acil Durum Tatbikat Koordinatörüsün.
+
+KULLANICININ VERDİĞİ SENARYO İPUÇLARI / TALEBİ:
+"${userPrompt || drillType || 'Acil durum ve tahliye tatbikatı'}"
+
+İŞLETME BAĞLAMI:
+- Firma: "${companyName || 'İşletme'}"
+- Sektör / Faaliyet Alanı: "${sector || 'Genel Sanayi & İmalat'}"
+- Tehlike Sınıfı: "${hazardClass || 'Çok Tehlikeli'}"
+- Tatbikat Yeri / Alanı: "${location || 'Üretim Sahası ve Tesis Geneli'}"
+- Planlanan Tatbikat Süresi: "${durationMinutes || 45} dakika"
+- Seçili Tür: "${drillType || 'Yangın ve Tahliye'}"
+
+KRİTİK TALİMATLAR:
+1. ASLA GENEL GEÇER, HAZIR ŞABLONİK VEYA TEK DÜZE METİN ÜRETME!
+2. Kullanıcının promptunda geçen spesifik olay örgüsünü (örneğin elektrik panosu alevi, solvent/tiner dökülmesi, kimyasal buharı, 1 veya daha fazla yaralı, yanık, yüksekten düşme, deprem sarsıntısı, duman zehirlenmesi, siren çalması, sedye ile tahliye vb.) kelime kelime tespit et ve senaryonun omurgası yap.
+3. Kapsamlı, zengin ve gerçekçi bir senaryo planı oluştur: Olayın başlama anı, alarmın verilmesi, tehlike kaynağının izolasyonu, Söndürme, Kurtarma, Koruma ve İlkyardım ekiplerinin müdahaleleri, tahliyenin icrası, toplanma sahasında baş sayımı ve 112 / İtfaiye haberleşme simülasyonu.
+4. Kronolojik olaylar akışını (timeline) dakika dakika somut adımlarla oluştur (00:00, 00:30, 01:15, 02:00, 02:50, 03:40, 04:30 vb.).
+5. Olaya tam uygun koruyucu donanım ve ekipman listesi belirle.
+6. SADECE aşağıdaki JSON formatında yanıt ver, markdown kod blokları (\\\`\\\`\\\`json vb.) ekleme:
+{
+  "drillTitle": "Spesifik, profesyonel tatbikat başlığı",
+  "drillType": "Tespit edilen tatbikat türü",
+  "detectedEmergencyAnalysis": "Prompttan tespit edilen acil durum dinamiği ve operasyonel öncelikler (2-3 cümle)",
+  "scenarioText": "Kapsamlı, olay örgüsü net, akıcı ve mevzuata tam uyumlu senaryo metni (2-3 zengin paragraf)",
+  "timeline": [
+    { "time": "00:00", "event": "Olayın başlangıcı ve alarm..." },
+    { "time": "00:30", "event": "Enerji kesilmesi ve ekiplerin intikali..." },
+    { "time": "01:15", "event": "Doğrudan müdahale ve izolasyon..." },
+    { "time": "02:00", "event": "Tahliye ve varsa yaralı nakli..." },
+    { "time": "03:00", "event": "Toplanma alanında sayım ve yoklama..." },
+    { "time": "04:00", "event": "Tatbikatın resmi tutanakla tamamlanması..." }
+  ],
+  "teamsActionFlow": {
+    "sondurme": "Söndürme ekibi aksiyonu",
+    "kurtarma": "Kurtarma ekibi aksiyonu",
+    "koruma": "Koruma ekibi aksiyonu",
+    "ilkyardim": "İlkyardım ekibi aksiyonu",
+    "krizYoneticisi": "Kriz yöneticisi aksiyonu"
+  },
+  "equipment": ["Ekipman 1", "Ekipman 2", "Ekipman 3", "Ekipman 4", "Ekipman 5"],
+  "evaluation": "Gerçekçi tatbikat değerlendirme raporu ve mevzuat analizi"
+}`;
+
+  if (activeApiKey && !activeApiKey.includes('AIzaSyBEBqs')) {
+    for (const model of candidateModels) {
+      try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${activeApiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: systemPrompt }] }] })
+        });
+
+        const resData = await response.json();
+        const text = resData.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          const cleanJsonText = text.replace(/```json/gi, '').replace(/```/gi, '').trim();
+          const parsed = JSON.parse(cleanJsonText);
+          if (parsed && parsed.scenarioText && Array.isArray(parsed.timeline)) {
+            return res.json({
+              drillTitle: parsed.drillTitle || `${companyName || 'İşletme'} Tatbikatı`,
+              drillType: parsed.drillType || drillType || 'Yangın ve Tahliye',
+              detectedEmergencyAnalysis: parsed.detectedEmergencyAnalysis || 'Yapay zeka tarafından analiz edilen acil durum dinamiği.',
+              scenarioText: parsed.scenarioText,
+              timeline: parsed.timeline,
+              teamsActionFlow: parsed.teamsActionFlow || {},
+              equipment: Array.isArray(parsed.equipment) ? parsed.equipment : [],
+              evaluation: parsed.evaluation || 'Tatbikat mevzuata uygun şekilde tamamlanmıştır.'
+            });
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[Generate Drill Scenario] Model ${model} failed:`, err.message);
+      }
+    }
+  }
+
+  // Akıllı Fallback motoru (Promptu ayrıştırıp dinamik senaryo üreten yerel motor)
+  const fallbackScenario = generateIntelligentDrillScenarioFallback(
+    userPrompt,
+    drillType,
+    companyName,
+    sector,
+    hazardClass,
+    location,
+    durationMinutes
+  );
+
+  return res.json(fallbackScenario);
+});
+
 // AI Photo / Image Risk Analysis API (Proxied server-side with multimodal Gemini and dynamic models)
 app.post('/api/analyze-image', async (req, res) => {
   const { image, prompt: userPrompt, apiKey: clientApiKey } = req.body;
@@ -3311,11 +3563,12 @@ Lütfen SADECE aşağıdaki JSON formatında yanıt ver, markdown tırnağı (\`
 
   const candidateModels = [
     'gemini-2.5-flash',
-    'gemini-3.5-flash-lite',
-    'gemini-3.1-flash-lite',
-    'gemini-3.5-flash',
+    'gemini-4-argon',
+    'gemini-3.8-flash',
     'gemini-3.6-flash',
-    'gemini-3.8-flash'
+    'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.1-flash-lite'
   ];
 
   let lastError: any = null;
@@ -3403,6 +3656,206 @@ Lütfen SADECE aşağıdaki JSON formatında yanıt ver, markdown tırnağı (\`
   });
 });
 
+// ==========================================
+// SGK İŞE GİRİŞ / İŞTEN AYRILIŞ BİLDİRGESİ AKILLI AYRIŞTIRMA (OCR & VISION AI)
+// ==========================================
+app.post('/api/parse-sgk-declaration', async (req, res) => {
+  const { fileData, mimeType = 'application/pdf', apiKey: clientApiKey } = req.body;
+
+  if (!fileData) {
+    return res.status(400).json({ error: 'Dosya veya görsel verisi zorunludur.' });
+  }
+
+  let cleanBase64 = String(fileData);
+  let resolvedMime = mimeType;
+  if (cleanBase64.includes(';base64,')) {
+    const parts = cleanBase64.split(';base64,');
+    resolvedMime = parts[0].replace('data:', '') || mimeType;
+    cleanBase64 = parts[1];
+  } else if (cleanBase64.includes(',')) {
+    cleanBase64 = cleanBase64.split(',')[1];
+  }
+
+  const activeApiKey = (clientApiKey && typeof clientApiKey === 'string' && clientApiKey.trim().length > 10 && !clientApiKey.includes('AIzaSyBEBqs'))
+    ? clientApiKey.trim()
+    : getResolvedGeminiKey();
+
+  if (!activeApiKey || activeApiKey.includes('AIzaSyBEBqs')) {
+    return res.status(401).json({
+      error: 'AI_KEY_REQUIRED',
+      message: 'SGK bildirgesini ayrıştırmak için geçerli bir Gemini API anahtarı gereklidir.'
+    });
+  }
+
+  const prompt = `Sen T.C. Sosyal Güvenlik Kurumu (SGK) mevzuatında, "Sigortalı İşe Giriş Bildirgesi" ve "Sigortalı İşten Ayrılış Bildirgesi" resmi belgelerini incelemede uzmanlaşmış kıdemli bir İnsan Kaynakları ve Veri Giriş Denetçisisin.
+Sana verilen resmi belgeyi (PDF veya görsel) titizlikle incele ve aşağıdaki alanları ayıkla:
+
+1. tcNo: "SOSYAL GÜVENLİK SİCİL NUMARASI (T.C. KİMLİK NUMARASI)" alanındaki tam 11 haneli sayı. Boşluksuz sadece 11 rakam olmalıdır.
+2. name: "1 Adı" alanındaki isim (Örn: MESTAN).
+3. surname: "2 Soyadı" alanındaki soyisim (Örn: BASKURT veya BAŞKURT).
+4. birthDate: "7 Doğum Tarihi" alanındaki tarih. YYYY-MM-DD formatında olmalıdır (Örn: 1983-03-31).
+5. entryDate: "16 Sigortalının işe başladığı tarih" alanındaki tarih. YYYY-MM-DD formatında olmalıdır (Örn: 2026-11-05).
+6. exitDate: Eğer işten çıkış/ayrılış bildirgesi ise ayrılış tarihi (YYYY-MM-DD), işe giriş bildirgesi ise boş string "".
+7. 22 numaralı kutucuktaki SGK İŞYERİ SİCİL NUMARASI alt bileşenleri:
+   - m: Mahiyet kodu (M sütunundaki tek rakam: 1 veya 2)
+   - iskolu: İŞKOLU sütunundaki 4 haneli kod
+   - uniteYeni: ÜNİTE YENİ sütunu
+   - uniteEski: ÜNİTE ESKİ sütunu
+   - siraNo: İŞYERİ SIRA NO sütunu (7 hane)
+   - ilKod: İL KOD sütunu (3 hane)
+   - ilceKod: İLÇE sütunu (2 hane)
+   - kontNo: KONT NO sütunu (2 hane)
+   - altIsv: ALT İŞV. sütunu (3 hane)
+8. professionCode: "17 Meslek Adı ve Kodu" alanındaki kod (Örn: "7323.15").
+9. professionTitle: "17 Meslek Adı ve Kodu" alanındaki tam meslek adı ve kodu (Örn: "7323.15 - Sarım Operatörü").
+10. companyName: "24 İşverenin/İşyerinin/İlgili Kuruluşun Adı-Soyadı/Ünv." alanındaki şirket unvanı (Örn: "MEDİTEKS SAĞLIK HİZMETLERİ TIBBİ MALZEME TEKSTİL Ü").
+11. companyAddress: "24 İşyerinin (Kurumun) Adresi" alanındaki tam adres (Örn: "ORGANİZE SAN.BÖLGESİ 4.CADDE EDİRNE SÜLOĞLU No:5 /0").
+12. documentType: İşe giriş bildirgesi ise "entry", işten ayrılış bildirgesi ise "exit".
+
+Lütfen SADECE aşağıdaki JSON formatında yanıt ver, markdown tırnakları (\`\`\`json) veya başka metin ekleme:
+{
+  "tcNo": "14771007502",
+  "name": "MESTAN",
+  "surname": "BASKURT",
+  "birthDate": "1983-03-31",
+  "entryDate": "2026-11-05",
+  "exitDate": "",
+  "m": "2",
+  "iskolu": "1396",
+  "uniteYeni": "01",
+  "uniteEski": "",
+  "siraNo": "1025634",
+  "ilKod": "022",
+  "ilceKod": "09",
+  "kontNo": "76",
+  "altIsv": "",
+  "professionCode": "7323.15",
+  "professionTitle": "7323.15 - Sarım Operatörü",
+  "companyName": "MEDİTEKS SAĞLIK HİZMETLERİ TIBBİ MALZEME TEKSTİL Ü",
+  "companyAddress": "ORGANİZE SAN.BÖLGESİ 4.CADDE EDİRNE SÜLOĞLU No:5 /0",
+  "documentType": "entry"
+}`;
+
+  const candidateModels = [
+    'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.1-flash-lite',
+    'gemini-flash-latest'
+  ];
+
+  let lastError: any = null;
+
+  for (const model of candidateModels) {
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${activeApiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                { text: prompt },
+                {
+                  inline_data: {
+                    mime_type: resolvedMime.includes('pdf') ? 'application/pdf' : (resolvedMime.includes('png') ? 'image/png' : 'image/jpeg'),
+                    data: cleanBase64
+                  }
+                }
+              ]
+            }
+          ]
+        })
+      });
+
+      const resData = await response.json();
+
+      if (resData.error) {
+        console.warn(`[SGK AI Parser] Model ${model} error:`, resData.error.message);
+        lastError = new Error(resData.error.message);
+        continue;
+      }
+
+      const rawText = resData.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!rawText) {
+        lastError = new Error('Modelden yanıt metni alınamadı.');
+        continue;
+      }
+
+      let parsedData: any = null;
+      try {
+        let cleaned = rawText.trim();
+        if (cleaned.startsWith('```json')) {
+          cleaned = cleaned.replace(/^```json/, '').replace(/```$/, '').trim();
+        } else if (cleaned.startsWith('```')) {
+          cleaned = cleaned.replace(/^```/, '').replace(/```$/, '').trim();
+        }
+        parsedData = JSON.parse(cleaned);
+      } catch (parseErr) {
+        console.warn(`[SGK AI Parser] Model ${model} JSON parse failed, rawText:`, rawText);
+        lastError = parseErr;
+        continue;
+      }
+
+      // Standart 26 Haneli SGK Sicil No Algoritması:
+      // M (1 hane) - İşkolu (4 hane) - Ünite Eski (2 hane) - Ünite Yeni (2 hane) - Sıra No (7 hane) - İl (3 hane) - İlçe (2 hane) - Kont No (2 hane) - Alt İşv (3 hane)
+      const mVal = String(parsedData.m || '2').replace(/\D/g, '').slice(-1) || '2';
+      const iskoluVal = String(parsedData.iskolu || '').replace(/\D/g, '').padStart(4, '0');
+      const uniteEskiVal = parsedData.uniteEski && String(parsedData.uniteEski).trim() ? String(parsedData.uniteEski).replace(/\D/g, '').padStart(2, '0') : '01';
+      const uniteYeniVal = parsedData.uniteYeni && String(parsedData.uniteYeni).trim() ? String(parsedData.uniteYeni).replace(/\D/g, '').padStart(2, '0') : '01';
+      const siraNoVal = String(parsedData.siraNo || '').replace(/\D/g, '').padStart(7, '0');
+      const ilKodVal = String(parsedData.ilKod || '').replace(/\D/g, '').padStart(3, '0');
+      const ilceKodVal = String(parsedData.ilceKod || '').replace(/\D/g, '').padStart(2, '0');
+      const kontNoVal = String(parsedData.kontNo || '').replace(/\D/g, '').padStart(2, '0');
+      const altIsvVal = parsedData.altIsv && String(parsedData.altIsv).trim() ? String(parsedData.altIsv).replace(/\D/g, '').padStart(3, '0') : '000';
+
+      const sgkNo26 = `${mVal}${iskoluVal}${uniteEskiVal}${uniteYeniVal}${siraNoVal}${ilKodVal}${ilceKodVal}${kontNoVal}${altIsvVal}`;
+      const sgkNo26Formatted = `${mVal} ${iskoluVal} ${uniteEskiVal} ${uniteYeniVal} ${siraNoVal} ${ilKodVal} ${ilceKodVal} ${kontNoVal} ${altIsvVal}`;
+
+      return res.json({
+        success: true,
+        extracted: {
+          tcNo: String(parsedData.tcNo || '').replace(/\D/g, '').slice(0, 11),
+          name: String(parsedData.name || '').trim(),
+          surname: String(parsedData.surname || '').trim(),
+          birthDate: String(parsedData.birthDate || '').trim(),
+          entryDate: String(parsedData.entryDate || '').trim(),
+          exitDate: String(parsedData.exitDate || '').trim(),
+          sgkNo: sgkNo26Formatted,
+          sgkNo26: sgkNo26,
+          sgkComponents: {
+            m: mVal,
+            iskolu: iskoluVal,
+            uniteEski: uniteEskiVal,
+            uniteYeni: uniteYeniVal,
+            siraNo: siraNoVal,
+            il: ilKodVal,
+            ilKod: ilKodVal,
+            ilce: ilceKodVal,
+            ilceKod: ilceKodVal,
+            kontrol: kontNoVal,
+            kontNo: kontNoVal,
+            altIsv: altIsvVal,
+            altIsveren: altIsvVal
+          },
+          professionCode: String(parsedData.professionCode || '').trim(),
+          professionTitle: String(parsedData.professionTitle || '').trim(),
+          companyName: String(parsedData.companyName || '').trim(),
+          companyAddress: String(parsedData.companyAddress || '').trim(),
+          documentType: parsedData.documentType || 'entry'
+        }
+      });
+    } catch (err: any) {
+      console.warn(`[SGK AI Parser] Model ${model} failed:`, err.message);
+      lastError = err;
+    }
+  }
+
+  return res.status(500).json({
+    error: 'SGK_PARSER_FAILED',
+    message: lastError?.message || 'SGK bildirgesi belgesi analiz edilemedi.'
+  });
+});
+
 // Universal Gemini Proxy API (Handles precautions, toolbox talks, audits with intelligent fallback)
 app.post('/api/gemini-proxy', async (req, res) => {
   const { prompt, base64Image, apiKey: clientApiKey } = req.body;
@@ -3416,12 +3869,13 @@ app.post('/api/gemini-proxy', async (req, res) => {
     : getResolvedGeminiKey();
 
   const candidateModels = [
+    'gemini-4-argon',
+    'gemini-3.8-flash',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
     'gemini-2.5-flash',
     'gemini-3.5-flash-lite',
-    'gemini-3.1-flash-lite',
-    'gemini-3.5-flash',
-    'gemini-3.6-flash',
-    'gemini-3.8-flash'
+    'gemini-3.1-flash-lite'
   ];
 
   if (activeApiKey && !activeApiKey.includes('AIzaSyBEBqs')) {
@@ -3515,8 +3969,8 @@ app.post('/api/send-email', async (req, res) => {
 
   if (resSMTP.success) {
     console.log(`[SMTP Support] İletişim e-postası başarıyla iletildi: ${maskEmail(email)}`);
-    return res.json({ 
-      success: true, 
+    return res.json({
+      success: true,
       message: 'Destek talebiniz başarıyla iletildi!',
       data: newMessage
     });
@@ -4439,8 +4893,12 @@ app.post('/api/sync-user', async (req, res) => {
           if (ex.paytrCardToken && !sanitized.paytrCardToken) sanitized.paytrCardToken = ex.paytrCardToken;
           if (ex.cardLast4 && !sanitized.cardLast4) sanitized.cardLast4 = ex.cardLast4;
           if (ex.cardBrand && !sanitized.cardBrand) sanitized.cardBrand = ex.cardBrand;
+          // Yasal onay ve dijital imza bir kez verildikten sonra asla false veya null ile ezilmez
+          if (ex.hasAcceptedLegalTerms && !sanitized.hasAcceptedLegalTerms) sanitized.hasAcceptedLegalTerms = true;
+          if (ex.legalAcceptedAt && !sanitized.legalAcceptedAt) sanitized.legalAcceptedAt = ex.legalAcceptedAt;
+          if (ex.userSignature && !sanitized.userSignature) sanitized.userSignature = ex.userSignature;
         }
-      } catch (_) {}
+      } catch (_) { }
 
       await setDoc(doc(db, 'users', usernameKey), sanitized, { merge: true });
       console.log(`[Firestore Server Sync] User '${usernameKey}' successfully synced to Firestore.`);
@@ -4450,6 +4908,358 @@ app.post('/api/sync-user', async (req, res) => {
     return res.json({ success: false, reason: 'db_not_initialized' });
   } catch (err: any) {
     console.error('[API /api/sync-user Error]:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
+// ROL DEĞİŞİKLİĞİ TALEPLERİ (ROLE CHANGE REQUESTS) SERVER API & FIRESTORE SYNC
+// ============================================================================
+const ROLE_REQUESTS_FILE = path.join(process.cwd(), 'data', 'role_change_requests.json');
+
+const loadServerRoleRequests = (): any[] => {
+  try {
+    if (fs.existsSync(ROLE_REQUESTS_FILE)) {
+      const data = fs.readFileSync(ROLE_REQUESTS_FILE, 'utf-8');
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (err) {
+    console.warn('[RoleRequests] File read error:', err);
+  }
+  return [];
+};
+
+const saveServerRoleRequests = (list: any[]) => {
+  try {
+    const dir = path.dirname(ROLE_REQUESTS_FILE);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(ROLE_REQUESTS_FILE, JSON.stringify(list, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('[RoleRequests] File write error:', err);
+  }
+};
+
+const sendRoleChangeNotificationEmail = async (reqItem: any) => {
+  try {
+    if (!reqItem || reqItem.status !== 'pending') return;
+    const reqUsername = normalizeUsername(reqItem.username || '');
+    const dedupeKey = `role_req_notif_${reqItem.id || reqUsername}`;
+    if (shouldSkipDuplicateEmail([dedupeKey])) {
+      return;
+    }
+    const releaseLock = lockEmailKeys([dedupeKey]);
+
+    try {
+      const targetOsgb = reqItem.targetOsgbName || '';
+      const recipients: string[] = ['infoisgpro@gmail.com'];
+
+      // Look up managers of targetOsgb in Firestore users
+      if (db) {
+        try {
+          const usersSnap = await getDocs(collection(db, 'users'));
+          usersSnap.docs.forEach(docSnap => {
+            const u = docSnap.data();
+            if (!u || !u.email || !u.email.includes('@')) return;
+            const isManager = Boolean(
+              u.isOsgbManager === true ||
+              u.isOsgbManager === 'true' ||
+              u.role === 'osgb_manager' ||
+              u.isManager === true ||
+              u.role === 'admin' ||
+              u.username === 'admin'
+            );
+            if (!isManager) return;
+            // Check if manager is related to targetOsgb or admin
+            const osgbNorm = normalizeOsgbStr(targetOsgb);
+            const userOsgbNorm = normalizeOsgbStr(u.managedOsgbName || u.osgb?.name || '');
+            const otherManaged = Array.isArray(u.managedOsgbNames) ? u.managedOsgbNames.map((n: string) => normalizeOsgbStr(n)) : [];
+            if (
+              u.role === 'admin' || 
+              u.username === 'admin' ||
+              !osgbNorm || 
+              userOsgbNorm === osgbNorm || 
+              otherManaged.includes(osgbNorm)
+            ) {
+              recipients.push(u.email.trim().toLowerCase());
+            }
+          });
+        } catch (dbErr) {
+          console.warn('[RoleRequest Email] Manager lookup warning:', dbErr);
+        }
+      }
+
+      const uniqueRecipients = Array.from(new Set(recipients)).filter(e => e && e.includes('@'));
+      if (uniqueRecipients.length === 0) return;
+
+      const formatRole = (r: string) => {
+        if (r === 'uzman') return 'İş Güvenliği Uzmanı';
+        if (r === 'hekim') return 'İşyeri Hekimi';
+        if (r === 'dsp') return 'Diğer Sağlık Personeli (DSP)';
+        if (r === 'admin') return 'Sistem Yöneticisi';
+        return r || 'Diğer / Yönetici';
+      };
+
+      const subject = `🔔 Yeni Rol Değişikliği Talebi: ${reqItem.userName || reqItem.username} (@${reqItem.username}) ➔ ${formatRole(reqItem.requestedRole)}`;
+      const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Yeni Rol Değişikliği Talebi</title>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f1f5f9; margin: 0; padding: 0; color: #1e293b; }
+    .container { max-width: 600px; margin: 30px auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }
+    .header { background: linear-gradient(135deg, #4338ca, #6366f1, #8b5cf6); padding: 35px 25px; text-align: center; color: #ffffff; }
+    .badge { display: inline-block; background: rgba(255,255,255,0.2); backdrop-filter: blur(4px); padding: 4px 12px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+    .title { font-size: 22px; font-weight: 800; margin: 0; line-height: 1.2; }
+    .subtitle { font-size: 13px; opacity: 0.85; margin-top: 6px; }
+    .content { padding: 35px 30px; }
+    .info-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+    .info-table td { padding: 12px 14px; font-size: 13px; border-bottom: 1px solid #f1f5f9; }
+    .info-table td.label { font-weight: 700; color: #64748b; width: 35%; }
+    .info-table td.value { font-weight: 600; color: #0f172a; }
+    .role-transition { background: #eef2ff; padding: 6px 12px; border-radius: 8px; font-weight: 700; font-size: 13px; color: #3730a3; display: inline-block; }
+    .footer { background-color: #f8fafc; padding: 20px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="badge">🔔 YENİ ROL DEĞİŞİKLİĞİ TALEBİ</div>
+      <h1 class="title">${reqItem.userName || reqItem.username}</h1>
+      <div class="subtitle">İlgili OSGB: ${targetOsgb || 'Genel / Tüm OSGB Yönetimi'}</div>
+    </div>
+    <div class="content">
+      <p style="font-size: 14px; color: #334155; line-height: 1.5; margin: 0 0 20px 0;">
+        Bünyenizdeki bir personel sistemde rol değişikliği talebinde bulunmuştur. Detaylar aşağıda yer almaktadır:
+      </p>
+
+      <table class="info-table">
+        <tr>
+          <td class="label">Personel Adı:</td>
+          <td class="value"><strong>${reqItem.userName || reqItem.username}</strong> (@${reqItem.username})</td>
+        </tr>
+        <tr>
+          <td class="label">E-Posta & Tel:</td>
+          <td class="value">${reqItem.userEmail || '—'} ${reqItem.userPhone ? `· ${reqItem.userPhone}` : ''}</td>
+        </tr>
+        <tr>
+          <td class="label">Talep Edilen Rol:</td>
+          <td class="value">
+            <div class="role-transition">
+              <span style="color: #64748b;">${formatRole(reqItem.currentRole)}</span>
+              <span style="color: #4f46e5; margin: 0 6px;">➔</span>
+              <strong style="color: #166534;">${formatRole(reqItem.requestedRole)}</strong>
+            </div>
+          </td>
+        </tr>
+        ${reqItem.requestedCertificateNo ? `<tr><td class="label">Yeni Belge / Sertifika:</td><td class="value font-mono"><strong>${reqItem.requestedCertificateNo}</strong></td></tr>` : ''}
+        ${reqItem.requestedDiplomaNo ? `<tr><td class="label">Diploma No:</td><td class="value">${reqItem.requestedDiplomaNo}</td></tr>` : ''}
+        ${reqItem.requestedTescilNo ? `<tr><td class="label">Tescil No:</td><td class="value">${reqItem.requestedTescilNo}</td></tr>` : ''}
+        ${reqItem.reason ? `<tr><td class="label">Talep Gerekçesi:</td><td class="value"><em>"${reqItem.reason}"</em></td></tr>` : ''}
+        <tr>
+          <td class="label">İlgili OSGB:</td>
+          <td class="value"><strong>${targetOsgb || 'Genel / Sistem Yönetimi'}</strong></td>
+        </tr>
+        <tr>
+          <td class="label">Talep Tarihi:</td>
+          <td class="value">${new Date(reqItem.createdAt || Date.now()).toLocaleString('tr-TR')}</td>
+        </tr>
+      </table>
+
+      <div style="margin-top: 25px; padding: 16px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; font-size: 13px; color: #166534; line-height: 1.5;">
+        ✅ <strong>Nasıl Onaylayabilirsiniz?</strong><br>
+        İSG Pro uygulamasında <strong>OSGB Paneli ➔ İstekler / Talepler</strong> sekmesine giderek veya doğrudan bildirim çubuğundan talebi tek tıkla <strong>Onayla</strong> veya <strong>Reddet</strong> seçeneği ile değerlendirebilirsiniz.
+      </div>
+    </div>
+    <div class="footer">
+      İSG Pro Yönetim Platformu · Otomatik Sistem Bildirimi
+    </div>
+  </div>
+</body>
+</html>
+      `;
+
+      const smtpConfig = await getSMTPConfig();
+      if (smtpConfig.active) {
+        try {
+          const transporter = createDynamicTransporter(smtpConfig);
+          await transporter.sendMail({
+            from: `"${smtpConfig.fromName || 'İSG Pro'}" <${smtpConfig.user}>`,
+            to: uniqueRecipients,
+            subject,
+            html: htmlContent
+          });
+          console.log(`[RoleRequest Email Notification] Email successfully sent to ${uniqueRecipients.join(', ')}`);
+          return;
+        } catch (smtpErr) {
+          console.warn('[RoleRequest Email Notification] Dynamic SMTP error, falling back:', smtpErr);
+        }
+      }
+
+      // Direct fallback transporter
+      try {
+        const directTransporter = createDynamicTransporter({
+          host: process.env.SMTP_HOST || "smtp.gmail.com",
+          port: Number(process.env.SMTP_PORT) || 465,
+          user: process.env.SMTP_USER || "infoisgpro@gmail.com",
+          pass: process.env.SMTP_PASS || "cwgrgysnukzzvrnr",
+          fromName: "İSG Pro Sistem Bildirimi",
+          active: true
+        });
+        await directTransporter.sendMail({
+          from: `"İSG Pro Bildirim" <${process.env.SMTP_USER || 'infoisgpro@gmail.com'}>`,
+          to: uniqueRecipients,
+          subject,
+          html: htmlContent
+        });
+        console.log(`[RoleRequest Email Notification] Direct fallback email sent to ${uniqueRecipients.join(', ')}`);
+      } catch (directErr) {
+        console.warn('[RoleRequest Email Notification] Direct fallback email error:', directErr);
+      }
+    } finally {
+      releaseLock();
+    }
+  } catch (outerErr) {
+    console.warn('[RoleRequest Email Notification] Unexpected error:', outerErr);
+  }
+};
+
+app.get('/api/role-change-requests', async (req, res) => {
+  try {
+    let requests: any[] = [];
+    if (db) {
+      try {
+        const snap = await getDocs(collection(db, 'role_change_requests'));
+        requests = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      } catch (fErr) {
+        console.warn('[Firestore] getDocs role_change_requests warning:', fErr);
+      }
+    }
+    const localList = loadServerRoleRequests();
+    const map = new Map<string, any>();
+    localList.forEach(r => { if (r && r.id) map.set(r.id, r); });
+    requests.forEach(r => { if (r && r.id) map.set(r.id, r); });
+    const merged = Array.from(map.values()).sort(
+      (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    );
+    return res.json({ success: true, requests: merged });
+  } catch (err: any) {
+    console.error('[API GET /api/role-change-requests Error]:', err);
+    return res.status(500).json({ error: err.message, requests: loadServerRoleRequests() });
+  }
+});
+
+app.post('/api/role-change-requests', async (req, res) => {
+  try {
+    const { request, requests } = req.body;
+    let itemsToSave: any[] = [];
+    if (Array.isArray(requests)) {
+      itemsToSave = requests;
+    } else if (request) {
+      itemsToSave = [request];
+    } else if (req.body.username && req.body.requestedRole) {
+      itemsToSave = [req.body];
+    }
+
+    if (itemsToSave.length === 0) {
+      return res.status(400).json({ error: 'Kaydedilecek rol değişikliği talebi bulunamadı.' });
+    }
+
+    const currentList = loadServerRoleRequests();
+    const map = new Map<string, any>();
+    currentList.forEach(r => { if (r?.id) map.set(r.id, r); });
+
+    for (const item of itemsToSave) {
+      if (!item.id) {
+        item.id = `role_req_${Date.now()}_${normalizeUsername(item.username || 'user')}`;
+      }
+      if (!item.status) item.status = 'pending';
+      if (!item.createdAt) item.createdAt = new Date().toISOString();
+      map.set(item.id, item);
+
+      if (db) {
+        try {
+          await setDoc(doc(db, 'role_change_requests', item.id), item, { merge: true });
+        } catch (fErr) {
+          console.warn('[Firestore] setDoc role_change_requests error:', fErr);
+        }
+      }
+
+      // İlgili OSGB yöneticilerine ve sistem adminine e-posta bildirimi gönder
+      if (item.status === 'pending') {
+        sendRoleChangeNotificationEmail(item).catch(err => {
+          console.warn('[RoleRequest] Background email notification warning:', err);
+        });
+      }
+    }
+
+    const updatedList = Array.from(map.values()).sort(
+      (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    );
+    saveServerRoleRequests(updatedList);
+
+    return res.json({ success: true, requests: updatedList });
+  } catch (err: any) {
+    console.error('[API POST /api/role-change-requests Error]:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/role-change-requests/resolve', async (req, res) => {
+  try {
+    const { requestId, isApproved, resolvedBy } = req.body;
+    if (!requestId) {
+      return res.status(400).json({ error: 'requestId zorunludur.' });
+    }
+    const currentList = loadServerRoleRequests();
+    const existing = currentList.find(r => r.id === requestId);
+    const nextStatus = isApproved ? 'approved' : 'rejected';
+    const resolvedAt = new Date().toISOString();
+    const resolvedByVal = resolvedBy || 'admin';
+
+    let updatedItem: any = existing
+      ? { ...existing, status: nextStatus, resolvedAt, resolvedBy: resolvedByVal }
+      : { id: requestId, status: nextStatus, resolvedAt, resolvedBy: resolvedByVal };
+
+    if (!existing && db) {
+      try {
+        const snap = await getDoc(doc(db, 'role_change_requests', requestId));
+        if (snap.exists()) {
+          updatedItem = { ...snap.data(), id: requestId, status: nextStatus, resolvedAt, resolvedBy: resolvedByVal };
+        }
+      } catch (_) {}
+    }
+
+    const nextList = [updatedItem, ...currentList.filter(r => r.id !== requestId)];
+    saveServerRoleRequests(nextList);
+
+    if (db) {
+      try {
+        await setDoc(doc(db, 'role_change_requests', requestId), updatedItem, { merge: true });
+      } catch (fErr) {
+        console.warn('[Firestore] update role_change_requests doc error:', fErr);
+      }
+
+      if (isApproved && updatedItem.username) {
+        try {
+          const userUpdates: any = { role: updatedItem.requestedRole };
+          if (updatedItem.requestedCertificateNo) userUpdates.certificateNo = updatedItem.requestedCertificateNo;
+          if (updatedItem.requestedDiplomaNo) userUpdates.diplomaNo = updatedItem.requestedDiplomaNo;
+          if (updatedItem.requestedTescilNo) userUpdates.tescilNo = updatedItem.requestedTescilNo;
+          await setDoc(doc(db, 'users', normalizeUsername(updatedItem.username)), userUpdates, { merge: true });
+        } catch (uErr) {
+          console.warn('[Firestore] update user role on approve error:', uErr);
+        }
+      }
+    }
+
+    return res.json({ success: true, request: updatedItem, requests: nextList });
+  } catch (err: any) {
+    console.error('[API POST /api/role-change-requests/resolve Error]:', err);
     return res.status(500).json({ error: err.message });
   }
 });
@@ -4478,48 +5288,48 @@ app.post('/api/send-new-user-notification', async (req, res) => {
 
   try {
     // 0. Ensure user is also persisted directly into Firestore 'users' collection on server
-  if (db && newUser && newUser.username) {
-    try {
-      const uKey = normalizeUsername(newUser.username || '');
-      const sanitized = sanitizeUserForFirestore(newUser);
-      await setDoc(doc(db, 'users', uKey), sanitized, { merge: true });
-      console.log(`[Firestore Server Sync] User '${uKey}' persisted via notification handler.`);
-    } catch (persistErr) {
-      console.warn('[Firestore Server Persist Error]:', persistErr);
-    }
-  }
-
-  const targetAdminEmail = (adminEmail && adminEmail.toLowerCase().trim() !== 'admin@isg.com') ? adminEmail : "infoisgpro@gmail.com";
-  const subject = `🔔 Yeni Kullanıcı Tanımlandı: ${newUser.name || newUser.username} (@${newUser.username})`;
-
-  const roleText = newUser.role === 'uzman' ? 'İş Güvenliği Uzmanı'
-    : newUser.role === 'hekim' ? 'İşyeri Hekimi'
-    : newUser.role === 'dsp' ? 'Diğer Sağlık Personeli (DSP)'
-    : newUser.role === 'diğer' || newUser.role === 'other' ? 'Diğer / Yönetici'
-    : newUser.role === 'admin' ? 'Sistem Yöneticisi'
-    : newUser.role || 'Tanımsız';
-
-  const osgbName = newUser.osgb?.name || (typeof newUser.osgb === 'string' ? newUser.osgb : '') || 'Bağımsız / Tanımsız';
-  const createdAtFormatted = (() => {
-    try {
-      const ca = newUser.createdAt;
-      if (!ca) return new Date().toLocaleString('tr-TR');
-      if (ca && typeof ca === 'object' && typeof (ca as any).toDate === 'function') {
-        return (ca as any).toDate().toLocaleString('tr-TR');
+    if (db && newUser && newUser.username) {
+      try {
+        const uKey = normalizeUsername(newUser.username || '');
+        const sanitized = sanitizeUserForFirestore(newUser);
+        await setDoc(doc(db, 'users', uKey), sanitized, { merge: true });
+        console.log(`[Firestore Server Sync] User '${uKey}' persisted via notification handler.`);
+      } catch (persistErr) {
+        console.warn('[Firestore Server Persist Error]:', persistErr);
       }
-      if (ca && typeof ca === 'object' && ('_methodName' in ca || 'seconds' in ca === false)) {
+    }
+
+    const targetAdminEmail = (adminEmail && adminEmail.toLowerCase().trim() !== 'admin@isg.com') ? adminEmail : "infoisgpro@gmail.com";
+    const subject = `🔔 Yeni Kullanıcı Tanımlandı: ${newUser.name || newUser.username} (@${newUser.username})`;
+
+    const roleText = newUser.role === 'uzman' ? 'İş Güvenliği Uzmanı'
+      : newUser.role === 'hekim' ? 'İşyeri Hekimi'
+        : newUser.role === 'dsp' ? 'Diğer Sağlık Personeli (DSP)'
+          : newUser.role === 'diğer' || newUser.role === 'other' ? 'Diğer / Yönetici'
+            : newUser.role === 'admin' ? 'Sistem Yöneticisi'
+              : newUser.role || 'Tanımsız';
+
+    const osgbName = newUser.osgb?.name || (typeof newUser.osgb === 'string' ? newUser.osgb : '') || 'Bağımsız / Tanımsız';
+    const createdAtFormatted = (() => {
+      try {
+        const ca = newUser.createdAt;
+        if (!ca) return new Date().toLocaleString('tr-TR');
+        if (ca && typeof ca === 'object' && typeof (ca as any).toDate === 'function') {
+          return (ca as any).toDate().toLocaleString('tr-TR');
+        }
+        if (ca && typeof ca === 'object' && ('_methodName' in ca || 'seconds' in ca === false)) {
+          return new Date().toLocaleString('tr-TR');
+        }
+        const d = new Date(ca as string | number);
+        if (isNaN(d.getTime())) return new Date().toLocaleString('tr-TR');
+        return d.toLocaleString('tr-TR');
+      } catch {
         return new Date().toLocaleString('tr-TR');
       }
-      const d = new Date(ca as string | number);
-      if (isNaN(d.getTime())) return new Date().toLocaleString('tr-TR');
-      return d.toLocaleString('tr-TR');
-    } catch {
-      return new Date().toLocaleString('tr-TR');
-    }
-  })();
-  const sourceText = newUser.createdBy ? `${newUser.createdBy} tarafından tanımlandı` : 'Doğrudan Kullanıcı Kaydı';
+    })();
+    const sourceText = newUser.createdBy ? `${newUser.createdBy} tarafından tanımlandı` : 'Doğrudan Kullanıcı Kaydı';
 
-  const htmlContent = `
+    const htmlContent = `
 <!DOCTYPE html>
 <html>
 <head>
@@ -4613,66 +5423,66 @@ app.post('/api/send-new-user-notification', async (req, res) => {
 </html>
   `;
 
-  const adminRecipients = Array.from(new Set([
-    (targetAdminEmail && targetAdminEmail.toLowerCase().trim() !== 'admin@isg.com') ? targetAdminEmail : 'infoisgpro@gmail.com',
-    "infoisgpro@gmail.com"
-  ])).filter(e => e && e.includes('@'));
+    const adminRecipients = Array.from(new Set([
+      (targetAdminEmail && targetAdminEmail.toLowerCase().trim() !== 'admin@isg.com') ? targetAdminEmail : 'infoisgpro@gmail.com',
+      "infoisgpro@gmail.com"
+    ])).filter(e => e && e.includes('@'));
 
-  // 1. Dinamik SMTP ile gönder
-  const smtpConfig = await getSMTPConfig();
-  if (smtpConfig.active) {
+    // 1. Dinamik SMTP ile gönder
+    const smtpConfig = await getSMTPConfig();
+    if (smtpConfig.active) {
+      try {
+        const transporter = createDynamicTransporter(smtpConfig);
+        await transporter.sendMail({
+          from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
+          to: adminRecipients,
+          subject,
+          html: htmlContent
+        });
+        console.log(`[SMTP] Yeni kullanıcı bildirim maili admin'e (${adminRecipients.join(', ')}) başarıyla gönderildi.`);
+        return res.json({ success: true, method: 'smtp' });
+      } catch (smtpErr: any) {
+        console.error("[SMTP Error] Yeni kullanıcı bildirim maili hatası:", smtpErr);
+      }
+    }
+
+    // 2. Direct Fallback Transporter (Gmail)
     try {
-      const transporter = createDynamicTransporter(smtpConfig);
-      await transporter.sendMail({
-        from: `"${smtpConfig.fromName}" <${smtpConfig.user}>`,
+      const directTransporter = createDynamicTransporter({
+        host: process.env.SMTP_HOST || "smtp.gmail.com",
+        port: Number(process.env.SMTP_PORT) || 465,
+        user: process.env.SMTP_USER || "infoisgpro@gmail.com",
+        pass: process.env.SMTP_PASS || "cwgrgysnukzzvrnr",
+        fromName: "İSG Pro Sistem Bildirimi",
+        active: true
+      });
+      await directTransporter.sendMail({
+        from: `"İSG Pro" <infoisgpro@gmail.com>`,
         to: adminRecipients,
         subject,
         html: htmlContent
       });
-      console.log(`[SMTP] Yeni kullanıcı bildirim maili admin'e (${adminRecipients.join(', ')}) başarıyla gönderildi.`);
-      return res.json({ success: true, method: 'smtp' });
-    } catch (smtpErr: any) {
-      console.error("[SMTP Error] Yeni kullanıcı bildirim maili hatası:", smtpErr);
+      console.log(`[Direct SMTP] Yeni kullanıcı bildirim maili başarıyla gönderildi: ${adminRecipients.join(', ')}`);
+      return res.json({ success: true, method: 'direct_smtp' });
+    } catch (directErr: any) {
+      console.warn("[Direct SMTP Warning]:", directErr?.message || directErr);
     }
-  }
 
-  // 2. Direct Fallback Transporter (Gmail)
-  try {
-    const directTransporter = createDynamicTransporter({
-      host: process.env.SMTP_HOST || "smtp.gmail.com",
-      port: Number(process.env.SMTP_PORT) || 465,
-      user: process.env.SMTP_USER || "infoisgpro@gmail.com",
-      pass: process.env.SMTP_PASS || "cwgrgysnukzzvrnr",
-      fromName: "İSG Pro Sistem Bildirimi",
-      active: true
-    });
-    await directTransporter.sendMail({
-      from: `"İSG Pro" <infoisgpro@gmail.com>`,
-      to: adminRecipients,
-      subject,
-      html: htmlContent
-    });
-    console.log(`[Direct SMTP] Yeni kullanıcı bildirim maili başarıyla gönderildi: ${adminRecipients.join(', ')}`);
-    return res.json({ success: true, method: 'direct_smtp' });
-  } catch (directErr: any) {
-    console.warn("[Direct SMTP Warning]:", directErr?.message || directErr);
-  }
-
-  // 3. EmailJS Fallback
-  try {
-    await sendEmailViaEmailJS(EMAILJS_CONTACT_TEMPLATE_ID, {
-      name: newUser.name || newUser.username,
-      from_name: "İSG Pro Otomasyon",
-      email: newUser.email || "noreply@isgpro.app",
-      to_email: targetAdminEmail,
-      subject,
-      message: `Sistemde yeni bir kullanıcı kaydı gerçekleşti:\nAd: ${newUser.name || '—'}\nKullanıcı Adı: @${newUser.username}\nE-posta: ${newUser.email}\nTelefon: ${newUser.phone || '—'}\nRol: ${roleText}`,
-      project_name: "İSG Pro"
-    });
-    return res.json({ success: true, method: 'emailjs' });
-  } catch (emailjsErr) {
-    console.error("[EmailJS Error]:", emailjsErr);
-  }
+    // 3. EmailJS Fallback
+    try {
+      await sendEmailViaEmailJS(EMAILJS_CONTACT_TEMPLATE_ID, {
+        name: newUser.name || newUser.username,
+        from_name: "İSG Pro Otomasyon",
+        email: newUser.email || "noreply@isgpro.app",
+        to_email: targetAdminEmail,
+        subject,
+        message: `Sistemde yeni bir kullanıcı kaydı gerçekleşti:\nAd: ${newUser.name || '—'}\nKullanıcı Adı: @${newUser.username}\nE-posta: ${newUser.email}\nTelefon: ${newUser.phone || '—'}\nRol: ${roleText}`,
+        project_name: "İSG Pro"
+      });
+      return res.json({ success: true, method: 'emailjs' });
+    } catch (emailjsErr) {
+      console.error("[EmailJS Error]:", emailjsErr);
+    }
 
     return res.json({ success: true, method: 'queued' });
   } finally {
@@ -5057,7 +5867,7 @@ if (db) {
             test_mode: 0,
             adminExplicitTestMode: false,
             updatedAt: new Date().toISOString()
-          }, { merge: true }).catch(() => {});
+          }, { merge: true }).catch(() => { });
           cachedPayTRConfig.testMode = '0';
           cachedPayTRConfig.adminExplicitTestMode = false;
         }
@@ -5074,7 +5884,7 @@ function resolvePublicAppUrl(req: express.Request, customDomain?: string): strin
   const clientOrigin = (
     req.body?.origin ||
     req.headers.origin ||
-    (req.headers.referer ? (() => { try { return new URL(req.headers.referer as string).origin; } catch(_) { return ''; } })() : '') ||
+    (req.headers.referer ? (() => { try { return new URL(req.headers.referer as string).origin; } catch (_) { return ''; } })() : '') ||
     ''
   ).toString().trim();
 
@@ -5119,11 +5929,11 @@ function resolvePublicAppUrl(req: express.Request, customDomain?: string): strin
   const rawHost = (req.headers.host || '').trim();
   let host = rawForwardedHost || rawHost;
 
-  const isLocalOrLan = !host || 
-    host.includes('localhost') || 
-    host.includes('127.0.0.1') || 
-    host.startsWith('192.168.') || 
-    host.startsWith('10.') || 
+  const isLocalOrLan = !host ||
+    host.includes('localhost') ||
+    host.includes('127.0.0.1') ||
+    host.startsWith('192.168.') ||
+    host.startsWith('10.') ||
     /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host);
 
   if (isLocalOrLan) {
@@ -5132,7 +5942,7 @@ function resolvePublicAppUrl(req: express.Request, customDomain?: string): strin
       try {
         const u = new URL(referer);
         return u.origin;
-      } catch (e) {}
+      } catch (e) { }
     }
     return host ? `http://${host}` : 'http://localhost:3000';
   }
@@ -5152,11 +5962,11 @@ function getPublicUserIp(req: express.Request): string {
   const rawIp = realIp || forwardedFor || req.socket.remoteAddress || '85.105.1.1';
   let cleanIp = rawIp.replace(/^::ffff:/, '');
   if (
-    cleanIp === '127.0.0.1' || 
-    cleanIp === '::1' || 
-    cleanIp === 'localhost' || 
-    cleanIp.startsWith('10.') || 
-    cleanIp.startsWith('192.168.') || 
+    cleanIp === '127.0.0.1' ||
+    cleanIp === '::1' ||
+    cleanIp === 'localhost' ||
+    cleanIp.startsWith('10.') ||
+    cleanIp.startsWith('192.168.') ||
     !cleanIp
   ) {
     cleanIp = '85.105.1.1';
@@ -5198,7 +6008,7 @@ async function getPayTRConfig(): Promise<PayTRConfig> {
               test_mode: 0,
               adminExplicitTestMode: false,
               updatedAt: new Date().toISOString()
-            }, { merge: true }).catch(() => {});
+            }, { merge: true }).catch(() => { });
           }
         }
 
@@ -5206,7 +6016,7 @@ async function getPayTRConfig(): Promise<PayTRConfig> {
           let cd = String(data.customDomain).trim();
           if (cd.includes('isgpro.com') && !cd.includes('isgprotech.com')) {
             cd = cd.replace(/isgpro\.com/g, 'isgprotech.com');
-            setDoc(docRef, { customDomain: cd }, { merge: true }).catch(() => {});
+            setDoc(docRef, { customDomain: cd }, { merge: true }).catch(() => { });
           }
           cachedPayTRConfig.customDomain = cd;
         }
@@ -5251,7 +6061,7 @@ async function getPayTRSavedCards(utoken: string): Promise<Array<{ ctoken: strin
     });
     const rawText = await resp.text();
     let data: any = null;
-    try { data = JSON.parse(rawText); } catch (_) {}
+    try { data = JSON.parse(rawText); } catch (_) { }
     if (data && data.status === 'success' && Array.isArray(data.cards)) {
       console.log(`[PayTR CAPI List] Found ${data.cards.length} saved card(s) for utoken ${utoken.substring(0, 8)}...`);
       return data.cards;
@@ -5708,9 +6518,9 @@ app.use((req, res, next) => {
 // PayTR step 1: Get secure iframe token from PayTR API (handles multi-route aliases for backward compatibility)
 app.all(['/api/paytr/token', '/paytr/token', '/paytr/pay-direct', '/api/paytr/pay-direct', '/iyzico/pay-direct', '/api/iyzico/pay-direct'], async (req, res) => {
   if (req.method === 'OPTIONS') return res.sendStatus(200);
-  const { 
-    planId, 
-    name, 
+  const {
+    planId,
+    name,
     fullName,
     billingType,
     tcNo,
@@ -5719,10 +6529,10 @@ app.all(['/api/paytr/token', '/paytr/token', '/paytr/pay-direct', '/api/paytr/pa
     taxOffice,
     city,
     district,
-    email, 
-    phone, 
-    address, 
-    userSignature, 
+    email,
+    phone,
+    address,
+    userSignature,
     username,
     autoRenew
   } = req.body || {};
@@ -5742,7 +6552,7 @@ app.all(['/api/paytr/token', '/paytr/token', '/paytr/pay-direct', '/api/paytr/pa
 
   // Generate a unique order id (MUST be strictly alphanumeric: letters and numbers only, no hyphens/special chars for PayTR)
   const merchantOid = `ISGTR${Date.now()}${Math.floor(1000 + Math.random() * 9000)}`;
-  
+
   const chosenPlanType: LicenseType = planId === 'test' ? 'demo' : ((planId === 'monthly' || req.body.planType === 'monthly') ? 'monthly' : 'yearly');
   const licenseKey = generateLicenseKey(chosenPlanType);
   await registerGeneratedLicense(licenseKey, chosenPlanType, email);
@@ -5754,8 +6564,8 @@ app.all(['/api/paytr/token', '/paytr/token', '/paytr/pay-direct', '/api/paytr/pa
   }
 
   const isFromPanel = !!(
-    req.body.fromPanel || 
-    req.body.returnUrl?.includes('/panel') || 
+    req.body.fromPanel ||
+    req.body.returnUrl?.includes('/panel') ||
     req.headers.referer?.includes('/panel') ||
     req.headers['x-requested-from'] === 'panel'
   );
@@ -5763,7 +6573,7 @@ app.all(['/api/paytr/token', '/paytr/token', '/paytr/pay-direct', '/api/paytr/pa
   const rawClientOrigin = (
     req.body.origin ||
     req.headers.origin ||
-    (req.headers.referer ? (() => { try { return new URL(req.headers.referer).origin; } catch(_) { return ''; } })() : '') ||
+    (req.headers.referer ? (() => { try { return new URL(req.headers.referer).origin; } catch (_) { return ''; } })() : '') ||
     ''
   ).toString().trim();
 
@@ -5826,7 +6636,7 @@ app.all(['/api/paytr/token', '/paytr/token', '/paytr/pay-direct', '/api/paytr/pa
 
   try {
     const clean_ip = getPublicUserIp(req);
-    
+
     const basketTitle = planId === 'test' ? '1 TL Canlı Test Lisansı' : (planId === 'yearly' ? 'Yıllık Pro Lisans' : 'Aylık Pro Lisans');
     const user_basket = Buffer.from(JSON.stringify([
       [basketTitle, amountStr, '1']
@@ -6050,7 +6860,7 @@ app.post('/api/paytr/test-callback', async (req, res) => {
     if (db) {
       try {
         await setDoc(doc(db, 'paytr_orders', merchantOid), paytrOrders[merchantOid], { merge: true });
-      } catch (e) {}
+      } catch (e) { }
     }
 
     const merchantKey = paytrConfig.merchantKey || 'mock_merchant_key';
@@ -6280,8 +7090,8 @@ app.all('/api/paytr/success', async (req, res) => {
   }
 
   const isFromPanel = !!(
-    (order && order.isFromPanel) || 
-    req.query.source === 'panel' || 
+    (order && order.isFromPanel) ||
+    req.query.source === 'panel' ||
     (req.headers.referer && req.headers.referer.includes('/panel'))
   );
   const targetPath = isFromPanel ? '/panel/' : '/';
@@ -6340,8 +7150,8 @@ app.all('/api/paytr/fail', async (req, res) => {
   const order = oid ? (await getPaytrOrder(oid) || paytrOrders[oid]) : null;
   const returnTo = ((req.query.return_to || req.body.return_to) as string) || (order as any)?.clientOrigin || '';
   const isFromPanel = !!(
-    (order && order.isFromPanel) || 
-    req.query.source === 'panel' || 
+    (order && order.isFromPanel) ||
+    req.query.source === 'panel' ||
     (req.headers.referer && req.headers.referer.includes('/panel'))
   );
   const targetPath = isFromPanel ? '/panel/' : '/';
@@ -6555,7 +7365,7 @@ app.post(['/api/subscription/toggle-autorenew', '/subscription/toggle-autorenew'
           </div>
         </div>
       `;
-      sendEmailDirect(targetEmail, `${statusTitle} - İSG Pro`, mailHtml).catch(() => {});
+      sendEmailDirect(targetEmail, `${statusTitle} - İSG Pro`, mailHtml).catch(() => { });
     }
 
     return res.json({
@@ -6570,6 +7380,35 @@ app.post(['/api/subscription/toggle-autorenew', '/subscription/toggle-autorenew'
   } catch (err: any) {
     console.error('[Toggle AutoRenew Error]:', err);
     return res.status(500).json({ success: false, error: 'Abonelik tercihi güncellenirken hata oluştu: ' + err.message });
+  }
+});
+
+// 2.1. 10 Dakikalık Geçici Test Modunu Sonlandırma Endpoint'i
+app.post(['/api/subscription/stop-test-10m', '/subscription/stop-test-10m'], async (req, res) => {
+  try {
+    const { username, email } = req.body || {};
+    const nowIso = new Date().toISOString();
+    const updatePayload: Record<string, any> = {
+      isTenMinuteTestMode: false,
+      autoRenewalTestCycles: 0,
+      testModeType: null,
+      testStoppedAt: nowIso
+    };
+
+    if (db && (username || email)) {
+      const found = await findUserDocForSubscription(username, email);
+      if (found) {
+        await setDoc(doc(db, 'users', found.docId), updatePayload, { merge: true });
+      } else if (username) {
+        const uId = normalizeUsername(username);
+        if (uId) await setDoc(doc(db, 'users', uId), updatePayload, { merge: true });
+      }
+    }
+
+    return res.json({ success: true, message: '10 dakikalık test modu başarıyla sonlandırıldı.' });
+  } catch (err: any) {
+    console.error('[Stop Test 10m Error]:', err);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -6669,7 +7508,7 @@ async function checkAndProcessAutoRenewals(): Promise<{ scanned: number; renewed
               </div>
             </div>
           `;
-          await sendEmailDirect(u.email, '🔄 İSG Pro Abonelik Dönem Sonu Yenileme Bildirimi', reminderHtml).catch(() => {});
+          await sendEmailDirect(u.email, '🔄 İSG Pro Abonelik Dönem Sonu Yenileme Bildirimi', reminderHtml).catch(() => { });
           await setDoc(doc(db, 'users', d.id), { lastRenewalReminderFor: u.licenseExpiresAt }, { merge: true });
           reminded++;
         }
@@ -6694,11 +7533,11 @@ app.post(['/api/subscription/trigger-renewal-check', '/subscription/trigger-rene
 // Dedicated endpoint to dispatch billing & invoice details to infoisgpro@gmail.com
 app.post('/api/send-email-billing', async (req, res) => {
   try {
-    const { 
-      orderId, planName, price, billingType, customerName, 
-      customerEmail, customerPhone, customerAddress, city, 
-      district, tcNo, companyName, taxNumber, taxOffice, 
-      licenseKey, customerSignature 
+    const {
+      orderId, planName, price, billingType, customerName,
+      customerEmail, customerPhone, customerAddress, city,
+      district, tcNo, companyName, taxNumber, taxOffice,
+      licenseKey, customerSignature
     } = req.body;
 
     const result = await dispatchBillingEmail({
@@ -6745,7 +7584,7 @@ app.post('/api/smtp-config', async (req, res) => {
   const { host, port, user, pass, fromName, active, resendApiKey, googleScriptUrl, brevoApiKey } = req.body;
   try {
     const smtpDocRef = doc(db, 'smtp_config', 'default');
-    
+
     // Handle keeping the existing password if they didn't modify it
     let finalPass = pass;
     if (pass === '••••••••••••••••') {
@@ -7225,16 +8064,16 @@ app.post('/api/smtp-config/test', async (req, res) => {
 // Fetch simulated inbox messages (for user dashboard to check their sent e-mails)
 app.get('/api/my-emails', (req, res) => {
   const { email, role } = req.query;
-  
+
   // Only allow admin to view the entire queue
   if (role === 'admin') {
     return res.json(messageQueue);
   }
-  
+
   if (!email) {
     return res.status(400).json({ error: 'E-posta parametresi zorunludur.' });
   }
-  
+
   const filtered = messageQueue.filter(m => m.email === email);
   return res.json(filtered);
 });
@@ -7342,7 +8181,7 @@ async function checkAndSendTrialExpiryReminders(): Promise<{ checked: number; se
               reminderSentAt: new Date().toISOString(),
               reminderDeliverySuccess: mailSuccess
             }, { merge: true });
-          } catch (e) {}
+          } catch (e) { }
         }
       }
     } catch (err) {
@@ -7405,10 +8244,10 @@ app.post('/api/activate-license', async (req, res) => {
     const planLabel = record.licenseType === 'trial'
       ? '7 Günlük Ücretsiz Deneme Lisansı'
       : record.licenseType === 'monthly'
-      ? 'Aylık Pro Lisans (1 Ay)'
-      : record.licenseType === 'demo'
-      ? '10 Dakikalık Test Lisansı'
-      : 'Yıllık Pro Lisans (1 Yıl)';
+        ? 'Aylık Pro Lisans (1 Ay)'
+        : record.licenseType === 'demo'
+          ? '10 Dakikalık Test Lisansı'
+          : 'Yıllık Pro Lisans (1 Yıl)';
 
     return res.json({
       success: true,
@@ -7476,7 +8315,7 @@ app.post('/api/releases', async (req, res) => {
 app.post('/api/releases/toggle-setting/:platform', async (req, res) => {
   const { platform } = req.params;
   const { field, value } = req.body; // field can be 'isPublished' or 'showDownloadLinkBox'
-  
+
   const release = releases.find(r => r.platform === platform);
   if (!release) {
     return res.status(404).json({ error: 'Release not found' });
@@ -7612,6 +8451,148 @@ app.get('/api/equipment-file/:id', async (req, res) => {
 });
 
 // ==========================================
+// 1.4. İSGPRO KATİP ASİSTANI v2.0.7 — LOCALHOST & CANLI SENKRONİZASYON KÖPRÜSÜ
+// ==========================================
+const katipBridgeStartedAt = Date.now();
+let katipBridgeConfig: Record<string, any> = {
+  extensionId: 'gejgekoijpmoplecdpbbnldgcbhnfmpo',
+  panelUrl: 'http://localhost:3000/panel#isg_katip',
+  localhostPorts: ['3000', '5173', '8080', '4173'],
+  katipHost: 'https://isgkatip.csgb.gov.tr',
+  exportUrl: 'https://isgkatip.csgb.gov.tr/be/report/exportdetail',
+  binaryUrlBase: 'https://isgkatip.csgb.gov.tr/be/report/downloadpdf',
+  contractListUrl: 'https://isgkatip.csgb.gov.tr/be/bsn-inter-instance/hizmet-sozlesmesi-surec-view/ongoing',
+  probeUrl: 'https://isgkatip.csgb.gov.tr/be/bsn-inter-instance/hizmet-sozlesmesi-surec/isyeri-asgari-sure-bilgisi',
+  assignUrl: 'https://isgkatip.csgb.gov.tr/be/bsn-inter-instance/hizmet-sozlesmesi-surec/guncellenmesi-gereken-sozlesmeleri-guncelle',
+  reportSource: 'HIZMET_SOZLESME_SURECLERI_DETAY',
+  reportType: 'PDF',
+  paralel: 5,
+  jsonRetryAttempts: 2,
+  binaryRetryAttempts: 2,
+  tabFetchRetryAttempts: 3,
+  minPdfSizeBytes: 100
+};
+
+let latestKatipSyncPayload: any = null;
+const katipSseClients = new Set<express.Response>();
+
+function broadcastKatipSse(record: Record<string, any>) {
+  const payload = 'data: ' + JSON.stringify(record) + '\n\n';
+  for (const client of katipSseClients) {
+    try {
+      client.write(payload);
+    } catch {
+      katipSseClients.delete(client);
+    }
+  }
+}
+
+app.get(['/api/localhost/status', '/api/katip-bridge/status'], (_req, res) => {
+  res.json({
+    ok: true,
+    server: 'İSGPro Katip Asistanı Localhost Engine v2.0.7',
+    uptimeSeconds: Math.floor((Date.now() - katipBridgeStartedAt) / 1000),
+    config: katipBridgeConfig,
+    hasLastSync: Boolean(latestKatipSyncPayload),
+    lastSyncedAt: latestKatipSyncPayload?.syncedAt || null
+  });
+});
+
+app.post(['/api/localhost/config', '/api/katip-bridge/config'], (req, res) => {
+  try {
+    if (req.body && typeof req.body === 'object') {
+      katipBridgeConfig = { ...katipBridgeConfig, ...req.body };
+    }
+    broadcastKatipSse({
+      id: 'SSE-' + Date.now(),
+      timestamp: new Date().toTimeString().split(' ')[0],
+      event: 'config-update',
+      type: 'LOCALHOST_CONFIG_SAVED',
+      summary: 'İSGPro Katip Asistanı v2.0.7 yapılandırması güncellendi'
+    });
+    res.json({ ok: true, config: katipBridgeConfig });
+  } catch (err: any) {
+    res.status(400).json({ ok: false, error: err?.message || 'Yapılandırma kaydedilemedi' });
+  }
+});
+
+app.get(['/api/localhost/sse', '/api/katip-bridge/sse'], (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive'
+  });
+  katipSseClients.add(res);
+  res.write(
+    'data: ' +
+      JSON.stringify({
+        id: 'SSE-WELCOME-' + Date.now(),
+        timestamp: new Date().toTimeString().split(' ')[0],
+        event: 'connected',
+        type: 'SSE_STREAM_CONNECTED',
+        summary: 'İSGPro Katip Asistanı v2.0.7 SSE akış kanalı bağlandı'
+      }) +
+      '\n\n'
+  );
+  req.on('close', () => katipSseClients.delete(res));
+});
+
+app.get('/api/v1/katip/live-sync', (_req, res) => {
+  res.json({
+    ok: true,
+    payload: latestKatipSyncPayload
+  });
+});
+
+app.post('/api/v1/katip/live-sync', async (req, res) => {
+  try {
+    const incoming = req.body || {};
+    latestKatipSyncPayload = {
+      ...incoming,
+      syncedAt: incoming.syncedAt || new Date().toISOString()
+    };
+
+    const incomingCompanies = Array.isArray(incoming.companies)
+      ? incoming.companies
+      : Array.isArray(incoming.firmalar)
+      ? incoming.firmalar
+      : [];
+
+    let firestoreSavedCount = 0;
+    if (db && incomingCompanies.length > 0) {
+      for (const comp of incomingCompanies) {
+        if (comp && comp.id && comp.info) {
+          try {
+            await setDoc(doc(db, 'companies', String(comp.id)), comp, { merge: true });
+            firestoreSavedCount++;
+          } catch (dbErr) {
+            console.warn('[Katip Live Sync] Firestore company save warning:', dbErr);
+          }
+        }
+      }
+    }
+
+    broadcastKatipSse({
+      id: 'SSE-SYNC-' + Date.now(),
+      timestamp: new Date().toTimeString().split(' ')[0],
+      event: 'katip-sync',
+      type: 'KATIP_LIVE_SYNC_RECEIVED',
+      summary: `İSG-KATİP Canlı Veri Aktarımı: ${incomingCompanies.length} firma senkronize edildi (${firestoreSavedCount} buluta yazıldı).`,
+      payload: latestKatipSyncPayload
+    });
+
+    res.json({
+      ok: true,
+      syncedCount: incomingCompanies.length,
+      firestoreSavedCount,
+      syncedAt: latestKatipSyncPayload.syncedAt
+    });
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: err?.message || 'Canlı senkronizasyon hatası' });
+  }
+});
+
+// ==========================================
 // 1.5. API CATCH-ALL (Prevents HTML fallback / JSON parse errors)
 // ==========================================
 app.all('/api/*', (req, res) => {
@@ -7630,7 +8611,7 @@ const panelDistPath = fs.existsSync(path.resolve(__dirnameSafe, 'panel-dist'))
   : path.resolve(__dirnameSafe, 'dist', 'panel');
 if (fs.existsSync(panelDistPath)) {
   console.log(`[SERVER] Mounting /panel subsite from: ${panelDistPath}`);
-  
+
   // Serve static assets for /panel with caching & compression
   app.use('/panel', express.static(panelDistPath, {
     index: false,
@@ -7644,7 +8625,7 @@ if (fs.existsSync(panelDistPath)) {
       }
     }
   }));
-  
+
   // Handle SPA routing under /panel (e.g. /panel, /panel/, /panel/any-subroute)
   app.get(['/panel', '/panel/*'], (req, res) => {
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -7664,7 +8645,7 @@ async function startServer() {
     setDoc(doc(db, 'users', 'admin'), {
       email: 'infoisgpro@gmail.com',
       updatedAt: new Date().toISOString()
-    }, { merge: true }).catch(() => {});
+    }, { merge: true }).catch(() => { });
   }
 
   // Sync/Load application releases from Firestore asynchronously to prevent startup blockages
@@ -7676,17 +8657,10 @@ async function startServer() {
   checkAndSendTrialExpiryReminders().catch(err => {
     console.error('[Trial Reminder Check] Startup check failed:', err);
   });
-  checkAndProcessAutoRenewals().catch(err => {
-    console.error('[AutoRenewal Check] Startup check failed:', err);
-  });
-  // Recurring check for trial expiry (every 30 mins) & auto-renewals (every 10 seconds for instant 10-minute test mode response)
+  // Recurring check for trial expiry (every 30 mins)
   setInterval(() => {
     checkAndSendTrialExpiryReminders().catch(err => console.error('[Trial Reminder Check] Interval check failed:', err));
   }, 30 * 60 * 1000);
-
-  setInterval(() => {
-    checkAndProcessAutoRenewals().catch(err => console.error('[AutoRenewal Check] Interval check failed:', err));
-  }, 10 * 1000);
 
   // Create unified HTTP server
   const httpServer = http.createServer(app);
@@ -7708,6 +8682,9 @@ async function startServer() {
         // Bind Vite HMR directly to our HTTP server on the exact same port (eliminates separate port & firewall issues)
         hmr: {
           server: httpServer,
+        },
+        watch: {
+          ignored: ['**/data/**', '**/panel-dist/**', '**/dist/**', '**/node_modules/**', '**/.git/**'],
         },
       },
       appType: 'spa',

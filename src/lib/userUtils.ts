@@ -135,7 +135,20 @@ export function deduplicateAndCleanUsers(usersList: User[]): User[] {
 
       const isOsgbManagerCombined = Boolean(existing.isOsgbManager || rawUser.isOsgbManager || existing.role === 'osgb_manager' || rawUser.role === 'osgb_manager');
       const managedOsgbCombined = (rawUser.managedOsgbName || existing.managedOsgbName || (rawUser.osgb && typeof rawUser.osgb === 'object' ? rawUser.osgb.name : '') || (existing.osgb && typeof existing.osgb === 'object' ? existing.osgb.name : '') || '').trim();
-      const role = (existing.role === 'admin' || rawUser.role === 'admin') ? 'admin' : (isOsgbManagerCombined ? 'osgb_manager' : (rawUser.role || existing.role || 'uzman'));
+      const mergedManagedOsgbs = Array.from(new Set([
+        ...(Array.isArray(existing.managedOsgbNames) ? existing.managedOsgbNames : []),
+        ...(Array.isArray(rawUser.managedOsgbNames) ? rawUser.managedOsgbNames : []),
+        ...(managedOsgbCombined ? [managedOsgbCombined] : [])
+      ].map((s: any) => String(s || '').trim()).filter(Boolean)));
+
+      // Mesleki Rol (Doktor, Uzman, DSP vs.) ve OSGB Yöneticiliği birbirinden AYRI tutulur:
+      // OSGB yöneticisi olsa bile kullanıcının mesleki rolü asla silinmez/ezilmez.
+      const candidateRole = rawUser.role || existing.role;
+      const role = (existing.role === 'admin' || rawUser.role === 'admin')
+        ? 'admin'
+        : (candidateRole && candidateRole !== 'osgb_manager'
+            ? candidateRole
+            : (isOsgbManagerCombined || mergedManagedOsgbs.length > 0 ? 'other' : 'uzman'));
       const isExistingPremium = Boolean(existing.isPremium);
       const isRawPremium = Boolean(rawUser.isPremium);
       const isPremiumCombined = isExistingPremium || isRawPremium;
@@ -157,8 +170,10 @@ export function deduplicateAndCleanUsers(usersList: User[]): User[] {
         email: rawUser.email?.trim() || existing.email || '',
         phone: rawUser.phone || existing.phone || '',
         role,
-        isOsgbManager: isOsgbManagerCombined,
-        managedOsgbName: managedOsgbCombined,
+        isOsgbManager: isOsgbManagerCombined || mergedManagedOsgbs.length > 0,
+        managedOsgbName: mergedManagedOsgbs[0] || managedOsgbCombined,
+        managedOsgbNames: mergedManagedOsgbs,
+        affiliatedOsgbs: Array.isArray(rawUser.affiliatedOsgbs) ? rawUser.affiliatedOsgbs : (Array.isArray(existing.affiliatedOsgbs) ? existing.affiliatedOsgbs : []),
         canViewAllCompanies: Boolean(rawUser.canViewAllCompanies !== undefined ? rawUser.canViewAllCompanies : existing.canViewAllCompanies),
         companyPermissions: (Array.isArray(rawUser.companyPermissions) && rawUser.companyPermissions.length > 0)
           ? rawUser.companyPermissions
@@ -200,19 +215,37 @@ export function sanitizeUserForFirestore(user: any): Record<string, any> {
   cleanUser.phone = String(decrypted.phone || '').trim();
   
   // OSGB Manager flag & role alignment
+  const rawManagedNames = Array.isArray(decrypted.managedOsgbNames)
+    ? decrypted.managedOsgbNames
+    : (decrypted.managedOsgbName ? [decrypted.managedOsgbName] : []);
+  const cleanManagedNames = Array.from(new Set(rawManagedNames.map((s: any) => String(s || '').trim()).filter(Boolean)));
+
   const isManager = Boolean(
     decrypted.isOsgbManager === true ||
     decrypted.isOsgbManager === 'true' ||
     decrypted.role === 'osgb_manager' ||
-    decrypted.isManager === true
+    decrypted.isManager === true ||
+    cleanManagedNames.length > 0
   );
   cleanUser.isOsgbManager = isManager;
-  cleanUser.role = (decrypted.role === 'admin' || cleanUser.username === 'admin') 
-    ? 'admin' 
-    : (isManager ? 'osgb_manager' : (decrypted.role || 'uzman'));
+  cleanUser.managedOsgbNames = cleanManagedNames;
 
-  const managedOsgb = String(decrypted.managedOsgbName || (decrypted.osgb && typeof decrypted.osgb === 'object' ? decrypted.osgb.name : '') || '').trim();
+  const managedOsgb = cleanManagedNames[0] || String(decrypted.managedOsgbName || (decrypted.osgb && typeof decrypted.osgb === 'object' ? decrypted.osgb.name : '') || '').trim();
   cleanUser.managedOsgbName = managedOsgb;
+  cleanUser.affiliatedOsgbs = Array.isArray(decrypted.affiliatedOsgbs) ? decrypted.affiliatedOsgbs : [];
+
+  // Mesleki Rol (Doktor, Uzman, DSP vs.) ve OSGB Yöneticiliği birbirinden AYRI tutulur:
+  // Kullanıcı OSGB yöneticisi olsa bile mesleki rolü (hekim, uzman, dsp) korunur!
+  // Yalnızca rolü admin olanlar admin kalır.
+  if (decrypted.role === 'admin' || cleanUser.username === 'admin') {
+    cleanUser.role = 'admin';
+  } else if (decrypted.role && decrypted.role !== 'osgb_manager') {
+    cleanUser.role = decrypted.role;
+  } else if (isManager) {
+    cleanUser.role = 'other';
+  } else {
+    cleanUser.role = 'uzman';
+  }
 
   cleanUser.tcNo = decrypted.tcNo ? String(decrypted.tcNo).trim() : '';
   cleanUser.certificateNo = decrypted.certificateNo ? String(decrypted.certificateNo).trim() : '';

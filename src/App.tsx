@@ -16,6 +16,7 @@ import { db } from './lib/firebase';
 import { collection, getDocs, doc, setDoc, getDoc, onSnapshot, deleteDoc, query } from 'firebase/firestore';
 import { hashPassword, encryptUser, decryptUser, decryptData, encryptData, getObfuscatedSecret } from './lib/crypto';
 import { logActivity } from './lib/activity';
+import { safeSetItem, safeGetItem, safeRemoveItem } from './lib/safeStorage';
 
 // Component imports
 import Navbar from './components/Navbar';
@@ -116,7 +117,7 @@ export default function App() {
           const expectedHash = "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8";
           if (parsed[adminIndex].password !== expectedHash) {
             parsed[adminIndex].password = expectedHash;
-            localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(parsed));
+            safeSetItem(STORAGE_KEYS.USERS, parsed);
           }
         }
         return parsed;
@@ -136,24 +137,38 @@ export default function App() {
           delete parsed.password;
         }
 
-        // Eğer kullanıcı henüz sözleşmeleri imzalamadıysa veya e-postasını doğrulamadıysa (onboarding yarım kaldıysa),
-        // tarayıcı kapatılıp açıldığında veya sayfa yenilendiğinde bu ekranda kilitli kalmaması için
-        // oturumu temizle ve ana sayfadan temiz bir şekilde başlat:
-        if (parsed.role !== 'admin' && parsed.username !== 'admin') {
-          if (!parsed.hasAcceptedLegalTerms || !parsed.isEmailVerified) {
-            localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
-            return null;
+        // Yasal sözleşme onayı yerel yedek kontrolü (tarayıcı yenilendiğinde modalın tekrar açılmasını önler)
+        const uName = parsed.username || '';
+        const uLower = uName.toLowerCase();
+        if (
+          !parsed.hasAcceptedLegalTerms &&
+          (localStorage.getItem(`isg_legal_accepted_${uName}`) === 'true' ||
+           localStorage.getItem(`isg_legal_accepted_${uLower}`) === 'true')
+        ) {
+          parsed.hasAcceptedLegalTerms = true;
+          const localSig = localStorage.getItem(`isg_user_signature_${uName}`) || localStorage.getItem(`isg_user_signature_${uLower}`);
+          if (localSig && !parsed.userSignature) {
+            parsed.userSignature = localSig;
           }
         }
 
+        // Clean up any leftover 10-minute test mode state on built-in admin/ibrahim accounts
+        if ((uLower === 'admin' || uLower === 'ibrahim') && ((parsed as any).isTenMinuteTestMode || parsed.licenseType === 'test' || parsed.licenseType === 'demo' || !isLicenseActive(parsed))) {
+          parsed.isPremium = true;
+          parsed.licenseType = 'yearly';
+          parsed.licenseExpiresAt = '2027-07-06T20:02:45.433Z';
+          parsed.subscriptionStatus = 'active';
+          delete (parsed as any).isTenMinuteTestMode;
+        }
+
         // Auto-check expiration for all accounts
-        if (parsed.isPremium && parsed.licenseExpiresAt) {
+        if (parsed.isPremium && parsed.licenseExpiresAt && parsed.role !== 'admin' && uLower !== 'admin') {
           if (!isLicenseActive(parsed)) {
             parsed.isPremium = false;
             parsed.subscriptionStatus = 'expired';
           }
         }
-        localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(parsed));
+        safeSetItem(STORAGE_KEYS.CURRENT_USER, parsed);
         return parsed;
       }
       return null;
@@ -308,12 +323,8 @@ export default function App() {
         const cleaned = deduplicateAndCleanUsers([...rawUsers, ...localList]);
         setUsers(cleaned);
 
-        try {
-          localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(cleaned));
-          localStorage.setItem('isg_users_db', JSON.stringify(cleaned));
-        } catch (e) {
-          console.warn("LocalStorage save error:", e);
-        }
+        safeSetItem(STORAGE_KEYS.USERS, cleaned);
+        safeRemoveItem('isg_users_db');
 
         // Live update logged-in user state (match strictly by username to avoid overwriting distinct accounts)
         if (currentUser) {
@@ -321,11 +332,43 @@ export default function App() {
             u => u.username.toLowerCase() === currentUser.username.toLowerCase()
           );
           if (matching) {
-            const { password, ...safeUser } = matching;
-            setCurrentUser(prev => prev ? { ...prev, ...matching } : matching);
-            try {
-              localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(safeUser));
-            } catch (e) {}
+            const isLegalAccepted = matching.hasAcceptedLegalTerms === true ||
+              Boolean(currentUser.hasAcceptedLegalTerms) ||
+              localStorage.getItem(`isg_legal_accepted_${matching.username}`) === 'true' ||
+              localStorage.getItem(`isg_legal_accepted_${matching.username.toLowerCase()}`) === 'true';
+
+            const userSig = matching.userSignature ||
+              currentUser.userSignature ||
+              localStorage.getItem(`isg_user_signature_${matching.username}`) ||
+              localStorage.getItem(`isg_user_signature_${matching.username.toLowerCase()}`) ||
+              null;
+
+            const finalMatching: UserType = {
+              ...matching,
+              hasAcceptedLegalTerms: isLegalAccepted,
+              userSignature: userSig,
+              legalAcceptedAt: matching.legalAcceptedAt || currentUser.legalAcceptedAt || null
+            };
+            const { password, ...safeUser } = finalMatching;
+            setCurrentUser(prev => {
+              if (!prev) return finalMatching;
+              const isSame =
+                prev.username === finalMatching.username &&
+                prev.email === finalMatching.email &&
+                prev.name === finalMatching.name &&
+                prev.role === finalMatching.role &&
+                Boolean(prev.isPremium) === Boolean(finalMatching.isPremium) &&
+                prev.licenseKey === finalMatching.licenseKey &&
+                prev.licenseType === finalMatching.licenseType &&
+                prev.licenseExpiresAt === finalMatching.licenseExpiresAt &&
+                Boolean(prev.isEmailVerified) === Boolean(finalMatching.isEmailVerified) &&
+                Boolean(prev.hasAcceptedLegalTerms) === Boolean(finalMatching.hasAcceptedLegalTerms) &&
+                Boolean(prev.isOsgbManager) === Boolean(finalMatching.isOsgbManager) &&
+                prev.managedOsgbName === finalMatching.managedOsgbName;
+              if (isSame) return prev;
+              safeSetItem(STORAGE_KEYS.CURRENT_USER, safeUser);
+              return { ...prev, ...finalMatching };
+            });
           }
         }
       }
@@ -337,7 +380,7 @@ export default function App() {
       isSubscribed = false;
       unsubscribe();
     };
-  }, [currentUser?.username, currentUser?.email]);
+  }, [currentUser?.username]);
 
   // Handle URL parameters (Email verification, Unlock Email, & PayTR redirection fallback)
   useEffect(() => {
@@ -416,18 +459,14 @@ export default function App() {
           u.username.toLowerCase() === targetUser!.username.toLowerCase() ? updatedTarget : u
         );
         setUsers(updatedUsers);
-        try {
-          localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
-          localStorage.setItem('isg_users_db', JSON.stringify(updatedUsers));
-        } catch (_) {}
+        safeSetItem(STORAGE_KEYS.USERS, updatedUsers);
+        safeRemoveItem('isg_users_db');
 
         // Set active user session to targetUser
         setCurrentUser(updatedTarget);
-        try {
-          localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(updatedTarget));
-          localStorage.setItem('isg_active_user', JSON.stringify(updatedTarget));
-          localStorage.setItem('currentUser', JSON.stringify(updatedTarget));
-        } catch (_) {}
+        safeSetItem(STORAGE_KEYS.CURRENT_USER, updatedTarget);
+        safeSetItem('isg_active_user', updatedTarget);
+        safeSetItem('currentUser', updatedTarget);
 
         // Persist to Firestore
         saveUserToFirestore(updatedTarget).catch(e => console.warn('Save user Firestore error:', e));
@@ -650,7 +689,7 @@ export default function App() {
             ];
           }
           setSiteConfig(cloudConfig);
-          localStorage.setItem('isg_site_config_v1', JSON.stringify(cloudConfig));
+          safeSetItem('isg_site_config_v1', cloudConfig);
         } else {
           await setDoc(siteConfigDocRef, siteConfig);
         }
@@ -662,7 +701,7 @@ export default function App() {
           const data = faqsSnap.data();
           if (data && Array.isArray(data.items)) {
             setFaqs(data.items);
-            localStorage.setItem('isg_faqs_v1', JSON.stringify(data.items));
+            safeSetItem('isg_faqs_v1', data.items);
           }
         } else {
           await setDoc(faqsDocRef, { items: faqs });
@@ -676,7 +715,7 @@ export default function App() {
           if (data && Array.isArray(data.items)) {
             const cleanReviews = (data.items as Review[]).filter(r => !['rev-1', 'rev-2', 'rev-3'].includes(r.id));
             setReviews(cleanReviews);
-            localStorage.setItem('isg_reviews_v1', JSON.stringify(cleanReviews));
+            safeSetItem('isg_reviews_v1', cleanReviews);
           }
         } else {
           await setDoc(reviewsDocRef, { items: reviews });
@@ -689,7 +728,7 @@ export default function App() {
           const data = presetsSnap.data();
           if (data && Array.isArray(data.items)) {
             setPresets(data.items);
-            localStorage.setItem('isg_presets_v1', JSON.stringify(data.items));
+            safeSetItem('isg_presets_v1', data.items);
           }
         } else {
           await setDoc(presetsDocRef, { items: presets });
@@ -705,7 +744,7 @@ export default function App() {
   // Firestore & local storage write handlers
   const handleUpdateSiteConfig = async (newConfig: SiteConfig) => {
     setSiteConfig(newConfig);
-    localStorage.setItem('isg_site_config_v1', JSON.stringify(newConfig));
+    safeSetItem('isg_site_config_v1', newConfig);
     if (db) {
       try {
         await setDoc(doc(db, 'site_config', 'default'), newConfig);
@@ -717,7 +756,7 @@ export default function App() {
 
   const handleUpdateFaqs = async (newFaqs: FAQItem[]) => {
     setFaqs(newFaqs);
-    localStorage.setItem('isg_faqs_v1', JSON.stringify(newFaqs));
+    safeSetItem('isg_faqs_v1', newFaqs);
     if (db) {
       try {
         await setDoc(doc(db, 'site_config', 'faqs'), { items: newFaqs });
@@ -729,7 +768,7 @@ export default function App() {
 
   const handleUpdateReviews = async (newReviews: Review[]) => {
     setReviews(newReviews);
-    localStorage.setItem('isg_reviews_v1', JSON.stringify(newReviews));
+    safeSetItem('isg_reviews_v1', newReviews);
     if (db) {
       try {
         await setDoc(doc(db, 'site_config', 'reviews'), { items: newReviews });
@@ -741,7 +780,7 @@ export default function App() {
 
   const handleUpdatePresets = async (newPresets: RiskPreset[]) => {
     setPresets(newPresets);
-    localStorage.setItem('isg_presets_v1', JSON.stringify(newPresets));
+    safeSetItem('isg_presets_v1', newPresets);
     if (db) {
       try {
         await setDoc(doc(db, 'site_config', 'presets'), { items: newPresets });
@@ -773,9 +812,10 @@ export default function App() {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // Sync users with localStorage (readable for admin)
+  // Sync users with localStorage safely (never crash on quota exceeded)
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
+    safeSetItem(STORAGE_KEYS.USERS, users);
+    safeRemoveItem('isg_users_db'); // Clean duplicate key to save space
   }, [users]);
 
   // Sync currentUser with localStorage for both landing portal and panel (/panel)
@@ -784,24 +824,18 @@ export default function App() {
       const safeUser = { ...currentUser };
       if (safeUser.password) delete safeUser.password;
       
-      try {
-        // 1. Landing portal storage key
-        localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(safeUser));
-        // 2. ISG Panel storage keys (both encrypted and plain active session)
-        localStorage.setItem('currentUser', JSON.stringify(encryptUser(safeUser)));
-        localStorage.setItem('user', JSON.stringify(encryptUser(safeUser)));
-        localStorage.setItem('isg_active_user', JSON.stringify(safeUser));
-      } catch (e) {
-        console.warn('Storage sync error:', e);
-      }
+      // 1. Landing portal storage key
+      safeSetItem(STORAGE_KEYS.CURRENT_USER, safeUser);
+      // 2. ISG Panel storage keys (both encrypted and plain active session)
+      safeSetItem('currentUser', encryptUser(safeUser));
+      safeSetItem('user', encryptUser(safeUser));
+      safeSetItem('isg_active_user', safeUser);
     } else {
-      try {
-        localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
-        localStorage.removeItem('currentUser');
-        localStorage.removeItem('user');
-        localStorage.removeItem('isg_active_user');
-        localStorage.removeItem('isg_current_user');
-      } catch (e) {}
+      safeRemoveItem(STORAGE_KEYS.CURRENT_USER);
+      safeRemoveItem('currentUser');
+      safeRemoveItem('user');
+      safeRemoveItem('isg_active_user');
+      safeRemoveItem('isg_current_user');
     }
   }, [currentUser]);
 
@@ -816,7 +850,20 @@ export default function App() {
             const parsed = JSON.parse(e.newValue);
             const decUser = decryptUser(parsed);
             if (decUser && (decUser.username || decUser.email)) {
-              setCurrentUser(decUser);
+              setCurrentUser(prev => {
+                if (
+                  prev &&
+                  prev.username === decUser.username &&
+                  prev.email === decUser.email &&
+                  Boolean(prev.isPremium) === Boolean(decUser.isPremium) &&
+                  prev.licenseKey === decUser.licenseKey &&
+                  prev.licenseExpiresAt === decUser.licenseExpiresAt &&
+                  prev.role === decUser.role
+                ) {
+                  return prev;
+                }
+                return decUser;
+              });
             }
           } catch (err) {}
         }
@@ -826,9 +873,10 @@ export default function App() {
     return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
-  // Aktif oturumda sürenin bitimini anlık olarak yakalayıp lisansı düşüren canlı dinleyici
+  // Aktif oturumda sürenin bitimini kontrol eden dinleyici
   useEffect(() => {
     if (!currentUser?.licenseExpiresAt) return;
+    if (currentUser.role === 'admin' || currentUser.username?.toLowerCase() === 'admin') return;
     const checkExpiry = () => {
       if (currentUser.licenseExpiresAt && !isLicenseActive(currentUser)) {
         if (currentUser.isPremium) {
@@ -837,37 +885,9 @@ export default function App() {
       }
     };
     checkExpiry();
-    const expInterval = setInterval(checkExpiry, 2000);
+    const expInterval = setInterval(checkExpiry, 30000);
     return () => clearInterval(expInterval);
-  }, [currentUser?.licenseExpiresAt, currentUser?.isPremium]);
-
-  // Sayfa açıldığında veya kullanıcı oturum açtığında sunucudan güncel abonelik ve test durumunu senkronize et
-  useEffect(() => {
-    if (!currentUser?.username) return;
-    const fetchLatestSubStatus = async () => {
-      try {
-        const res = await fetch(`/api/subscription/status?username=${encodeURIComponent(currentUser.username)}&email=${encodeURIComponent(currentUser.email || '')}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data && data.success) {
-          const hasDiff = 
-            Boolean(data.isPremium) !== Boolean(currentUser.isPremium) ||
-            (data.licenseExpiresAt && data.licenseExpiresAt !== currentUser.licenseExpiresAt) ||
-            (typeof data.autoRenew === 'boolean' && data.autoRenew !== (currentUser.autoRenew !== false));
-
-          if (hasDiff) {
-            handleUpdateProfile({
-              isPremium: Boolean(data.isPremium),
-              licenseExpiresAt: data.licenseExpiresAt || currentUser.licenseExpiresAt,
-              autoRenew: data.autoRenew !== false,
-              subscriptionStatus: data.subscriptionStatus || currentUser.subscriptionStatus
-            });
-          }
-        }
-      } catch (_) {}
-    };
-    fetchLatestSubStatus();
-  }, [currentUser?.username]);
+  }, [currentUser?.licenseExpiresAt, currentUser?.isPremium, currentUser?.role, currentUser?.username]);
 
   // ==========================================
   // AUTHENTICATION HANDLERS
@@ -963,9 +983,7 @@ export default function App() {
               return { requires2FA: true, challengeId: data.challengeId };
             }
             setCurrentUser(loggedInUser);
-            try {
-              localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(loggedInUser));
-            } catch (e) {}
+            safeSetItem(STORAGE_KEYS.CURRENT_USER, loggedInUser);
             // Log successful login
             logActivity(usernameKey, 'login', { role: loggedInUser.role || 'user', email: loggedInUser.email || '' })
               .catch(e => console.error("Error logging login activity:", e));
@@ -1010,9 +1028,7 @@ export default function App() {
         return { requires2FA: true, challengeId: data.challengeId };
       }
       setCurrentUser(loggedInUser);
-      try {
-        localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(loggedInUser));
-      } catch (e) {}
+      safeSetItem(STORAGE_KEYS.CURRENT_USER, loggedInUser);
       // Log successful login fallback
       logActivity(usernameKey, 'login', { role: loggedInUser.role || 'user', email: loggedInUser.email || '' })
         .catch(e => console.error("Error logging login activity:", e));
@@ -1103,11 +1119,9 @@ export default function App() {
     setUsers(updated);
     setCurrentUser(securedUser);
     
-    try {
-      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updated));
-      localStorage.setItem('isg_users_db', JSON.stringify(updated));
-      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
-    } catch (e) {}
+    safeSetItem(STORAGE_KEYS.USERS, updated);
+    safeRemoveItem('isg_users_db');
+    safeRemoveItem(STORAGE_KEYS.CURRENT_USER);
 
     await saveUserToFirestore(securedUser);
 
@@ -1214,14 +1228,14 @@ export default function App() {
     );
     setUsers(updatedUsers);
 
+    safeSetItem(STORAGE_KEYS.USERS, updatedUsers);
+    safeRemoveItem('isg_users_db');
+    safeSetItem(STORAGE_KEYS.CURRENT_USER, updatedUser);
+    safeSetItem('isg_active_user', updatedUser);
+    safeSetItem('currentUser', encryptUser(updatedUser));
     try {
-      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
-      localStorage.setItem('isg_users_db', JSON.stringify(updatedUsers));
-      localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(updatedUser));
-      localStorage.setItem('isg_active_user', JSON.stringify(updatedUser));
-      localStorage.setItem('currentUser', JSON.stringify(encryptUser(updatedUser)));
       window.dispatchEvent(new Event('storage'));
-    } catch (e) {}
+    } catch (_) {}
 
     await saveUserToFirestore(updatedUser);
 
@@ -1800,11 +1814,28 @@ export default function App() {
       />
 
       {/* 1. ADIM: 1 DEFAYA MAHSUS YASAL BİLGİLENDİRME VE DİJİTAL SÖZLEŞME ONAY MODALI (Kayıttan Hemen Sonra) */}
-      {currentUser && (currentUser.role !== 'admin' && currentUser.username !== 'admin') && currentUser.hasAcceptedLegalTerms !== true && (
+      {(() => {
+        if (!currentUser) return false;
+        if (currentUser.role === 'admin' || currentUser.username === 'admin') return false;
+        const u = currentUser.username || '';
+        const uLower = u.toLowerCase();
+        const hasAccepted = currentUser.hasAcceptedLegalTerms === true ||
+          localStorage.getItem(`isg_legal_accepted_${u}`) === 'true' ||
+          localStorage.getItem(`isg_legal_accepted_${uLower}`) === 'true';
+        return !hasAccepted;
+      })() && (
         <InitialLegalConsentModal
           currentUser={currentUser}
           onClose={handleLogout}
           onComplete={async (signature) => {
+            const u = currentUser.username || '';
+            const uLower = u.toLowerCase();
+            try {
+              localStorage.setItem(`isg_legal_accepted_${u}`, 'true');
+              localStorage.setItem(`isg_legal_accepted_${uLower}`, 'true');
+              localStorage.setItem(`isg_user_signature_${u}`, signature);
+              localStorage.setItem(`isg_user_signature_${uLower}`, signature);
+            } catch (_) {}
             const updatedFields: Partial<UserType> = {
               hasAcceptedLegalTerms: true,
               legalAcceptedAt: new Date().toISOString(),

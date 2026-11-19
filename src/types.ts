@@ -25,6 +25,8 @@ export interface User {
   role: 'uzman' | 'hekim' | 'dsp' | 'other' | 'admin' | 'osgb_manager';
   isOsgbManager?: boolean;
   managedOsgbName?: string;
+  managedOsgbNames?: string[];
+  affiliatedOsgbs?: any[];
   canViewAllCompanies?: boolean;
   companyPermissions?: Array<{
     companyId: string;

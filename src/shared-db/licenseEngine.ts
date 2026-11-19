@@ -70,8 +70,10 @@ export function getLicensePlanName(type?: LicenseType | null): string {
 /**
  * Bir kullanıcının lisansının şu an aktif ve süresinin geçmemiş olduğunu kontrol eder.
  */
-export function isLicenseActive(userOrRecord?: { isPremium?: boolean; licenseExpiresAt?: string | null } | null): boolean {
-  if (!userOrRecord || !userOrRecord.isPremium) return false;
+export function isLicenseActive(userOrRecord?: { isPremium?: boolean; licenseExpiresAt?: string | null; role?: string; username?: string } | null): boolean {
+  if (!userOrRecord) return false;
+  if (userOrRecord.role === 'admin' || userOrRecord.username === 'admin') return true;
+  if (!userOrRecord.isPremium) return false;
   if (!userOrRecord.licenseExpiresAt) return true;
   const expiresAtMs = new Date(userOrRecord.licenseExpiresAt).getTime();
   if (isNaN(expiresAtMs)) return true;

@@ -18,7 +18,9 @@ export default defineConfig(() => {
       // HMR uses the shared HTTP server and client's actual hostname instead of invalid 0.0.0.0
       hmr: process.env.DISABLE_HMR === 'true' ? false : true,
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      watch: process.env.DISABLE_HMR === 'true' ? null : {
+        ignored: ['**/data/**', '**/panel-dist/**', '**/dist/**', '**/node_modules/**', '**/.git/**'],
+      },
     },
   };
 });

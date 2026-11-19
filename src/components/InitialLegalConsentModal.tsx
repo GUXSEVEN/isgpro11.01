@@ -19,29 +19,14 @@ export default function InitialLegalConsentModal({ currentUser, onComplete, onCl
   const [signature, setSignature] = useState(() => {
     try {
       const u = currentUser?.username;
-      if (!u || currentUser?.hasAcceptedLegalTerms !== true) {
-        return '';
-      }
+      if (!u) return '';
       if (currentUser?.userSignature) return currentUser.userSignature;
-      const stored = localStorage.getItem(`isg_user_signature_${u}`);
+      const stored = localStorage.getItem(`isg_user_signature_${u}`) || localStorage.getItem(`isg_user_signature_${u.toLowerCase()}`);
       return stored || '';
     } catch {
       return '';
     }
   });
-
-  // Yeni veya onaylamamış kullanıcının yerel kalıntılarını temizle
-  useEffect(() => {
-    if (currentUser && currentUser.hasAcceptedLegalTerms !== true && currentUser.username) {
-      const u = currentUser.username;
-      try {
-        localStorage.removeItem(`isg_user_signature_${u}`);
-        localStorage.removeItem(`isg_user_signature_${u.toLowerCase()}`);
-        localStorage.removeItem(`isg_legal_accepted_${u}`);
-        localStorage.removeItem(`isg_legal_accepted_${u.toLowerCase()}`);
-      } catch (e) {}
-    }
-  }, [currentUser]);
 
   const [showSigModal, setShowSigModal] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -104,8 +89,12 @@ export default function InitialLegalConsentModal({ currentUser, onComplete, onCl
 
     if (currentUser?.username) {
       try {
-        localStorage.setItem(`isg_user_signature_${currentUser.username}`, signature);
-        localStorage.setItem(`isg_legal_accepted_${currentUser.username}`, 'true');
+        const u = currentUser.username;
+        const uLower = u.toLowerCase();
+        localStorage.setItem(`isg_user_signature_${u}`, signature);
+        localStorage.setItem(`isg_user_signature_${uLower}`, signature);
+        localStorage.setItem(`isg_legal_accepted_${u}`, 'true');
+        localStorage.setItem(`isg_legal_accepted_${uLower}`, 'true');
       } catch {}
     }
 

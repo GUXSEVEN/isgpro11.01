@@ -50,36 +50,6 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
   const [passwordSuccess, setPasswordSuccess] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
 
-  // Otomatik Yenileme State'leri
-  const [subAutoRenew, setSubAutoRenew] = useState(() => currentUser.autoRenew !== false);
-  const [testLoading, setTestLoading] = useState(false);
-
-  useEffect(() => {
-    setSubAutoRenew(currentUser.autoRenew !== false);
-  }, [currentUser.autoRenew]);
-
-  const handleToggleAutoRenew = async () => {
-    const nextVal = !subAutoRenew;
-    setTestLoading(true);
-    try {
-      const res = await fetch('/api/subscription/toggle-autorenew', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: currentUser.username, email: currentUser.email, autoRenew: nextVal })
-      });
-      const data = await res.json();
-      if (data.success) {
-        setSubAutoRenew(nextVal);
-        await onUpdateProfile({ autoRenew: nextVal, subscriptionStatus: nextVal ? 'active' : 'cancelled' });
-        alert(nextVal ? '✓ Otomatik yenileme AÇILDI. Süre bitince karttan otomatik çekilecek.' : '✕ Otomatik yenileme KAPATILDI. Süre bittiğinde KARTTAN ÇEKİLMEYECEK.');
-      }
-    } catch (e: any) {
-      alert('Hata: ' + e.message);
-    } finally {
-      setTestLoading(false);
-    }
-  };
-
   const [sendingEmailNotice, setSendingEmailNotice] = useState(false);
   const [emailNoticeMsg, setEmailNoticeMsg] = useState('');
   const [emailUnlocked, setEmailUnlocked] = useState(false);
@@ -419,6 +389,16 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
 
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
               <a
+                href="/panel#isg_katip"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-sm shadow-lg shadow-indigo-950/40 border border-indigo-400/30 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
+              >
+                <RefreshCcw size={17} />
+                <span>İSG-KATİP Veri Çekme Merkezi</span>
+                <ArrowUpRight size={15} />
+              </a>
+              <a
                 href="/panel"
                 target="_blank"
                 rel="noopener noreferrer"
@@ -592,40 +572,6 @@ export default function Dashboard({ currentUser, onUpdateProfile }: DashboardPro
                       <span className={`font-bold ${remaining.isExpired ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                         {remaining.label}
                       </span>
-                    </div>
-                  </div>
-
-                  {/* OTOMATİK YENİLEME VE TEST MODU YÖNETİMİ */}
-                  <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 mt-3 space-y-3">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-xs text-slate-900 dark:text-white">Otomatik Yenileme Talimatı</span>
-                          <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
-                            subAutoRenew ? 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300' : 'bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300'
-                          }`}>
-                            {subAutoRenew ? '✓ AÇIK (Karttan Otomatik Çekilir)' : '✕ KAPALI (Süre Bitişinde Durdurulur)'}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                          {subAutoRenew 
-                            ? 'Aboneliğiniz dönem sonunda kesintisiz uzatılır. Dilediğiniz an tek tıkla kapatabilirsiniz.' 
-                            : 'Otomatik yenileme kapatılmıştır. Dönem sonunda kartınızdan kesinlikle ücret çekilmez.'}
-                        </p>
-                      </div>
-
-                      <button
-                        type="button"
-                        disabled={testLoading}
-                        onClick={handleToggleAutoRenew}
-                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer whitespace-nowrap ${
-                          subAutoRenew
-                            ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 dark:border-rose-900/50'
-                            : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                        }`}
-                      >
-                        {testLoading ? 'İşleniyor...' : subAutoRenew ? 'Otomatik Yenilemeyi Kapat (İptal Et)' : 'Otomatik Yenilemeyi Aç'}
-                      </button>
                     </div>
                   </div>
                 </div>
